@@ -192,6 +192,15 @@
                         <div class="chart-box"><canvas id="carrierChart"></canvas></div>
                     </div>
                 </div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("carrier-volume-wrap", "Order lines by carrier")' />
+                    <h3>Order lines by carrier</h3>
+                    <p class="sub">
+                        How the volume splits across shipping companies &mdash; busiest first, counted over
+                        every order line rather than the delivered ones the chart above measures
+                    </p>
+                    <div class="table-scroll" id="carrier-volume-wrap"></div>
+                </div>
 
                 <div class="section-title">Late shipment &amp; cancellation &mdash; top 5 sellers</div>
                 <div class="grid-2">
@@ -254,7 +263,7 @@
                 <div class="card accent-red">
                     <partial name="_ExportButton" model='new ExportButton("cancel-detail-wrap", "Lines that did not complete cleanly")' />
                     <h3>Every line that did not complete cleanly</h3>
-                    <p class="sub">Highest lost amount first &mdash; up to 200 rows</p>
+                    <p class="sub">Ranked by the value lost on the line, worst first &mdash; up to 200 rows</p>
                     <div class="table-scroll" id="cancel-detail-wrap"></div>
                 </div>
 
@@ -496,7 +505,7 @@
                                 <tr><td><code>Shipping deadline</code></td><td><span class="badge red">required</span></td><td>Late / on-time shipment, SLA margin</td></tr>
                                 <tr><td><code>Shipping date</code></td><td><span class="badge red">required</span></td><td>Late / on-time shipment, time to ship, transit</td></tr>
                                 <tr><td><code>Reason</code></td><td><span class="badge red">required</span></td><td>Detects auto-closed lines; carried into the Excel <em>Data</em> sheet</td></tr>
-                                <tr><td><code>Shipping company</code></td><td><span class="badge red">required</span></td><td>Carrier performance and the integrated / manual split</td></tr>
+                                <tr><td><code>Shipping company</code></td><td><span class="badge red">required</span></td><td>Carrier performance, order lines per carrier, and the integrated / manual split</td></tr>
                                 <tr><td><code>Received date</code></td><td><span class="badge red">required</span></td><td>Transit time, order-to-delivery time</td></tr>
 
                                 <tr><td><code>Acceptance date</code></td><td><span class="badge amber">optional</span></td><td>Delivery quality &mdash; acceptance time</td></tr>
@@ -504,8 +513,8 @@
                                 <tr><td><code>Cancellation Request Payload</code></td><td><span class="badge amber">optional</span></td><td>Cancellation reason codes</td></tr>
                                 <tr><td><code>Lead time to ship</code></td><td><span class="badge amber">optional</span></td><td>Lead time (SLA) analysis</td></tr>
                                 <tr><td><code>Amount transferred to seller (including taxes)</code></td><td><span class="badge amber">optional</span></td><td>Data quality &mdash; payout left on a cancelled line</td></tr>
-                                <tr><td><code>Total canceled amount (including taxes)</code></td><td><span class="badge amber">optional</span></td><td>Lost amount in the cancellation breakdown</td></tr>
-                                <tr><td><code>Total refunded amount (including taxes)</code></td><td><span class="badge amber">optional</span></td><td>Lost amount in the cancellation breakdown</td></tr>
+                                <tr><td><code>Total canceled amount (including taxes)</code></td><td><span class="badge amber">optional</span></td><td>Ranks the line-level table in the cancellation breakdown</td></tr>
+                                <tr><td><code>Total refunded amount (including taxes)</code></td><td><span class="badge amber">optional</span></td><td>Ranks the line-level table in the cancellation breakdown</td></tr>
                                 <tr><td><code>Order with invoice</code></td><td><span class="badge amber">optional</span></td><td>Invoice coverage, data quality</td></tr>
                                 <tr><td><code>Category label</code></td><td><span class="badge amber">optional</span></td><td>Category performance</td></tr>
                                 <tr><td><code>Brand</code></td><td><span class="badge amber">optional</span></td><td>Reserved &mdash; sent to the browser but not charted yet</td></tr>
@@ -573,7 +582,7 @@
                                     <td><strong>Lost amount</strong></td>
                                     <td>Revenue lost to cancellations and refunds.</td>
                                     <td><code>Total canceled amount</code>&nbsp;+&nbsp;<code>Total refunded amount</code>.</td>
-                                    <td>Money-weighted, not count-weighted: one expensive cancellation moves it a lot. Shown per line under <em>Every line that did not complete cleanly</em>, not as a headline figure.</td>
+                                    <td>Money-weighted, not count-weighted: one expensive cancellation moves it a lot. Not printed anywhere as a figure &mdash; it is what ranks <em>Every line that did not complete cleanly</em>, worst first.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -763,7 +772,7 @@
                                 <tr>
                                     <td><span class="badge red">Refunds keep their revenue</span></td>
                                     <td>A cancellation zeroes <code>Amount</code>; a refund does not. So a refund does not reduce revenue on its own.</td>
-                                    <td>Refunded lines are a separate outcome in the breakdown, and the <em>lost amount</em> on the line-level table comes from <code>Total refunded amount</code> rather than from <code>Amount</code> &mdash; which would read as zero loss.</td>
+                                    <td>Refunded lines are a separate outcome in the breakdown, and the line-level table is ranked by <code>Total refunded amount</code> rather than by <code>Amount</code> &mdash; which would put them last, as if nothing had been lost.</td>
                                 </tr>
                                 <tr>
                                     <td><span class="badge amber">Auto-closed deliveries</span></td>

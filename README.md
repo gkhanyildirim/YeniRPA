@@ -95,8 +95,8 @@ if the column is summed naively, so the handling is deliberate and should not be
   figure. *Data quality* counts the canceled lines that still carry a payout and names the amount.
 - **A refunded line keeps its `Amount`.** Unlike a cancellation (which zeroes `Amount`), a refund
   leaves revenue in place, so a refunded line reads as zero loss if you go by `Amount`. The
-  *lost amount* column on the line-level cancellation table comes from `Total canceled amount` +
-  `Total refunded amount` instead.
+  line-level cancellation table is therefore ranked by `Total canceled amount` +
+  `Total refunded amount` instead. The figure itself is not printed — only the ordering it produces.
 - **`Total order taxes` is not VAT.** It repeats the Turkish withholding tax value exactly, and the
   `… (VAT - vat)` columns are all zero. VAT cannot be split out of revenue from this file. Nothing
   reads the commission or withholding-tax columns any more; do not reintroduce a VAT figure derived

@@ -214,6 +214,36 @@
     ).join('');
   }
 
+  /**
+   * How the volume splits across the shipping companies. Counted over *every* order line rather than
+   * the delivered ones the chart beside it measures — a parcel still in transit was carried all the
+   * same. Lines with no shipping company keep a row of their own so the counts add up to the total.
+   */
+  function renderCarrierVolume(rows) {
+    const total = rows.length;
+    const carriers = [...groupBy(rows, r => r.sc || '').entries()]
+      .map(([carrier, list]) => ({
+        carrier,
+        count: list.length,
+        share: total ? list.length / total : 0,
+        integrated: isIntegratedCarrier(carrier)
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    RPA.renderTable('carrier-volume-wrap', carriers, [
+      { label: 'Carrier', render: x => (x.carrier ? RPA.escapeHtml(x.carrier) : 'Not recorded') },
+      { label: 'Order lines', numeric: true, value: x => x.count, render: x => RPA.fmtInt(x.count) },
+      { label: 'Share', numeric: true, value: x => +(x.share * 100).toFixed(1),
+        render: x => RPA.fmtPct(x.share) },
+      { label: 'Delivery reporting', render: x => {
+          if (!x.carrier) return '—';
+          return x.integrated
+            ? '<span class="badge green">Integrated</span>'
+            : '<span class="badge amber">Manual</span>';
+        } }
+    ], 'No order lines in the selected range.');
+  }
+
   function computeAndRender(rows) {
     const p = RPA.palette();
 
@@ -357,6 +387,7 @@
 
     hBar('carrierChart', carrierGroups.map(c => c.carrier), carrierGroups.map(c => +c.avgHours.toFixed(1)),
       carrierGroups.map(c => (c.integrated ? p.accent : p.red)), 'Carrier', 'Avg. hours to receive');
+    renderCarrierVolume(rows);
     hBar('lateChart', top5Late.map(x => x.seller), top5Late.map(x => x.count), p.red,
       'Seller', 'Late shipped lines');
     hBar('cancelChart', top5Canceled.map(x => x.seller), top5Canceled.map(x => x.count), p.accent,
@@ -496,8 +527,6 @@
           const meta = REASON_LABELS[x.r.crr];
           return RPA.escapeHtml(meta ? meta.label : x.r.crr);
         } },
-      { label: 'Lost amount', numeric: true, value: x => +x.lost.toFixed(2),
-        render: x => RPA.fmtMoney(x.lost, cur) },
       { label: 'Already shipped?', render: x => x.r.sh
           ? '<span class="badge amber">Yes — return leg cost</span>'
           : 'No' }
@@ -528,14 +557,15 @@
           minLt: promises.reduce((a, b) => Math.min(a, b)),
           maxLt: promises.reduce((a, b) => Math.max(a, b)),
           count: list.length,
-          revenue: sum(list, r => r.amt),
           avgHours: avg(hours), p90,
           utilisation: promised > 0 ? avg(hours) / (promised * 24) : null,
           suggested, gain: promised - suggested
         };
       })
       .filter(x => x.count >= MIN_LEAD_TIME_SAMPLE && x.gain >= 1)
-      .sort((a, b) => b.gain - a.gain || b.revenue - a.revenue);
+      // Equal gains are broken by shipped lines rather than by revenue, so the ranking is explained
+      // by a column that is actually on screen.
+      .sort((a, b) => b.gain - a.gain || b.count - a.count);
 
     const promiseRange = x => (x.minLt === x.maxLt ? x.minLt + ' d' : x.minLt + '–' + x.maxLt + ' d');
 
@@ -545,8 +575,6 @@
         render: x => x.promised.toFixed(1) + ' d' },
       { label: 'Promise range', numeric: true, value: promiseRange, render: promiseRange },
       { label: 'Shipped lines', numeric: true, value: x => x.count, render: x => RPA.fmtInt(x.count) },
-      { label: 'Revenue', numeric: true, value: x => +x.revenue.toFixed(2),
-        render: x => RPA.fmtMoney(x.revenue, cur) },
       { label: 'Avg. to ship', numeric: true, value: x => +x.avgHours.toFixed(1),
         render: x => RPA.fmtHours(x.avgHours) },
       { label: '90th pct.', numeric: true, value: x => +x.p90.toFixed(1), render: x => RPA.fmtHours(x.p90) },
