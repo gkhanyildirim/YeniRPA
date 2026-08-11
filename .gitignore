@@ -1,0 +1,45 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.csproj.user
+
+## .NET
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nupkg
+*.snupkg
+
+## Node (only used for tooling, never at runtime)
+node_modules/
+npm-debug.log*
+*.tgz
+
+## Local sample / test data — never commit customer exports
+samples/
+*.csv
+*.xlsx
+
+## Secrets & session artifacts — never commit
+auth.json
+auth.dat
+appsettings.*.local.json
+secrets.json
+
+## OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

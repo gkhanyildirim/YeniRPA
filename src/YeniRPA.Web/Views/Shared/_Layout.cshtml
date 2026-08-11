@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] &middot; Marketplace Reporting</title>
+    <link rel="preload" href="~/lib/fonts/ibm-plex-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+    @*
+        Applied before first paint so a dark-mode user never sees a white flash.
+        Kept inline and tiny on purpose — it must run before the stylesheet resolves.
+    *@
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('rpa-theme');
+                if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+            } catch (e) { /* private mode — fall back to the OS preference */ }
+        })();
+    </script>
+</head>
+<body>
+    @RenderBody()
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
