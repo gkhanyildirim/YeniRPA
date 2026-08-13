@@ -31,6 +31,14 @@
                 <span>Return SLA Report</span>
             </button>
 
+            <div class="nav-label">Automation</div>
+
+            <button type="button" class="nav-item" role="tab" id="tab-create-return"
+                    aria-controls="panel-create-return" aria-selected="false" data-module="create-return" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Create Return</span>
+            </button>
+
             <div class="nav-label">Reference</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-methodology"
@@ -446,6 +454,267 @@
 
                 <footer class="page-foot">Marketplace Reporting &middot; Return SLA Report</footer>
             </div>
+        </section>
+
+        @* ================= CREATE RETURN ================= *@
+        <section class="panel" id="panel-create-return" role="tabpanel" aria-labelledby="tab-create-return" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1>Create Return</h1>
+                    <p class="lede">
+                        Files a return on the Mirakl back office for every row of the uploaded workbook, by
+                        driving a real browser window. Unlike the report modules this one
+                        <strong>writes to the marketplace</strong> &mdash; each row it completes creates a
+                        return that can only be undone by hand, so check the file before starting. Progress
+                        streams in below as each order is processed.
+                    </p>
+                </div>
+                <span class="stamp" id="cr-stamp"></span>
+            </header>
+
+            <div class="section-title">Mirakl session</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="cr-session-badge">Checking&hellip;</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="cr-login">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Open login window</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="cr-save-session" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Save session</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="cr-clear-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Clear session</span>
+                        </button>
+                    </div>
+                </div>
+                <p class="note">
+                    Mirakl signs in through Google SSO, which cannot be scripted. <strong>Open login
+                    window</strong> launches Chrome on the order list &mdash; sign in there, then click
+                    <strong>Save session</strong> and the cookies are encrypted to your Windows user account
+                    and reused by every later run. Chrome is started on demand, so the first click takes a
+                    few seconds.
+                </p>
+            </div>
+
+            <div class="section-title">Prepare the list</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="cr-templateA-drop">
+                            <span class="drop-step">Input 1</span>
+                            <span class="drop-title">Return template A</span>
+                            <span class="drop-hint">Marketplace Iade &amp; Degisim Talepleri</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cr-templateA-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Return template A file" />
+                        </label>
+
+                        <label class="drop" id="cr-templateB-drop">
+                            <span class="drop-step">Input 2</span>
+                            <span class="drop-title">Return template B</span>
+                            <span class="drop-hint">The <code>&hellip;MP</code> file</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cr-templateB-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Return template B (MP) file" />
+                        </label>
+
+                        <label class="drop" id="cr-returns-drop">
+                            <span class="drop-step">Input 3</span>
+                            <span class="drop-title">Returns export</span>
+                            <span class="drop-hint">Returns that already exist</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cr-returns-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Returns export file" />
+                        </label>
+
+                        <label class="drop" id="cr-orders-drop">
+                            <span class="drop-step">Input 4</span>
+                            <span class="drop-title">Orders export</span>
+                            <span class="drop-hint">Supplies the full order number</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cr-orders-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Orders export file" />
+                        </label>
+                    </div>
+
+                    <div class="filter-bar">
+                        <div class="field">
+                            <label for="cr-from">Request date &mdash; from</label>
+                            <input type="date" id="cr-from" />
+                        </div>
+                        <div class="field">
+                            <label for="cr-to">Request date &mdash; to</label>
+                            <input type="date" id="cr-to" />
+                        </div>
+                        <label class="check" for="cr-returns-only">
+                            <input type="checkbox" id="cr-returns-only" />
+                            <span>Only &Idot;ade requests</span>
+                        </label>
+                        <button type="button" class="btn btn-primary" id="cr-prepare">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Prepare list</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="cr-prepare-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+                <p class="note">
+                    Both templates are filtered to rows that carry a real tracking code and fall inside the
+                    date range, orders that appear twice are dropped entirely, and anything the returns
+                    export already covers is left out. What survives is matched against the orders export to
+                    get the full <code>01259_311911494-A</code> form the automation needs. Nothing is uploaded
+                    anywhere and nothing is stored &mdash; leaving this page discards it.
+                </p>
+            </div>
+
+            <div class="skeleton" id="cr-prepare-skeleton" aria-hidden="true">
+                <div class="section-title">Working</div>
+                <div class="sk-box wide"></div>
+            </div>
+
+            <div class="results" id="cr-prepared" hidden>
+
+                <div class="section-title">
+                    How the list was narrowed down
+                    <partial name="_ExportButton" model='new ExportButton("cr-funnel-wrap", "Funnel", "Create Return")' />
+                </div>
+                <div class="card">
+                    <h3>Each step, and what survived it</h3>
+                    <p class="sub">
+                        The same sequence that used to be done by hand &mdash; read left to right, every drop
+                        is the gap between two columns
+                    </p>
+                    <div class="table-scroll is-full" id="cr-funnel-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    Ready to run
+                    <partial name="_ExportButton" model='new ExportButton("cr-ready-wrap", "Ready to run", "Create Return")' />
+                </div>
+                <div class="card accent-green">
+                    <h3>Returns that will be filed</h3>
+                    <p class="sub">One return per row &mdash; check this before starting, it cannot be undone from here</p>
+                    <div class="table-scroll" id="cr-ready-wrap"></div>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="cr-download">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Download Excel</span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="cr-run-list">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Start with this list</span>
+                    </button>
+                    <span class="filter-summary" id="cr-ready-summary"></span>
+                </div>
+
+                <div class="section-title">
+                    Left out
+                    <partial name="_ExportButton" model='new ExportButton("cr-excluded-wrap", "Left out", "Create Return")' />
+                </div>
+                <div class="card accent-amber">
+                    <h3>Candidates that were dropped, and why</h3>
+                    <p class="sub">
+                        Only rows that got past the tracking-code and date filters appear here &mdash; those two
+                        drop thousands of rows and are reported as counts in the table above instead
+                    </p>
+                    <div class="table-scroll" id="cr-excluded-wrap"></div>
+                </div>
+            </div>
+
+            <div class="section-title">Or upload a ready list</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="cr-drop">
+                            <span class="drop-step">Input</span>
+                            <span class="drop-title">Orders &amp; tracking numbers</span>
+                            <span class="drop-hint">Column A: order ID &middot; Column B: tracking number</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cr-file" accept=".xlsx,.xls"
+                                   aria-label="Return list workbook (.xlsx)" />
+                        </label>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="cr-start">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Start create returns</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="cr-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+                <p class="note">
+                    For a workbook prepared elsewhere, or one downloaded from the step above and edited by
+                    hand. The first row is treated as a header and skipped. A row missing either the order ID
+                    or the tracking number is dropped rather than failing the upload, so the count reported
+                    on start is what will actually be attempted.
+                </p>
+            </div>
+
+            <div class="results" id="cr-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span>Orders processed</span>
+                        <span class="mono" id="cr-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="cr-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Create Return progress">
+                        <span class="progress-fill" id="cr-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="cr-console"></pre>
+                </div>
+                <p class="note">
+                    An order that fails is screenshotted to <code>artifacts/create-return</code> beside the
+                    executable and the run moves on to the next one &mdash; a batch is usually mostly good
+                    rows, and the screenshot is what tells an expired session apart from a changed form.
+                </p>
+            </div>
+
+            <div class="section-title">What gets filled in</div>
+            <div class="card">
+                <h3>Every return is filed the same way</h3>
+                <p class="sub">
+                    Only the order and its tracking number come from the file &mdash; the rest of the form is
+                    fixed, and these are the values to change when the module is tailored further
+                </p>
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead><tr><th>Field</th><th>Value</th><th>Source</th></tr></thead>
+                        <tbody>
+                            <tr><td>Quantity</td><td><code>1</code></td><td>Fixed</td></tr>
+                            <tr><td>Return method</td><td><code>By mail</code></td><td>Fixed</td></tr>
+                            <tr><td>Reason</td><td><code>Other reason</code></td><td>Fixed</td></tr>
+                            <tr><td>Carrier</td><td><code>Other</code></td><td>Fixed</td></tr>
+                            <tr><td>Name</td><td><code>Yurtici</code></td><td>Fixed</td></tr>
+                            <tr><td>Tracking number</td><td>&mdash;</td><td>Column B</td></tr>
+                            <tr><td>Tracking address</td><td>Yurtiçi Kargo lookup URL</td><td>Built from column B</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="note">
+                    The form has no stable ids, so every field is found through its visible English label.
+                    That is the part that breaks when Mirakl changes its UI &mdash; a failed run whose
+                    screenshot shows a perfectly normal page usually means a label was renamed.
+                </p>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Create Return</footer>
         </section>
 
         @* ================= DATA & METHODOLOGY ================= *@
@@ -875,4 +1144,5 @@
     <script src="~/js/app.js" asp-append-version="true"></script>
     <script src="~/js/order-report.js" asp-append-version="true"></script>
     <script src="~/js/return-sla-report.js" asp-append-version="true"></script>
+    <script src="~/js/create-return.js" asp-append-version="true"></script>
 }

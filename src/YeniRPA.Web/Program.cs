@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using YeniRPA.Web.Infrastructure;
+using YeniRPA.Web.Services.Automation;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,6 +26,16 @@ builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = MaxUploadBytes;
 });
+
+// Automation modules. All three are singletons: there is one browser, one saved Mirakl session and
+// one run slot for the whole app, and the run outlives the request that started it.
+//
+// Data protection encrypts the saved session cookies at rest — they grant full operator access to
+// the marketplace, so they never touch disk in the clear.
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton<AutomationJobBus>();
+builder.Services.AddSingleton<MiraklBrowser>();
+builder.Services.AddSingleton<CreateReturnRunner>();
 
 var app = builder.Build();
 

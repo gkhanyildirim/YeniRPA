@@ -246,6 +246,8 @@ window.RPA = window.RPA || {};
   const MODULES = {
     'order-report': { tab: 'tab-order', panel: 'panel-order' },
     'return-sla': { tab: 'tab-return', panel: 'panel-return' },
+    // Browser automation rather than a report: writes to Mirakl instead of reading a file.
+    'create-return': { tab: 'tab-create-return', panel: 'panel-create-return' },
     // Reference page: static content, no upload and no dashboard of its own.
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' }
   };
@@ -269,6 +271,10 @@ window.RPA = window.RPA || {};
       history.replaceState(null, '', '#/' + name);
     }
     if (opts.focus) document.getElementById(MODULES[name].tab).focus();
+
+    // Lets a module defer work until it is actually looked at — the automation module opens its
+    // event stream here rather than holding a connection open for report-only users.
+    document.dispatchEvent(new CustomEvent('rpa:modulechange', { detail: { module: name } }));
   }
 
   function initNav() {
@@ -412,6 +418,17 @@ window.RPA = window.RPA || {};
   /** POSTs a FormData and returns parsed JSON, turning a 400 { error } into a throw. */
   RPA.postJson = async function (url, formData) {
     const response = await fetch(url, { method: 'POST', body: formData });
+    if (!response.ok) throw new Error(await readError(response));
+    return response.json();
+  };
+
+  /** Same, for endpoints that take a JSON body — postJson only knows how to send a FormData. */
+  RPA.sendJson = async function (url, payload) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
     if (!response.ok) throw new Error(await readError(response));
     return response.json();
   };

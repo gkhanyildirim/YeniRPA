@@ -900,6 +900,86 @@ tbody tr:hover td { background: var(--accent-soft); }
 }
 @keyframes shimmer { to { transform: translateX(100%); } }
 
+/* ---------- automation: session, progress, run console ---------- */
+
+.session {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+/* The buttons sit on the same line as the state badge rather than under it. */
+.session .actions { margin: 0; }
+
+/* Sits in a .filter-bar next to the date fields, so it aligns to their inputs rather than to
+   their labels. */
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-end;
+  padding-bottom: 7px;
+  color: var(--ink-2);
+  font-size: .78rem;
+  cursor: pointer;
+  user-select: none;
+}
+.check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.check:hover { color: var(--ink); }
+
+.run-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--ink-3);
+  font-size: .72rem;
+}
+
+.progress {
+  height: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.progress-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width .25s ease;
+}
+.progress.is-done .progress-fill { background: var(--green); }
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill { transition: none; }
+}
+
+/* Long-running output: monospaced, scrollable, and wrapping rather than clipping — a failure line
+   carries a full file path and must stay readable. */
+.console {
+  margin: 12px 0 0;
+  max-height: 420px;
+  padding: 12px 14px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: .72rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- results wrapper ---------- */
 
 .results[hidden] { display: none; }
@@ -929,13 +1009,15 @@ footer.page-foot {
 
   .nav {
     flex-direction: row;
+    flex-wrap: wrap;
     padding: 10px;
     gap: 8px;
   }
   .nav-label { display: none; }
   .nav-item {
-    /* Two modules — let them share the width instead of overflowing off-screen. */
-    flex: 1 1 0;
+    /* Share the width instead of overflowing off-screen, wrapping to a second row when the
+       labels no longer fit. */
+    flex: 1 1 auto;
     justify-content: center;
     border: 1px solid var(--line);
     padding: 8px 12px;
