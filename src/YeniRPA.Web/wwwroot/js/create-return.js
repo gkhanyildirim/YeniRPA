@@ -62,10 +62,17 @@
   // Event stream
   // ---------------------------------------------------------------------------
 
+  // AutomationJobBus is shared with the Late Order Warnings module and its log/progress/done events
+  // carry no module of their own, so without this latch a WhatsApp run's output lands in this console.
+  // Deliberately solved here rather than by adding a module field to AutomationJobBus.Log, which would
+  // change a signature CreateReturnRunner calls fifteen times for a cosmetic problem.
+  let mine = false;
+
   function handleEvent(event) {
     switch (event.type) {
       case 'started':
-        if (event.module !== MODULE) return;
+        mine = event.module === MODULE;
+        if (!mine) return;
         // Also the point a reconnected or reloaded page resets to before the replayed log arrives.
         total = event.total;
         el('cr-run').hidden = false;
@@ -76,15 +83,17 @@
         break;
 
       case 'log':
-        appendLog(event.message);
+        if (mine) appendLog(event.message);
         break;
 
       case 'progress':
+        if (!mine) return;
         total = event.total;
         setProgress(event.completed);
         break;
 
       case 'done':
+        if (!mine) return;
         appendLog('');
         appendLog('Finished. Processed: ' + event.processed + ' · Failed: ' + event.failed.length);
         if (event.failed.length) appendLog('Failed orders:\n  ' + event.failed.join('\n  '));

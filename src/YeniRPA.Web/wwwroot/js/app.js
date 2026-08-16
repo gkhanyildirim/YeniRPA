@@ -248,6 +248,8 @@ window.RPA = window.RPA || {};
     'return-sla': { tab: 'tab-return', panel: 'panel-return' },
     // Browser automation rather than a report: writes to Mirakl instead of reading a file.
     'create-return': { tab: 'tab-create-return', panel: 'panel-create-return' },
+    // Reads an export like the reports do, but its output is messages to external parties.
+    'late-orders': { tab: 'tab-late-orders', panel: 'panel-late-orders' },
     // Reference page: static content, no upload and no dashboard of its own.
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' }
   };

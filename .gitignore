@@ -34,6 +34,8 @@ samples/
 ## Secrets & session artifacts — never commit
 auth.json
 auth.dat
+seller-groups.json
+**/WhatsApp/profile/
 appsettings.*.local.json
 secrets.json
 

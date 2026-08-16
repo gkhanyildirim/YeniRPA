@@ -547,6 +547,13 @@ body {
   letter-spacing: .06em;
   text-transform: uppercase;
 }
+/* Row-level actions inside a table cell or a message card header. */
+.btn-sm {
+  padding: 4px 10px;
+  font-size: .7rem;
+}
+.btn-sm .spinner { width: 11px; height: 11px; }
+
 .btn-export .spinner { width: 11px; height: 11px; }
 .btn-export svg { width: 12px; height: 12px; flex: none; }
 .btn-export.is-busy svg { display: none; }
@@ -630,6 +637,38 @@ input[type="date"] {
   :root:not([data-theme="light"]) input[type="date"] { color-scheme: dark; }
 }
 input[type="date"]:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* Same shape as the date input above — the mapping table and the message templates are the first
+   free-text inputs in the app, so these did not exist until now. */
+input[type="text"],
+input[type="number"],
+textarea {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: .76rem;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  width: 100%;
+}
+input[type="text"]:focus,
+input[type="number"]:focus,
+textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* The offset is a two-digit number in a filter bar, not a full-width field. */
+.filter-bar input[type="number"] { width: 9ch; }
+
+textarea {
+  resize: vertical;
+  min-height: 68px;
+  line-height: 1.6;
+  /* Templates are whitespace-significant: a stray wrap must not read as a line break. */
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
 
 .filter-summary {
   margin-left: auto;
@@ -978,6 +1017,57 @@ tbody tr:hover td { background: var(--accent-soft); }
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ---------- late order warnings: composed messages ---------- */
+
+.msg-card {
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.msg-card:last-of-type { margin-bottom: 0; }
+
+.msg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.msg-head .btn-sm { margin-left: auto; }
+
+.msg-meta {
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  color: var(--ink-2);
+}
+
+/* Deliberately its own class rather than reusing .console: the run log and outward-facing message
+   copy have no reason to change together, and one of them is read by sellers. */
+.msg-body {
+  margin: 0;
+  max-height: 340px;
+  padding: 12px 14px;
+  overflow: auto;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+  font-size: .78rem;
+  line-height: 1.75;
 }
 
 /* ---------- results wrapper ---------- */

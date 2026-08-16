@@ -39,6 +39,12 @@
                 <span>Create Return</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-late-orders"
+                    aria-controls="panel-late-orders" aria-selected="false" data-module="late-orders" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Late Order Warnings</span>
+            </button>
+
             <div class="nav-label">Reference</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-methodology"
@@ -717,6 +723,360 @@
             <footer class="page-foot">Marketplace Reporting &middot; Create Return</footer>
         </section>
 
+        @* ================= LATE ORDER WARNINGS ================= *@
+        <section class="panel" id="panel-late-orders" role="tabpanel" aria-labelledby="tab-late-orders" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1>Late Order Warnings</h1>
+                    <p class="lede">
+                        Finds the orders that are <strong>overdue right now</strong> &mdash; not shipped, and past
+                        their shipping deadline &mdash; groups them by seller, and composes one warning message per
+                        seller for that seller's WhatsApp group. This is a different question from the Order
+                        Report's late-shipment rate, which looks back at orders that <em>did</em> ship, late.
+                        Messages to sellers cannot be recalled, so every one of them is shown in full below before
+                        it goes anywhere.
+                    </p>
+                </div>
+                <span class="stamp" id="lo-stamp"></span>
+            </header>
+
+            <div class="section-title">WhatsApp session</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="lo-session-badge">Checking&hellip;</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="lo-login">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Open WhatsApp</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="lo-check-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Check session</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="lo-clear-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Clear session</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="alert" id="lo-session-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note">
+                    <strong>Open WhatsApp</strong> launches a Chrome window on <code>web.whatsapp.com</code>. Scan
+                    the QR code there once &mdash; there is deliberately <em>no</em> &ldquo;save session&rdquo;
+                    button, because the profile keeps the login by itself and a button implying otherwise would be
+                    a lie you would click and trust. Chrome starts on demand, so the first click takes a few
+                    seconds.
+                    <br /><br />
+                    The profile lives at <code id="lo-profile-path"></code>. Unlike the Mirakl session this app
+                    does not encrypt it &mdash; Chrome protects its own credential material against your Windows
+                    account. Treat that folder as a credential: a live session can read and send in
+                    <strong>every chat you are in</strong>, not only the seller groups.
+                    <strong>Clear session</strong> deletes it and signs you out.
+                </p>
+            </div>
+
+            <div class="section-title">Seller &rarr; WhatsApp group</div>
+            <div class="card">
+                <h3>Which group each seller gets messaged in</h3>
+                <p class="sub">
+                    Set this up once. The seller ID wins over the name when both are filled in &mdash; a seller can
+                    rename their storefront, but their ID does not change
+                </p>
+
+                <div id="lo-mapping-warnings" hidden></div>
+
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 16%">Seller ID</th>
+                                <th style="width: 32%">Seller</th>
+                                <th style="width: 42%">WhatsApp group</th>
+                                <th style="width: 10%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="lo-mapping-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="lo-map-add">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Add row</span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="lo-map-save">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Save mapping</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="lo-map-import">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Import from Excel</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="lo-map-export">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Export to Excel</span>
+                    </button>
+                    <input type="file" id="lo-map-file" accept=".xlsx,.xls,.csv" hidden
+                           aria-label="Seller/group mapping file" />
+                    <span class="filter-summary" id="lo-mapping-count"></span>
+                </div>
+
+                <div class="alert" id="lo-mapping-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note">
+                    The group name must match the WhatsApp group <strong>exactly</strong> &mdash; it is compared
+                    character for character, and nothing is ever matched approximately. A near-match would post one
+                    seller's order list into a different seller's group, which is why an ambiguous row is reported
+                    rather than guessed at. A seller row with the group left blank counts as unmapped.
+                    Stored at <code id="lo-mapping-path"></code> &mdash; <span id="lo-mapping-updated"></span>.
+                </p>
+            </div>
+
+            <div class="section-title">Find the overdue orders</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="lo-drop">
+                            <span class="drop-step">Input</span>
+                            <span class="drop-title">Orders export</span>
+                            <span class="drop-hint">Mirakl orders export (.xlsx or .csv)</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="lo-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Mirakl orders export" />
+                        </label>
+                    </div>
+
+                    <div class="filter-bar">
+                        <div class="field">
+                            <label for="lo-offset">Deadline offset (hours)</label>
+                            <input type="number" id="lo-offset" step="0.5" value="0" />
+                        </div>
+                        <button type="button" class="btn btn-primary" id="lo-prepare">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Find overdue orders</span>
+                        </button>
+                        <span class="filter-summary">Compared against <span id="lo-reference">now</span></span>
+                    </div>
+
+                    <div class="alert" id="lo-prepare-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+                <p class="note">
+                    An order counts as overdue when its <code>Shipping date</code> is empty, its status is one the
+                    seller can still act on (<code>Awaiting shipment</code> or <code>Pending acceptance</code>), and
+                    its <code>Shipping deadline</code> has passed. Anything else is set aside for review rather than
+                    messaged.
+                    <br /><br />
+                    <strong>About the offset:</strong> every deadline in the sample export lands at
+                    <code>21:59:59</code>, which is <code>23:59:59</code> at UTC+2 &mdash; end of day in Berlin,
+                    exported in UTC. If that holds, the offset for Turkish local time is <code>+3</code>. This field
+                    is <em>temporary scaffolding</em>: open one overdue order in the Mirakl back office, compare the
+                    deadline it shows against the file, set the offset to the difference, and once a second export
+                    confirms it the value moves into the code and this field goes away. Nothing is uploaded anywhere
+                    and nothing is stored &mdash; leaving this page discards it.
+                </p>
+            </div>
+
+            <div class="skeleton" id="lo-prepare-skeleton" aria-hidden="true">
+                <div class="section-title">Working</div>
+                <div class="sk-box wide"></div>
+            </div>
+
+            <div class="results" id="lo-prepared" hidden>
+
+                <div class="card accent-amber" id="lo-warnings" hidden>
+                    <h3>Worth knowing about this file</h3>
+                    <ul class="note-list" id="lo-warnings-list"></ul>
+                </div>
+
+                <div id="lo-unmapped" hidden>
+                    <div class="section-title">
+                        Sellers with no WhatsApp group
+                        <partial name="_ExportButton" model='new ExportButton("lo-unmapped-wrap", "Unmapped sellers", "Late Orders")' />
+                    </div>
+                    <div class="card accent-amber">
+                        <h3>These sellers are overdue and cannot be messaged</h3>
+                        <p class="sub">
+                            No message is composed for them and none is skipped silently &mdash; add the group above,
+                            then run this again
+                        </p>
+                        <div class="table-scroll" id="lo-unmapped-wrap"></div>
+                        <p class="note" id="lo-unmapped-summary"></p>
+                    </div>
+                </div>
+
+                <div class="section-title">
+                    Overdue orders
+                    <partial name="_ExportButton" model='new ExportButton("lo-orders-wrap", "Overdue orders", "Late Orders")' />
+                </div>
+                <div class="card accent-red">
+                    <h3>Every order past its deadline and still unshipped</h3>
+                    <p class="sub">
+                        The exported deadline and the offset deadline sit side by side so the offset's effect is
+                        visible on every row rather than taken on trust
+                    </p>
+                    <div class="table-scroll" id="lo-orders-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    Where the rows went
+                    <partial name="_ExportButton" model='new ExportButton("lo-funnel-wrap", "Funnel", "Late Orders")' />
+                </div>
+                <div class="card">
+                    <h3>Every row in the file, accounted for</h3>
+                    <p class="sub">The first six buckets are terminal and add up to the row count</p>
+                    <div class="table-scroll is-full" id="lo-funnel-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    Set aside for review
+                    <partial name="_ExportButton" model='new ExportButton("lo-review-wrap", "Set aside", "Late Orders")' />
+                </div>
+                <div class="card accent-amber">
+                    <h3>Unshipped rows that were not turned into a warning</h3>
+                    <p class="sub">
+                        An unfamiliar status or an unreadable deadline lands here instead of defaulting into
+                        &ldquo;chase the seller&rdquo;
+                    </p>
+                    <div class="table-scroll" id="lo-review-wrap"></div>
+                </div>
+
+                <div class="section-title">Message wording</div>
+                <div class="card">
+                    <h3>What each seller is sent</h3>
+                    <p class="sub">
+                        Two templates: the envelope is rendered once per seller, the order line once per overdue
+                        order. Edits are saved with the mapping above
+                    </p>
+
+                    <div class="field">
+                        <label for="lo-template">Message</label>
+                        <textarea id="lo-template" rows="10" spellcheck="false"></textarea>
+                    </div>
+                    <div class="field" style="margin-top: 14px">
+                        <label for="lo-line-template">Order line</label>
+                        <textarea id="lo-line-template" rows="2" spellcheck="false"></textarea>
+                    </div>
+
+                    <p class="note">Placeholders: <span id="lo-placeholders"></span></p>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="lo-render">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Re-render messages</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="lo-template-reset">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Reset to default</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="section-title">Messages</div>
+                <div class="card accent-green">
+                    <h3>One message per seller, exactly as it will be sent</h3>
+                    <p class="sub">
+                        Read the group name on each card before you copy it &mdash; that is the last chance to catch
+                        a wrong mapping
+                    </p>
+
+                    <div id="lo-messages"></div>
+
+                    <div class="actions">
+                        <label class="check" for="lo-dry-run">
+                            <input type="checkbox" id="lo-dry-run" checked />
+                            <span>Dry run (compose and verify, but do not send)</span>
+                        </label>
+                        <button type="button" class="btn btn-primary" id="lo-send" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Send messages</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="lo-messages-export" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Download messages (Excel)</span>
+                        </button>
+                        <span class="filter-summary" id="lo-messages-summary"></span>
+                    </div>
+
+                    <div class="alert" id="lo-messages-alert" role="alert">
+                        <strong>Check this</strong>
+                        <span class="msg"></span>
+                    </div>
+
+                    <p class="note">
+                        A dry run opens every group, checks the title matches, types the message and reads it back
+                        &mdash; then clears the box without sending. It exercises the whole path against real
+                        production data with no outward effect, and it is the routine to run before every live send.
+                        You can also still copy a message by hand from its card.
+                    </p>
+                </div>
+            </div>
+
+            <div class="results" id="lo-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span>Groups processed</span>
+                        <span class="mono" id="lo-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="lo-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Late Order Warnings progress">
+                        <span class="progress-fill" id="lo-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="lo-console"></pre>
+                </div>
+                <p class="note">
+                    A group that fails is screenshotted to <code>artifacts/late-orders</code> beside the executable
+                    and the run moves on. The one exception is a lost session: if WhatsApp drops back to the QR
+                    code the whole run aborts, because every remaining group would fail identically.
+                </p>
+            </div>
+
+            <div class="section-title">What happens when you send</div>
+            <div class="card">
+                <h3>The sequence, per group</h3>
+                <p class="sub">
+                    Three checks stand between a mapping row and a message a seller can read &mdash; a WhatsApp
+                    message cannot be recalled
+                </p>
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead><tr><th>Step</th><th>What it does</th><th>If it fails</th></tr></thead>
+                        <tbody>
+                            <tr><td>Search</td><td>Clears the box, types the group name, waits for results to settle</td><td>Skips this seller</td></tr>
+                            <tr><td><strong>Exact title match</strong></td><td>Matches the chat name character for character; requires exactly one hit</td><td>Skips &mdash; never picks one of two</td></tr>
+                            <tr><td><strong>Header re-check</strong></td><td>Reads the opened chat's title back and compares again, after the click</td><td>Skips before typing anything</td></tr>
+                            <tr><td>Type</td><td>Whole lines at once, with Shift+Enter for the breaks (Enter would send)</td><td>Retypes key by key, then skips</td></tr>
+                            <tr><td><strong>Read back</strong></td><td>Reads the composed text out of the box and compares it to what you approved</td><td>Clears the box, skips &mdash; names the differing line</td></tr>
+                            <tr><td>Send</td><td>Presses Enter, waits for the box to empty</td><td>Warns that it may have gone out</td></tr>
+                            <tr><td>Pause</td><td>6&ndash;12 s randomised on a live run; 0.7 s on a dry run, which sends nothing to pace</td><td>&mdash;</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="note">
+                    At most <strong>40 groups per run</strong>; over that the run is refused rather than truncated.
+                    Messages are capped at 4,000 characters. A run holds the app-wide automation slot for its whole
+                    duration &mdash; roughly 5&ndash;8 minutes for a full batch &mdash; so Create Return cannot run
+                    at the same time. The window stays visible on purpose: it is your only way to watch automation
+                    touching your own WhatsApp account.
+                </p>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Late Order Warnings</footer>
+        </section>
+
         @* ================= DATA & METHODOLOGY ================= *@
         <section class="panel" id="panel-methodology" role="tabpanel" aria-labelledby="tab-methodology" hidden>
 
@@ -1145,4 +1505,5 @@
     <script src="~/js/order-report.js" asp-append-version="true"></script>
     <script src="~/js/return-sla-report.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>
+    <script src="~/js/late-orders.js" asp-append-version="true"></script>
 }

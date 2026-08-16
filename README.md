@@ -8,11 +8,67 @@ with tab navigation between them and results rendered in place.
 | **Order Report** (Late Shipment & Cancellation) | `orders.xlsx` | In-page dashboard (20 KPIs, 8 charts, 5 tables, 2 ranked lists) + 4-sheet Excel workbook |
 | **Return SLA Report** | `orders` export + 2 return tracking templates (`.xlsx` or `.csv`) | In-page dashboard (6 KPIs, 4 tables) |
 | **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
+| **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per seller (copy to clipboard or export to Excel) |
 | **Data & Methodology** | — | Reference page: source column per metric, calculation rules, known export traps, limits |
 
 The reports are read-only: they never leave the machine and nothing is stored. **Create Return is
 not** — it drives a real browser against the Mirakl back office and writes to the marketplace. See
-[Create Return](#create-return-automation).
+[Create Return](#create-return-automation). **Late Order Warnings is not either**, and goes further:
+it posts messages to external parties in WhatsApp groups, and a sent message cannot be recalled. See
+[Late Order Warnings](#late-order-warnings).
+
+## Late Order Warnings
+
+Finds orders that are **overdue right now** — `Shipping date` empty, status one the seller can still
+act on, `Shipping deadline` passed — groups them by seller and posts one message per seller in that
+seller's WhatsApp group.
+
+This is a **different rule** from the Order Report's late-shipment rate. That one is retrospective
+(`Shipping date > Shipping deadline`, i.e. it shipped, late) and is used to rank sellers. This one is
+prospective, and an order can be late here while being invisible there because it has no shipping
+date to compare yet. Do not merge them.
+
+### Why WhatsApp Web and not the Cloud API
+
+Meta's WhatsApp Business Cloud API **cannot send to groups** — only to individual phone numbers, and
+`wa.me` links cannot target a group either. Groups are the requirement, so the only route is driving
+WhatsApp Web. That is an unsupported use of the product; it is worth knowing that before relying on
+it.
+
+### The session trap
+
+`WhatsAppBrowser` uses `LaunchPersistentContextAsync` with a profile directory, **not**
+`StorageStateAsync()` like `MiraklBrowser`. WhatsApp Web keeps its authentication material in
+IndexedDB, which storage state does not capture — and it does not fail while not capturing it. It
+writes a perfectly valid state file, the badge goes green, and every run lands on a QR code. The
+symptom reads as "the session keeps expiring", which sends you looking in the wrong place entirely.
+The two browser classes differ for four independent reasons; do not DRY them together.
+
+The profile is **not** encrypted by this app (Chrome's own DPAPI protection covers it). A live
+session can read and send in every chat the operator is in, not just the seller groups — treat
+`%LOCALAPPDATA%\YeniRPA\WhatsApp\profile` as a credential.
+
+### The three guards
+
+A WhatsApp message cannot be recalled and lands in front of an external party, so:
+
+1. A chat is opened only on an **exact, case-sensitive title match**, and only when exactly one chat
+   carries that title. Never `.First`. **No fuzzy matching may ever be added** — an 85 %-similar
+   match posts one seller's order list into a different seller's group, which is a competitor data
+   leak that looks like a working system until someone complains.
+2. After the click the conversation header is **read back and compared again**. The result list
+   re-sorts as it loads, so the click can land one row over.
+3. The composed text is **read back out of the box** and compared to the approved body before Enter.
+   This catches a dropped keystroke, an emoji auto-conversion and a focus steal while everything is
+   still reversible.
+
+Plus: only groups present in `seller-groups.json` can be posted to, dry run is the default, at most
+40 groups per run (refused, not truncated), and 6–12 s randomised between groups. A lost session
+aborts the whole run rather than producing forty screenshots of the same QR code.
+
+`Services/Automation/WhatsAppSelectors.cs` is the single place to fix when WhatsApp changes its
+markup — each selector is a candidate list, and the failure message names what was being looked for
+and lists everything tried.
 
 The Order Report dashboard has two layers. *Key metrics* down to *Late shipment & cancellation —
 top 5 sellers* is the original port and is covered by the guarantees below. Below that sit the
@@ -58,7 +114,8 @@ src/YeniRPA.Web/
     ├── js/app.js                    Shell: nav, theme, uploads, fetch
     ├── js/order-report.js           Order dashboard aggregation + charts
     ├── js/return-sla-report.js      Return SLA dashboard
-    └── js/create-return.js          Create Return: session, upload, live run log
+    ├── js/create-return.js          Create Return: session, upload, live run log
+    └── js/late-orders.js            Late Order Warnings: mapping editor, preview, messages
 ```
 
 ## API
@@ -75,6 +132,15 @@ src/YeniRPA.Web/
 | `GET` | `/api/automation/status` | — | `{ hasSession, browserReady, isRunning, runningModule }` |
 | `POST` | `/api/automation/login` \| `save-session` \| `clear-session` | — | `200` |
 | `GET` | `/api/automation/events` | — | `text/event-stream` of run progress |
+| `POST` | `/api/late-orders/prepare` | `file`, `offsetHours` | Overdue orders by seller, funnel, review rows, warnings |
+| `POST` | `/api/late-orders/messages` | JSON `{ sellers, referenceTime, template, orderLineTemplate }` | `{ messages, warnings }` |
+| `POST` | `/api/late-orders/messages/excel` | JSON `{ messages }` | `.xlsx` (one row per message, body wrapped) |
+| `GET` \| `PUT` | `/api/late-orders/mapping` | JSON `{ entries, template, orderLineTemplate }` | The seller → group mapping and the message templates |
+| `POST` | `/api/late-orders/mapping/import` | `file` | Merged table for review — **does not save** |
+| `POST` | `/api/late-orders/mapping/excel` | JSON `{ entries }` | `seller-groups.xlsx`, re-importable |
+| `POST` | `/api/late-orders/send` | JSON `{ messages, dryRun }` | `{ count, dryRun }`; the run continues in the background |
+| `GET` | `/api/late-orders/status` | — | `{ hasProfile, signedIn, browserReady, isRunning, runningModule, profilePath }` |
+| `POST` | `/api/late-orders/login` \| `check-session` \| `clear-session` | — | `200` |
 
 Input-validation failures return `400 { "error": "..." }` with the message naming the exact problem,
 e.g. `Required column 'Shipping deadline' was not found in the uploaded file.`
