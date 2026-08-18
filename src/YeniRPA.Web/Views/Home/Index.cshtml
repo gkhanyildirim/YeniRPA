@@ -91,7 +91,7 @@
 
             <header class="page-head">
                 <div>
-                    <h1>Late Shipment &amp; Cancellation Report</h1>
+                    <h1 data-eyebrow="Mirakl &middot; Report">Late Shipment &amp; Cancellation Report</h1>
                     <p class="lede">
                         Upload the <strong>orders</strong> export from Mirakl. The dashboard is computed in the
                         browser, so the date filter recalculates every metric instantly. The Excel workbook
@@ -156,14 +156,29 @@
                         <label for="order-date-to">To (date created)</label>
                         <input type="date" id="order-date-to" />
                     </div>
+                    <div class="field">
+                        <label for="order-seller">Seller</label>
+                        @* Type-ahead rather than a <select>: an export carries hundreds of sellers,
+                           and a partial name still narrows the dashboard. *@
+                        <input type="search" id="order-seller" list="order-seller-list"
+                               placeholder="All sellers" autocomplete="off" />
+                        <datalist id="order-seller-list"></datalist>
+                    </div>
                     <button type="button" class="btn btn-primary" id="order-apply">Apply filter</button>
                     <button type="button" class="btn btn-ghost" id="order-reset">Reset</button>
                     <span class="filter-summary" id="order-filter-summary"></span>
+
+                    @* Built from the sections themselves once the report renders, so it can never
+                       list a section that is not there. *@
+                    <nav class="section-nav" id="order-section-nav" aria-label="Report sections"></nav>
                 </div>
 
                 <p class="note" id="order-missing-columns" hidden></p>
 
-                <div class="section-title">
+                @* The headline figures. Everything under them is the explanation. *@
+                <div class="hero" id="order-hero"></div>
+
+                <div class="section-title" id="sec-overview" data-section="Overview">
                     Key metrics
                     <partial name="_ExportButton" model='new ExportButton("order-kpis", "Key metrics")' />
                 </div>
@@ -174,21 +189,33 @@
                     @Model.CanceledStatus), and each rate is that count over <em>all</em> order lines.
                     &ldquo;Late&rdquo; is the one exception: it means the shipping date is filled in and is
                     later than the shipping deadline, so rows with no shipping date yet are excluded from the
-                    late-shipment rate denominator &mdash; they are neither late nor on time. Carriers are
-                    counted as integrated when the shipping company name contains @Model.CarrierKeywordList.
+                    late-shipment rate denominator &mdash; they are neither late nor on time. Shipping
+                    company names are canonicalised first (from the tracking URL where there is one,
+                    otherwise from the name itself), and a carrier counts as integrated when that canonical
+                    name contains @Model.CarrierKeywordList.
                     A single order with multiple line items counts each line separately.
+                    The Excel button on this row exports all twelve metrics, including the four shown above.
                 </p>
 
-                <div class="section-title">Order volume trend</div>
-                <div class="card">
-                    <partial name="_ExportButton" model='new ExportButton("trendChart", "Orders per day")' />
-                    <h3>Orders per day</h3>
-                    <p class="sub">Grouped by date created</p>
-                    <div class="chart-box"><canvas id="trendChart"></canvas></div>
+                <div class="section-title" id="sec-volume" data-section="Volume &amp; mix">Volume &amp; status mix</div>
+                <div class="grid-lead">
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("trendChart", "Orders per day")' />
+                        <h3>Order lines per day</h3>
+                        <p class="sub">Grouped by date created</p>
+                        <div class="chart-box"><canvas id="trendChart"></canvas></div>
+                    </div>
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("statusChart", "Status distribution")' />
+                        <h3>Status mix</h3>
+                        <p class="sub">Share of order lines by Mirakl status</p>
+                        <div class="chart-box is-donut"><canvas id="statusChart"></canvas></div>
+                        <div class="chart-legend" id="statusChart-legend"></div>
+                    </div>
                 </div>
 
-                <div class="section-title">Seller performance vs. shipping deadline</div>
-                <div class="grid-2">
+                <div class="section-title" id="sec-sellers" data-section="Sellers">Seller performance vs. shipping deadline</div>
+                <div class="grid-2x2">
                     <div class="card accent-green">
                         <partial name="_ExportButton" model='new ExportButton("best-sellers-list", "Best on-time sellers")' />
                         <h3>Best on-time sellers</h3>
@@ -201,52 +228,52 @@
                         <p class="sub">Lowest on-time shipment rate (minimum sample size applied)</p>
                         <ul class="perf-list" id="worst-sellers-list"></ul>
                     </div>
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("lateChart", "Late shipment top 5")' />
+                        <h3>Late shipment &mdash; top 5</h3>
+                        <p class="sub">
+                            Sellers with the most late-shipped order lines &mdash; the percentage beside each
+                            bar is that seller&rsquo;s own late rate, over their shipped lines
+                        </p>
+                        <div class="chart-box"><canvas id="lateChart"></canvas></div>
+                    </div>
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("cancelChart", "Cancellations top 5")' />
+                        <h3>Cancellations &mdash; top 5</h3>
+                        <p class="sub">
+                            Sellers with the most canceled order lines &mdash; the percentage beside each bar
+                            is that seller&rsquo;s own cancellation rate, over all of their order lines
+                        </p>
+                        <div class="chart-box"><canvas id="cancelChart"></canvas></div>
+                    </div>
                 </div>
 
-                <div class="section-title">Status distribution &amp; carrier performance</div>
-                <div class="grid-2">
-                    <div class="card">
-                        <partial name="_ExportButton" model='new ExportButton("statusChart", "Status distribution")' />
-                        <h3>Status distribution</h3>
-                        <p class="sub">Share of order lines by Mirakl status</p>
-                        <div class="chart-box"><canvas id="statusChart"></canvas></div>
-                    </div>
-                    <div class="card">
-                        <partial name="_ExportButton" model='new ExportButton("carrierChart", "Hours to receive by carrier")' />
-                        <h3>Avg. hours to receive by carrier</h3>
-                        <p class="sub">Top 8 carriers by volume &mdash; integrated carriers in accent, manual in red</p>
-                        <div class="chart-box"><canvas id="carrierChart"></canvas></div>
-                    </div>
+                <div class="section-title" id="sec-carriers" data-section="Carriers">Carrier performance</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("carrierChart", "Hours to receive by carrier")' />
+                    <h3>Avg. hours to receive by carrier</h3>
+                    <p class="sub">
+                        Top 8 carriers by volume &mdash; carriers that report delivery themselves in the
+                        series colour, the ones somebody has to tick by hand in amber
+                    </p>
+                    <div class="chart-box"><canvas id="carrierChart"></canvas></div>
                 </div>
                 <div class="card">
                     <partial name="_ExportButton" model='new ExportButton("carrier-volume-wrap", "Order lines by carrier")' />
                     <h3>Order lines by carrier</h3>
                     <p class="sub">
                         How the volume splits across shipping companies &mdash; busiest first, counted over
-                        every order line rather than the delivered ones the chart above measures
+                        every order line rather than the delivered ones the chart above measures. Sellers type
+                        the company name by hand, so every spelling of one carrier is counted as that carrier;
+                        hover a name to see which spellings folded into it.
                     </p>
                     <div class="table-scroll" id="carrier-volume-wrap"></div>
-                </div>
-
-                <div class="section-title">Late shipment &amp; cancellation &mdash; top 5 sellers</div>
-                <div class="grid-2">
-                    <div class="card">
-                        <partial name="_ExportButton" model='new ExportButton("lateChart", "Late shipment top 5")' />
-                        <h3>Late shipment &mdash; top 5</h3>
-                        <p class="sub">Sellers with the most late-shipped order lines</p>
-                        <div class="chart-box"><canvas id="lateChart"></canvas></div>
-                    </div>
-                    <div class="card">
-                        <partial name="_ExportButton" model='new ExportButton("cancelChart", "Cancellations top 5")' />
-                        <h3>Cancellations &mdash; top 5</h3>
-                        <p class="sub">Sellers with the most canceled order lines</p>
-                        <div class="chart-box"><canvas id="cancelChart"></canvas></div>
-                    </div>
+                    <p class="table-note" id="carrier-volume-note" hidden></p>
                 </div>
 
                 @* ---------- extended analysis ---------- *@
 
-                <div class="section-title">
+                <div class="section-title" id="sec-delivery" data-section="Delivery quality">
                     Delivery quality
                     <partial name="_ExportButton" model='new ExportButton("delivery-kpis", "Delivery quality")' />
                 </div>
@@ -260,7 +287,7 @@
                     &ldquo;Key metrics&rdquo; above are the original ported metric, which does include them.
                 </p>
 
-                <div class="section-title">Cancellation, rejection &amp; refund breakdown</div>
+                <div class="section-title" id="sec-cancellations" data-section="Cancellations">Cancellation, rejection &amp; refund breakdown</div>
                 <div class="card">
                     <partial name="_ExportButton" model='new ExportButton("cancel-class-wrap", "Outcome breakdown")' />
                     <h3>Outcome breakdown</h3>
@@ -276,7 +303,8 @@
                         <partial name="_ExportButton" model='new ExportButton("cancelClassChart", "Outcome mix")' />
                         <h3>Outcome mix</h3>
                         <p class="sub">Share of order lines by how they ended</p>
-                        <div class="chart-box"><canvas id="cancelClassChart"></canvas></div>
+                        <div class="chart-box is-donut"><canvas id="cancelClassChart"></canvas></div>
+                        <div class="chart-legend" id="cancelClassChart-legend"></div>
                     </div>
                     <div class="card">
                         <partial name="_ExportButton" model='new ExportButton("cancel-reason-wrap", "Customer cancellation reasons")' />
@@ -293,7 +321,7 @@
                     <div class="table-scroll" id="cancel-detail-wrap"></div>
                 </div>
 
-                <div class="section-title">Lead time (SLA) analysis</div>
+                <div class="section-title" id="sec-lead-time" data-section="Lead time">Lead time (SLA) analysis</div>
                 <div class="card accent-green">
                     <partial name="_ExportButton" model='new ExportButton("lt-opportunity-wrap", "Sellers who could promise less")' />
                     <h3>Sellers who could promise a shorter lead time</h3>
@@ -315,7 +343,7 @@
                     the seller per product group instead of applying it across the board.
                 </p>
 
-                <div class="section-title">Category performance</div>
+                <div class="section-title" id="sec-categories" data-section="Categories">Category performance</div>
                 <div class="grid-2">
                     <div class="card">
                         <partial name="_ExportButton" model='new ExportButton("categoryRevenueChart", "Top categories by revenue")' />
@@ -331,7 +359,7 @@
                     </div>
                 </div>
 
-                <div class="section-title">Data quality &amp; exceptions</div>
+                <div class="section-title" id="sec-data-quality" data-section="Data quality">Data quality &amp; exceptions</div>
                 <div class="card accent-amber">
                     <partial name="_ExportButton" model='new ExportButton("dq-wrap", "Exception checks")' />
                     <h3>Exception checks</h3>
@@ -348,7 +376,7 @@
 
             <header class="page-head">
                 <div>
-                    <h1>Return SLA Report</h1>
+                    <h1 data-eyebrow="Mirakl &middot; Report">Return SLA Report</h1>
                     <p class="lede">
                         Upload the Mirakl <strong>orders</strong> export plus <strong>at least one</strong> of the two
                         return tracking templates &mdash; a template you leave out simply contributes no rows. Rows
@@ -430,44 +458,75 @@
                     <button type="button" class="btn btn-primary" id="return-apply">Apply filter</button>
                     <button type="button" class="btn btn-ghost" id="return-reset">Reset</button>
                     <span class="filter-summary" id="return-filter-summary"></span>
+
+                    <nav class="section-nav" id="return-section-nav" aria-label="Report sections"></nav>
                 </div>
 
-                <div class="section-title">Overview</div>
+                <div class="section-title" id="return-sec-overview" data-section="Overview">
+                    Overview
+                    <partial name="_ExportButton" model='new ExportButton("return-kpis", "Overview")' />
+                </div>
                 <div class="kpi-grid" id="return-kpis"></div>
+                <p class="table-note" id="return-consistency"></p>
                 <p class="note">
-                    The SLA is 15 days from the date the return was shipped back to the seller. Orders past that
-                    window whose return is still not confirmed (no Refused / Canceled / Refunded / Rejected status
-                    from the seller) are flagged as <strong>SLA breached</strong>. Orders past 10 days but not yet
-                    at 15 appear in the early-warning list. Return template A has no dedicated ship-date column, so
-                    &ldquo;Talep Tarihi&rdquo; (request date) is used as the closest available proxy for the SLA
-                    start date.
+                    Every return row is matched to the orders export on the <strong>bare customer order
+                    number</strong>: the templates carry <code>321097726</code> while the export carries the full
+                    <code>01259_321097726-A</code>, and the tables below show the full form the row resolved to.
+                    The SLA verdict comes from that order&rsquo;s status &mdash; a return is
+                    <strong>completed</strong> once its order reads Refused / Canceled / Refunded / Rejected, and
+                    only a return that is still open can breach the 15-day SLA or raise the 10-day warning.
+                    One customer order splits per seller into <code>&hellip;-A</code> / <code>&hellip;-B</code>, so a
+                    bare number can hit several orders; the seller id on the template decides, and where it cannot,
+                    the row is only given a verdict when every candidate agrees. Anything left undecided is listed
+                    under <em>Needs review</em> instead of being counted as a breach.
+                    Return template A has no dedicated ship-date column, so &ldquo;Talep Tarihi&rdquo; (request
+                    date) is used as the closest available proxy for the SLA start date, read day-first.
                 </p>
 
-                <div class="section-title">SLA breached &mdash; past 15 days, return not completed</div>
+                <div class="section-title" id="return-sec-breach" data-section="SLA breach">SLA breached &mdash; past 15 days, return not completed</div>
                 <div class="card accent-red">
+                    <partial name="_ExportButton" model='new ExportButton("overdue-wrap", "SLA breach")' />
                     <h3>SLA breach</h3>
-                    <p class="sub">More than 15 days since the return was shipped, and the return is still open</p>
+                    <p class="sub">
+                        More than 15 days since the return was shipped, and the order still carries no closing
+                        status
+                    </p>
                     <div class="table-scroll" id="overdue-wrap"></div>
                 </div>
 
-                <div class="section-title">Past 10 days &mdash; early warning</div>
+                <div class="section-title" id="return-sec-warning" data-section="Early warning">Past 10 days &mdash; early warning</div>
                 <div class="card accent-amber">
+                    <partial name="_ExportButton" model='new ExportButton("warning-wrap", "Early warning")' />
                     <h3>Early warning</h3>
-                    <p class="sub">Between 10 and 15 days since the return was shipped</p>
+                    <p class="sub">Between 10 and 15 days since the return was shipped, and still open</p>
                     <div class="table-scroll" id="warning-wrap"></div>
                 </div>
 
-                <div class="section-title">Refund time on canceled &amp; returned orders</div>
+                <div class="section-title" id="return-sec-review" data-section="Needs review">Needs review &mdash; no verdict possible</div>
+                <div class="card accent-amber">
+                    <partial name="_ExportButton" model='new ExportButton("review-wrap", "Needs review")' />
+                    <h3>Rows that could not be resolved</h3>
+                    <p class="sub">
+                        A return whose order is not in the uploaded export, or whose bare number matches several
+                        orders that disagree, has no status to be late against &mdash; it is listed here rather
+                        than counted as a breach
+                    </p>
+                    <div class="table-scroll" id="review-wrap"></div>
+                </div>
+
+                <div class="section-title" id="return-sec-refund" data-section="Refund time">Refund time on canceled &amp; returned orders</div>
                 <div class="card accent-navy">
+                    <partial name="_ExportButton" model='new ExportButton("payment-wrap", "Refund time")' />
                     <h3>Refund time (order created &rarr; customer debit date)</h3>
                     <p class="sub">Orders whose status is Refused / Canceled / Refunded / Rejected</p>
                     <div class="table-scroll" id="payment-wrap"></div>
                 </div>
 
-                <div class="section-title">All matched return records</div>
+                <div class="section-title" id="return-sec-all" data-section="All records">All return records</div>
                 <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("all-wrap", "All return records")' />
                     <h3>Detail list</h3>
-                    <p class="sub">Every row that carries a cargo or YK tracking code</p>
+                    <p class="sub">Every row that carries a real cargo or YK tracking code</p>
                     <div class="table-scroll" id="all-wrap"></div>
                 </div>
 
@@ -480,7 +539,7 @@
 
             <header class="page-head">
                 <div>
-                    <h1>Ticket &rarr; Seller</h1>
+                    <h1 data-eyebrow="Mirakl &middot; Lookup">Ticket &rarr; Seller</h1>
                     <p class="lede">
                         Upload the Oracle <strong>case list</strong> and the Mirakl <strong>orders</strong> export.
                         Cases in an <strong>HQ queue</strong> are matched to the orders file on their order number,
@@ -599,7 +658,7 @@
 
             <header class="page-head">
                 <div>
-                    <h1>Create Return</h1>
+                    <h1 data-eyebrow="Mirakl &middot; Automation">Create Return</h1>
                     <p class="lede">
                         Files a return on the Mirakl back office for every row of the uploaded workbook, by
                         driving a real browser window. Unlike the report modules this one
@@ -860,7 +919,7 @@
 
             <header class="page-head">
                 <div>
-                    <h1>Mark as Received</h1>
+                    <h1 data-eyebrow="Mirakl &middot; Automation">Mark as Received</h1>
                     <p class="lede">
                         Opens each order on the Mirakl back office and clicks every
                         <strong>Mark as received</strong> button it finds, confirming where Mirakl asks for
@@ -964,7 +1023,7 @@
 
             <header class="page-head">
                 <div>
-                    <h1>Late Order Warnings</h1>
+                    <h1 data-eyebrow="WhatsApp &middot; Automation">Late Order Warnings</h1>
                     <p class="lede">
                         Finds the orders that are <strong>overdue right now</strong> &mdash; not shipped, and past
                         their shipping deadline &mdash; groups them by seller, and composes one warning message per
@@ -1318,7 +1377,7 @@
 
             <header class="page-head">
                 <div>
-                    <h1>Data &amp; Methodology</h1>
+                    <h1 data-eyebrow="Reference">Data &amp; Methodology</h1>
                     <p class="lede">
                         Which column every number on these dashboards comes from, how it is calculated, and
                         what the calculation deliberately excludes. The thresholds and code lists on this page
@@ -1370,7 +1429,7 @@
                                 <tr><td><code>Shipping deadline</code></td><td><span class="badge red">required</span></td><td>Late / on-time shipment, SLA margin</td></tr>
                                 <tr><td><code>Shipping date</code></td><td><span class="badge red">required</span></td><td>Late / on-time shipment, time to ship, transit</td></tr>
                                 <tr><td><code>Reason</code></td><td><span class="badge red">required</span></td><td>Detects auto-closed lines; carried into the Excel <em>Data</em> sheet</td></tr>
-                                <tr><td><code>Shipping company</code></td><td><span class="badge red">required</span></td><td>Carrier performance, order lines per carrier, and the integrated / manual split</td></tr>
+                                <tr><td><code>Shipping company</code></td><td><span class="badge red">required</span></td><td>Carrier performance, order lines per carrier, and the integrated / manual split &mdash; canonicalised, since sellers type it by hand</td></tr>
                                 <tr><td><code>Received date</code></td><td><span class="badge red">required</span></td><td>Transit time, order-to-delivery time</td></tr>
 
                                 <tr><td><code>Acceptance date</code></td><td><span class="badge amber">optional</span></td><td>Delivery quality &mdash; acceptance time</td></tr>
@@ -1382,6 +1441,7 @@
                                 <tr><td><code>Total refunded amount (including taxes)</code></td><td><span class="badge amber">optional</span></td><td>Ranks the line-level table in the cancellation breakdown</td></tr>
                                 <tr><td><code>Order with invoice</code></td><td><span class="badge amber">optional</span></td><td>Invoice coverage, data quality</td></tr>
                                 <tr><td><code>Category label</code></td><td><span class="badge amber">optional</span></td><td>Category performance</td></tr>
+                                <tr><td><code>Tracking URL</code></td><td><span class="badge amber">optional</span></td><td>Names the carrier from its own tracking site when it is filled in &mdash; the strongest signal there is for merging carrier spellings</td></tr>
                                 <tr><td><code>Brand</code></td><td><span class="badge amber">optional</span></td><td>Reserved &mdash; sent to the browser but not charted yet</td></tr>
                                 <tr><td><code>Shipping address city</code></td><td><span class="badge amber">optional</span></td><td>Reserved &mdash; sent to the browser but not charted yet</td></tr>
                             </tbody>
@@ -1499,9 +1559,28 @@
                                     <td>Also excludes auto-closed lines.</td>
                                 </tr>
                                 <tr>
+                                    <td><strong>Carrier name</strong></td>
+                                    <td>Which shipping company carried the line.</td>
+                                    <td>
+                                        <code>Tracking URL</code> where it is filled in &mdash; its host names the carrier &mdash;
+                                        otherwise <code>Shipping company</code> matched against: @Model.CanonicalCarrierList.
+                                        Matching folds case, Turkish letters and punctuation, so <em>YURTİÇİ</em>,
+                                        <em>Yurtiçi</em> and <em>yurtici</em> are one carrier.
+                                    </td>
+                                    <td>
+                                        Sellers type this field by hand, so one carrier arrives spelled several ways and
+                                        splits into several rows if it is counted raw. A name that matches nothing on the
+                                        list is <strong>never</strong> attached to a similar one &mdash; it keeps its own
+                                        row and merges only with its own spellings, which are listed on the carrier
+                                        name&rsquo;s tooltip in <em>Order lines by carrier</em>. Lines with no shipping
+                                        company at all are left out of that table and counted underneath it, so the
+                                        shares are taken over the lines that name a carrier.
+                                    </td>
+                                </tr>
+                                <tr>
                                     <td><strong>Integrated vs. manual carrier</strong></td>
                                     <td>Whether delivery confirmation arrives automatically.</td>
-                                    <td><code>Shipping company</code> contains any of: @Model.CarrierKeywordList (case-insensitive).</td>
+                                    <td>The canonical carrier name above contains any of: @Model.CarrierKeywordList (case-insensitive).</td>
                                     <td>A manual carrier's delivery time reflects when somebody ticked the box, not when the parcel arrived.</td>
                                 </tr>
                                 <tr>

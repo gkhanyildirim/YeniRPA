@@ -12,6 +12,9 @@ public sealed class MethodologyViewModel
     public IReadOnlyList<string> RequiredColumns { get; init; } = OrderReportBuilder.RequiredColumns;
     public IReadOnlyList<string> OptionalColumns { get; init; } = OrderReportBuilder.OptionalColumns;
     public IReadOnlyList<string> IntegratedCarrierKeywords { get; init; } = OrderReportBuilder.IntegratedCarrierKeywords;
+
+    /// <summary>The carrier names free-text shipping companies are folded onto, in catalogue order.</summary>
+    public IReadOnlyList<string> CanonicalCarriers { get; init; } = [.. CarrierNames.Catalog.Select(c => c.Name)];
     public IReadOnlyList<CancellationReasonLabel> ReasonLabels { get; init; } = OrderReportBuilder.ReasonLabels;
 
     public string CanceledStatus { get; init; } = OrderReportBuilder.CanceledStatus;
@@ -27,4 +30,5 @@ public sealed class MethodologyViewModel
     public int MinLeadTimeSample { get; init; } = OrderReportBuilder.MinLeadTimeSample;
 
     public string CarrierKeywordList => string.Join(", ", IntegratedCarrierKeywords);
+    public string CanonicalCarrierList => string.Join(", ", CanonicalCarriers);
 }

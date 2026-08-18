@@ -3,18 +3,25 @@
 
    All SLA arithmetic (elapsed days, slaMissed, pastWarning, isConfirmedReturn,
    refund time) happens server-side in ReturnSlaReportBuilder — this file only
-   groups, filters and renders. The filters and the six KPIs are a direct port of
-   the old server-generated dashboard, translated to English.
+   groups, filters and renders.
 
-   Note that pastWarning is deliberately NOT gated on isConfirmedReturn, matching
-   the original: a completed return sitting at 12 days still counts as a warning
-   row, but the green "Return completed" badge wins in the status column.
+   Each row now carries how it resolved against the orders export: `matchState`
+   is 'matched', 'matched-by-status' (a bare number that hit several full ones
+   which all agree), 'ambiguous' or 'not-found'. Only the first two can carry an
+   SLA verdict, so the last two are listed on their own for review rather than
+   counted as breaches — a return whose order we cannot find has no status to be
+   late against.
    ============================================================================= */
 
 (function (RPA) {
   'use strict';
 
-  const UNMATCHED_STATUS = 'Not matched in orders file';
+  const MATCHED = 'matched';
+  const MATCHED_BY_STATUS = 'matched-by-status';
+  const AMBIGUOUS = 'ambiguous';
+  const NOT_FOUND = 'not-found';
+
+  const isResolved = r => r.matchState === MATCHED || r.matchState === MATCHED_BY_STATUS;
 
   let ROWS = [];
   let PAYMENT_ROWS = [];
@@ -33,31 +40,73 @@
   // Columns
   // ---------------------------------------------------------------------------
 
-  const statusBadge = r => {
-    if (r.isConfirmedReturn) return '<span class="badge green">Return completed</span>';
-    if (r.slaMissed) return '<span class="badge red">SLA breached</span>';
-    if (r.pastWarning) return '<span class="badge amber">10-day warning</span>';
-    return '<span class="badge">' + RPA.escapeHtml(r.status || '-') + '</span>';
+  /**
+   * The verdict badge and the order's own Mirakl status, side by side. The badge alone hid the very
+   * thing an operator checks by hand — "what does the orders file actually say about this order?"
+   */
+  const statusCell = r => {
+    const verdict = r.isConfirmedReturn ? '<span class="badge green">Return completed</span>'
+      : r.slaMissed ? '<span class="badge red">SLA breached</span>'
+      : r.pastWarning ? '<span class="badge amber">10-day warning</span>'
+      : r.matchState === NOT_FOUND ? '<span class="badge amber">Not in orders</span>'
+      : r.matchState === AMBIGUOUS ? '<span class="badge amber">Ambiguous</span>'
+      : '<span class="badge">Return open</span>';
+
+    return verdict + ' <span class="cell-sub">' + RPA.escapeHtml(r.status || '-') + '</span>';
+  };
+
+  /**
+   * The full Mirakl number the bare template number resolved to. A bare number can hit both halves
+   * of a split order, so the count is shown when it did.
+   */
+  const orderCell = r => {
+    const number = RPA.escapeHtml(r.orderNumber || '-');
+    return r.matchCount > 1
+      ? number + ' <span class="badge amber">' + r.matchCount + ' matches</span>'
+      : number;
   };
 
   const baseColumns = [
-    { label: 'Source', render: r => RPA.escapeHtml(r.source) },
-    { label: 'Order number', render: r => RPA.escapeHtml(r.orderNumber), numeric: true },
-    { label: 'Seller', render: r => RPA.escapeHtml(r.seller) },
-    { label: 'Status', render: r => statusBadge(r) },
-    { label: 'Shipped to seller', render: r => RPA.escapeHtml(r.shippedToSellerDate || '-'), numeric: true },
-    { label: 'Elapsed', render: r => RPA.fmtDays(r.elapsedDays), numeric: true },
-    { label: 'Reason / detail', render: r => RPA.escapeHtml(r.reason || '-') }
+    { label: 'Source', filter: 'select', render: r => RPA.escapeHtml(r.source) },
+    { label: 'Order number', numeric: true, filter: 'text',
+      value: r => r.orderNumber, render: r => orderCell(r) },
+    { label: 'Source no', numeric: true, filter: 'text',
+      value: r => r.sourceOrderNumber, render: r => RPA.escapeHtml(r.sourceOrderNumber || '-') },
+    { label: 'Seller', filter: 'text', value: r => r.seller, render: r => RPA.escapeHtml(r.seller) },
+    { label: 'Status', filter: 'text', value: r => r.status, render: r => statusCell(r) },
+    { label: 'Shipped to seller', numeric: true, value: r => r.shippedToSellerDate || '',
+      render: r => RPA.escapeHtml(r.shippedToSellerDate || '-') },
+    { label: 'Elapsed', numeric: true, filter: 'number',
+      value: r => (r.elapsedDays === null || r.elapsedDays === undefined ? null : r.elapsedDays),
+      render: r => RPA.fmtDays(r.elapsedDays) },
+    { label: 'Reason / detail', filter: 'text', render: r => RPA.escapeHtml(r.reason || '-') }
   ];
 
+  // Why a row could not be given an SLA verdict — the whole point of the review list.
+  const reviewColumns = baseColumns.slice(0, 4).concat([
+    { label: 'Why', filter: 'select', value: r => reviewReason(r), render: r => RPA.escapeHtml(reviewReason(r)) },
+    { label: 'Shipped to seller', numeric: true, value: r => r.shippedToSellerDate || '',
+      render: r => RPA.escapeHtml(r.shippedToSellerDate || '-') },
+    { label: 'Elapsed', numeric: true, filter: 'number',
+      value: r => (r.elapsedDays === null || r.elapsedDays === undefined ? null : r.elapsedDays),
+      render: r => RPA.fmtDays(r.elapsedDays) }
+  ]);
+
+  const reviewReason = r => r.matchState === NOT_FOUND
+    ? 'Order number is not in the uploaded orders export'
+    : 'Bare number matches ' + r.matchCount + ' orders whose statuses disagree';
+
   const paymentColumns = [
-    { label: 'Order number', render: r => RPA.escapeHtml(r.orderNumber), numeric: true },
-    { label: 'Seller', render: r => RPA.escapeHtml(r.seller) },
-    { label: 'Status', render: r => RPA.escapeHtml(r.status) },
-    { label: 'Amount', render: r => RPA.fmtMoney(r.amount, r.currency), numeric: true },
-    { label: 'Order date', render: r => RPA.escapeHtml(r.dateCreated), numeric: true },
-    { label: 'Debit date', render: r => RPA.escapeHtml(r.debitDate), numeric: true },
-    { label: 'Refund time', render: r => RPA.fmtDays(r.paymentDays), numeric: true }
+    { label: 'Order number', numeric: true, filter: 'text', value: r => r.orderNumber,
+      render: r => RPA.escapeHtml(r.orderNumber) },
+    { label: 'Seller', filter: 'text', value: r => r.seller, render: r => RPA.escapeHtml(r.seller) },
+    { label: 'Status', filter: 'select', value: r => r.status, render: r => RPA.escapeHtml(r.status) },
+    { label: 'Amount', numeric: true, filter: 'number', value: r => r.amount,
+      render: r => RPA.fmtMoney(r.amount, r.currency) },
+    { label: 'Order date', numeric: true, value: r => r.dateCreated, render: r => RPA.escapeHtml(r.dateCreated) },
+    { label: 'Debit date', numeric: true, value: r => r.debitDate, render: r => RPA.escapeHtml(r.debitDate) },
+    { label: 'Refund time', numeric: true, filter: 'number', value: r => r.paymentDays,
+      render: r => RPA.fmtDays(r.paymentDays) }
   ];
 
   // ---------------------------------------------------------------------------
@@ -65,25 +114,65 @@
   // ---------------------------------------------------------------------------
 
   function renderAll(rows, paymentRows) {
+    const resolved = rows.filter(isResolved);
     const overdue = rows.filter(r => r.slaMissed);
     const warning = rows.filter(r => r.pastWarning);
     const confirmedReturns = rows.filter(r => r.isConfirmedReturn);
-    const notMatched = rows.filter(r => r.status === UNMATCHED_STATUS);
+    const review = rows.filter(r => !isResolved(r));
+    const open = resolved.filter(r => !r.isConfirmedReturn);
 
     RPA.renderKpis('return-kpis', [
-      ['Total return records', RPA.fmtInt(rows.length), ''],
-      ['SLA breached', RPA.fmtInt(overdue.length), 'red'],
-      ['10-day warning', RPA.fmtInt(warning.length), 'amber'],
-      ['Completed returns', RPA.fmtInt(confirmedReturns.length), 'green'],
-      ['Unmatched records', RPA.fmtInt(notMatched.length), 'amber'],
-      ['Refund payment records', RPA.fmtInt(paymentRows.length), '']
-    ]);
+      { group: 'Records' },
+      ['Return records', RPA.fmtInt(rows.length), '', 'rows with a real tracking code'],
+      ['Matched to an order', RPA.fmtInt(resolved.length), resolved.length === rows.length ? 'green' : '',
+        RPA.fmtInt(review.length) + ' could not be resolved'],
+      ['Refund payment records', RPA.fmtInt(paymentRows.length), '', 'from the orders file alone'],
+      { group: 'Returns still open' },
+      ['SLA breached', RPA.fmtInt(overdue.length), overdue.length ? 'red' : 'green',
+        'more than ' + (rows.length && rows[0].slaDays ? rows[0].slaDays : 15) + ' days, still open'],
+      ['10-day warning', RPA.fmtInt(warning.length), warning.length ? 'amber' : 'green',
+        'between 10 and 15 days'],
+      ['Open returns', RPA.fmtInt(open.length), '', 'matched, no closing status yet'],
+      { group: 'Closed & unresolved' },
+      ['Completed returns', RPA.fmtInt(confirmedReturns.length), 'green',
+        'order refused / canceled / refunded / rejected'],
+      ['Needs review', RPA.fmtInt(review.length), review.length ? 'amber' : 'green',
+        'not in the export, or ambiguous']
+    ], {
+      exportRows: [
+        ['Return records', RPA.fmtInt(rows.length)],
+        ['Matched to an order', RPA.fmtInt(resolved.length)],
+        ['SLA breached', RPA.fmtInt(overdue.length)],
+        ['10-day warning', RPA.fmtInt(warning.length)],
+        ['Open returns', RPA.fmtInt(open.length)],
+        ['Completed returns', RPA.fmtInt(confirmedReturns.length)],
+        ['Needs review', RPA.fmtInt(review.length)],
+        ['Refund payment records', RPA.fmtInt(paymentRows.length)]
+      ]
+    });
 
-    RPA.renderTable('overdue-wrap', overdue, baseColumns, 'No SLA-breached orders found.');
-    RPA.renderTable('warning-wrap', warning, baseColumns, 'No orders past the 10-day mark.');
-    RPA.renderTable('payment-wrap', paymentRows, paymentColumns,
+    RPA.renderDataTable('overdue-wrap', overdue, baseColumns,
+      'No SLA-breached returns — every return past 15 days has a closing status on its order.');
+    RPA.renderDataTable('warning-wrap', warning, baseColumns, 'No open returns past the 10-day mark.');
+    RPA.renderDataTable('review-wrap', review, reviewColumns,
+      'Every return record was matched to an order in the export.');
+    RPA.renderDataTable('payment-wrap', paymentRows, paymentColumns,
       'No canceled or returned orders with a known debit date.');
-    RPA.renderTable('all-wrap', rows, baseColumns, 'No matched return records found.');
+    RPA.renderDataTable('all-wrap', rows, baseColumns, 'No return records found.', { maxRows: 500 });
+
+    // The four buckets partition the record set; if they ever stop adding up, the report is lying.
+    const summary = document.getElementById('return-consistency');
+    if (summary) {
+      const accounted = confirmedReturns.length + overdue.length + warning.length +
+        open.filter(r => !r.slaMissed && !r.pastWarning).length + review.length;
+      summary.textContent = RPA.fmtInt(rows.length) + ' return records = ' +
+        RPA.fmtInt(confirmedReturns.length) + ' completed + ' +
+        RPA.fmtInt(overdue.length) + ' breached + ' +
+        RPA.fmtInt(warning.length) + ' warned + ' +
+        RPA.fmtInt(open.filter(r => !r.slaMissed && !r.pastWarning).length) + ' open within SLA + ' +
+        RPA.fmtInt(review.length) + ' to review' +
+        (accounted === rows.length ? '' : ' — MISMATCH, ' + RPA.fmtInt(accounted) + ' accounted for');
+    }
   }
 
   function applyFilter() {
@@ -112,12 +201,20 @@
       });
     }
 
-    document.getElementById('return-filter-summary').textContent = ((from || to)
+    const summary = ((from || to)
       ? 'Showing ' + filteredRows.length.toLocaleString('en-US') + ' of ' +
         ROWS.length.toLocaleString('en-US') + ' return records'
       : 'Showing all ' + ROWS.length.toLocaleString('en-US') + ' return records') + MISSING_NOTE;
 
+    document.getElementById('return-filter-summary').textContent = summary;
+
+    // Printed under the title of every sheet exported from here, so a download says which slice of
+    // the upload it came from.
+    RPA.setExportContext('Return SLA Report · ' +
+      ((from || to) ? 'Shipped ' + (fromVal || '…') + ' → ' + (toVal || '…') + ' · ' : '') + summary);
+
     renderAll(filteredRows, filteredPayments);
+    RPA.syncExportButtons();
   }
 
   function render(data) {
@@ -126,11 +223,15 @@
 
     document.getElementById('return-date-from').value = '';
     document.getElementById('return-date-to').value = '';
+    RPA.resetDataTables();
     RPA.seedDateRange('return-date-from', 'return-date-to', ROWS.map(r => r.shippedToSellerDate));
     RPA.stamp('return-stamp');
 
     document.getElementById('return-results').hidden = false;
     applyFilter();
+
+    RPA.initSectionNav('return-section-nav', 'return-results');
+    RPA.revealResults('return-results');
   }
 
   // ---------------------------------------------------------------------------

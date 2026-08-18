@@ -54,7 +54,23 @@ public static partial class OrderReportBuilder
     public const int MinLeadTimeSample = 2;
 
     /// <summary>Carrier name fragments (case-insensitive) that have an automatic "Received" integration.</summary>
-    public static readonly string[] IntegratedCarrierKeywords = ["Aras", "Yurtici", "Yurtiçi", "DHL", "Hepsijet"];
+    public static readonly string[] IntegratedCarrierKeywords = ["Aras", "Yurtici", "Yurtiçi", "DHL", "Hepsijet", "MNG"];
+
+    /// <summary>
+    /// Applies the keyword rule to a <em>canonical</em> carrier name from <see cref="CarrierNames"/>
+    /// rather than to the text the seller typed, so one carrier cannot end up with an Integrated
+    /// badge on one spelling and a Manual badge on another. Both sides are folded, which is what
+    /// lets the keyword "Yurtici" match the canonical "Yurtiçi Kargo".
+    /// </summary>
+    static bool IsIntegratedCarrier(string canonicalName)
+    {
+        var folded = CarrierNames.Fold(canonicalName);
+        if (folded.Length == 0)
+            return false;
+
+        return IntegratedCarrierKeywords.Any(keyword =>
+            folded.Contains(CarrierNames.Fold(keyword), StringComparison.Ordinal));
+    }
 
     /// <summary>
     /// Cancellation reason codes as written into "Cancellation Request Payload". The export carries
@@ -98,7 +114,8 @@ public static partial class OrderReportBuilder
         bool HasInvoice,
         string Category,
         string Brand,
-        string City);
+        string City,
+        string TrackingUrl);
 
     /// <summary>
     /// Optional columns, i.e. the ones the extended dashboard sections read. A file missing any of
@@ -119,7 +136,7 @@ public static partial class OrderReportBuilder
         "Acceptance date", "Cancellation Request Status", "Cancellation Request Payload",
         "Lead time to ship", "Amount transferred to seller (including taxes)",
         "Total canceled amount (including taxes)", "Total refunded amount (including taxes)",
-        "Order with invoice", "Category label", "Brand", "Shipping address city",
+        "Order with invoice", "Category label", "Brand", "Shipping address city", "Tracking URL",
     ];
 
     public static byte[] Build(Stream inputStream)
@@ -130,8 +147,15 @@ public static partial class OrderReportBuilder
 
         using var workbook = new XLWorkbook();
 
+        // The workbook and the dashboard go through the same index so the two outputs cannot merge
+        // carriers differently — the Carrier Group column reads the canonical name written here.
+        var carrierIndex = new CarrierIndex();
+        var carrierSlots = rows.Select(r => carrierIndex.IndexOf(r.ShippingCompany, r.TrackingUrl)).ToList();
+        var carrierGroups = carrierIndex.ToGroups();
+        var carrierNames = carrierSlots.Select(slot => carrierGroups[slot].Name).ToList();
+
         var dataSheet = workbook.AddWorksheet("Data");
-        WriteDataSheet(dataSheet, rows);
+        WriteDataSheet(dataSheet, rows, carrierNames);
         var lastDataRow = rows.Count + 1;
 
         var top5Late = rows
@@ -229,6 +253,7 @@ public static partial class OrderReportBuilder
         var categories = new Interner();
         var brands = new Interner();
         var cities = new Interner();
+        var carriers = new CarrierIndex();
 
         var payload = rows
             .Select(r => new OrderReportRow(
@@ -241,7 +266,7 @@ public static partial class OrderReportBuilder
                 sh: Iso(r.ShippingDate),
                 rd: Iso(r.ReceivedDate),
                 rsn: r.Reason,
-                sc: r.ShippingCompany,
+                k: carriers.IndexOf(r.ShippingCompany, r.TrackingUrl),
                 ord: NullIfEmpty(r.OrderNumber),
                 ac: Iso(r.AcceptanceDate),
                 crs: CompressRequestStatus(r.CancellationRequestStatus),
@@ -258,7 +283,7 @@ public static partial class OrderReportBuilder
 
         return new OrderReportData(
             payload,
-            IntegratedCarrierKeywords,
+            carriers.ToGroups(),
             CanceledStatus,
             RefundedStatus,
             ReceivedStatus,
@@ -301,6 +326,74 @@ public static partial class OrderReportBuilder
             _index[value] = next;
             return next;
         }
+    }
+
+    /// <summary>
+    /// The carrier equivalent of <see cref="Interner"/>, with the merging <see cref="CarrierNames"/>
+    /// performs folded in: a line joins the group of its canonical carrier, or — when nothing in the
+    /// catalogue recognises it — the group of its own folded spelling, so <c>SÜRAT KARGO</c> and
+    /// <c>sürat kargo</c> still land together. Every raw spelling that arrives is counted, which is
+    /// what supplies both the display name of an unrecognised group and the variant list shown on
+    /// the carrier table.
+    /// </summary>
+    sealed class CarrierIndex
+    {
+        readonly Dictionary<string, int> _index = new(StringComparer.Ordinal);
+        readonly List<Bucket> _buckets = [new Bucket(null)]; // slot 0 = no shipping company recorded
+
+        sealed class Bucket(string? canonical)
+        {
+            /// <summary>The catalogue name, or null when this group is a bare folded spelling.</summary>
+            public string? Canonical { get; } = canonical;
+
+            public Dictionary<string, int> Spellings { get; } = new(StringComparer.Ordinal);
+        }
+
+        public int IndexOf(string shippingCompany, string trackingUrl)
+        {
+            var raw = (shippingCompany ?? "").Trim();
+            var canonical = CarrierNames.Resolve(raw, trackingUrl);
+
+            // Prefixed so a catalogue name and a folded spelling can never collide on one key.
+            var key = canonical is not null ? "c:" + canonical : "r:" + CarrierNames.Fold(raw);
+            if (canonical is null && key.Length == 2)
+                return 0; // nothing to group on: no name, and no tracking URL that named a carrier
+
+            if (!_index.TryGetValue(key, out var index))
+            {
+                _buckets.Add(new Bucket(canonical));
+                index = _buckets.Count - 1;
+                _index[key] = index;
+            }
+
+            if (raw.Length > 0)
+            {
+                var spellings = _buckets[index].Spellings;
+                spellings[raw] = spellings.TryGetValue(raw, out var seen) ? seen + 1 : 1;
+            }
+
+            return index;
+        }
+
+        /// <summary>
+        /// Materialises the dictionary the dashboard indexes into. An unrecognised group is labelled
+        /// with its most common spelling rather than with its fold key, so the table keeps showing
+        /// the carrier the way the sellers write it.
+        /// </summary>
+        public IReadOnlyList<CarrierGroup> ToGroups() => [.. _buckets.Select((bucket, i) =>
+        {
+            if (i == 0)
+                return new CarrierGroup("", false, []);
+
+            var variants = bucket.Spellings
+                .OrderByDescending(pair => pair.Value)
+                .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => pair.Key)
+                .ToList();
+
+            var name = bucket.Canonical ?? (variants.Count > 0 ? variants[0] : "");
+            return new CarrierGroup(name, IsIntegratedCarrier(name), variants);
+        })];
     }
 
     static List<OrderRow> ReadOrders(Stream inputStream) => ReadOrders(inputStream, out _);
@@ -360,6 +453,7 @@ public static partial class OrderReportBuilder
         var cCategory = Opt("Category label");
         var cBrand = Opt("Brand");
         var cCity = Opt("Shipping address city");
+        var cTrackingUrl = Opt("Tracking URL");
 
         missingColumns = OptionalColumns.Where(name => !columnIndex.ContainsKey(name)).ToList();
 
@@ -404,7 +498,8 @@ public static partial class OrderReportBuilder
                 HasInvoice: string.Equals(Text(row, cInvoice), "yes", StringComparison.OrdinalIgnoreCase),
                 Category: Text(row, cCategory),
                 Brand: Text(row, cBrand),
-                City: Text(row, cCity)));
+                City: Text(row, cCity),
+                TrackingUrl: Text(row, cTrackingUrl)));
         }
 
         return rows;
@@ -466,7 +561,15 @@ public static partial class OrderReportBuilder
         return double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0;
     }
 
-    static void WriteDataSheet(IXLWorksheet sheet, List<OrderRow> rows)
+    /// <summary>
+    /// Writes the Data sheet. <paramref name="carrierNames"/> is parallel to <paramref name="rows"/>
+    /// and holds the canonical carrier per line.
+    ///
+    /// <para>The canonical name is appended as the <em>last</em> column on purpose: the Summary and
+    /// Top-5 sheets address this one by column letter, so inserting anywhere earlier would silently
+    /// repoint every one of their formulas.</para>
+    /// </summary>
+    static void WriteDataSheet(IXLWorksheet sheet, List<OrderRow> rows, List<string> carrierNames)
     {
         ApplyBaseFont(sheet);
 
@@ -475,7 +578,7 @@ public static partial class OrderReportBuilder
             "Seller", "Order Number", "Date Created", "Status", "Quantity", "Amount", "Currency",
             "Shipping Deadline", "Shipping Date", "Cancellation/Rejection Reason",
             "Late Shipment?", "Canceled?", "Shipping Company", "Received Date", "Carrier Group",
-            "Hours to Ship", "Hours to Receive"
+            "Hours to Ship", "Hours to Receive", "Carrier (Normalized)"
         ];
 
         for (var i = 0; i < headers.Length; i++)
@@ -523,10 +626,16 @@ public static partial class OrderReportBuilder
                 sheet.Cell(r, 14).Value = row.ReceivedDate.Value;
             sheet.Cell(r, 14).Style.DateFormat.Format = "yyyy-mm-dd hh:mm";
 
-            // Carrier Group: carriers with automatic "Received" integration vs. manually marked ones.
+            // Carrier (Normalized): every spelling of one carrier folded to a single name, so the
+            // group below and any pivot built on this sheet count a carrier once.
+            sheet.Cell(r, 18).Value = carrierNames[i];
+
+            // Carrier Group: carriers with automatic "Received" integration vs. manually marked
+            // ones. Read off the normalized name (R) rather than the seller's free text (M), which
+            // is what keeps this column agreeing with the dashboard's Integrated/Manual badge.
             var carrierSearchTerms = string.Join(",",
-                IntegratedCarrierKeywords.Select(k => $"ISNUMBER(SEARCH(\"{k}\",M{r}))"));
-            sheet.Cell(r, 15).FormulaA1 = $"=IF(M{r}=\"\",\"{ManualGroup}\",IF(OR({carrierSearchTerms}),\"{IntegratedGroup}\",\"{ManualGroup}\"))";
+                IntegratedCarrierKeywords.Select(k => $"ISNUMBER(SEARCH(\"{k}\",R{r}))"));
+            sheet.Cell(r, 15).FormulaA1 = $"=IF(R{r}=\"\",\"{ManualGroup}\",IF(OR({carrierSearchTerms}),\"{IntegratedGroup}\",\"{ManualGroup}\"))";
 
             // Hours to Ship: Date Created -> Shipping Date, "-" until shipped.
             sheet.Cell(r, 16).FormulaA1 = $"=IF(I{r}=\"\",\"{LateNa}\",(I{r}-C{r})*24)";

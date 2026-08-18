@@ -67,6 +67,66 @@ internal static class TabularFile
         return null;
     }
 
+    /// <summary>
+    /// Parses a date written by the return templates, which put the <b>day first</b>.
+    ///
+    /// <para><see cref="ParseDate"/> leads with <c>DateTime.TryParse(…, InvariantCulture)</c>, which is
+    /// month-first and accepts '.' as a separator: it reads "12.08.2026" as 8 December and
+    /// "07.08.2026" as 8 July. Every date whose day <em>and</em> month are 12 or under comes back
+    /// transposed, which moves rows in and out of a date range and — in the SLA report — changes how
+    /// many days a return has been open.</para>
+    ///
+    /// <para>Started life as <c>ReturnListBuilder.ParseTemplateDate</c>; moved here unchanged when the
+    /// Return SLA report needed the same day-first reading of "Talep Tarihi".</para>
+    /// </summary>
+    public static DateTime? ParseDayFirstDate(string text)
+    {
+        text = text.Trim();
+        if (text.Length == 0)
+            return null;
+
+        string[] dayFirstFormats =
+        [
+            "dd.MM.yyyy HH:mm", "dd.MM.yyyy HH:mm:ss", "dd.MM.yyyy",
+            "d.M.yyyy HH:mm", "d.M.yyyy",
+            "yyyy-MM-dd HH:mm:ss.fffffff", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd",
+        ];
+
+        if (DateTime.TryParseExact(text, dayFirstFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            return parsed;
+
+        // An unexpected shape is better read leniently than dropped; only the ambiguous day/month
+        // case above needed pinning down.
+        return ParseDate(text);
+    }
+
+    /// <summary>What a tracking-code cell on a return template actually contains.</summary>
+    public enum TrackingState { Missing, Malformed, Ok }
+
+    /// <summary>
+    /// Reads a return template's tracking-code cell.
+    ///
+    /// <para>The MP export writes the literal text <c>NULL</c> into the tracking column on three rows
+    /// out of four (1991 of 2685 on the sample export). Testing "is it empty" would count those rows
+    /// as shipped back to the seller, which is the difference between a return that is running late
+    /// and one that was never sent. Every real code on both templates is digits only; anything else
+    /// is surfaced for review rather than trusted.</para>
+    ///
+    /// <para>Started life as <c>ReturnListBuilder.ReadTracking</c>; moved here unchanged when the
+    /// Return SLA report needed the same rule.</para>
+    /// </summary>
+    public static (TrackingState State, string Code) ReadTracking(string raw)
+    {
+        var code = raw.Trim();
+
+        if (code.Length == 0 || code.Equals("NULL", StringComparison.OrdinalIgnoreCase))
+            return (TrackingState.Missing, "");
+
+        return code.All(char.IsAsciiDigit)
+            ? (TrackingState.Ok, code)
+            : (TrackingState.Malformed, code);
+    }
+
     public static double ParseNumber(string text)
     {
         text = text.Trim();

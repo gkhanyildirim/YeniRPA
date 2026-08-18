@@ -31,7 +31,13 @@ public sealed record OrderReportRow(
     [property: JsonPropertyName("sh")] string? sh,
     [property: JsonPropertyName("rd")] string? rd,
     [property: JsonPropertyName("rsn")] string rsn,
-    [property: JsonPropertyName("sc")] string sc,
+
+    /// <summary>
+    /// Index into <see cref="OrderReportData.Carriers"/>; absent when the line records no shipping
+    /// company. The raw text is deliberately not sent per row — the same carrier is spelled several
+    /// ways across an export, and the dictionary is what merges them.
+    /// </summary>
+    [property: JsonPropertyName("k"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int k = 0,
 
     /// <summary>Order number. Needed by the cancellation detail list so a finding can be acted on.</summary>
     [property: JsonPropertyName("ord"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? ord = null,
@@ -73,6 +79,18 @@ public sealed record OrderReportRow(
     [property: JsonPropertyName("yi"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int yi = 0);
 
 /// <summary>
+/// One shipping company after the spellings have been merged: the name to print, whether it reports
+/// deliveries automatically, and the raw values that folded into it.
+/// </summary>
+/// <param name="Variants">Every distinct spelling found in the upload, most frequent first. Shown
+/// on the carrier table so a merge is visible rather than silent — an operator reconciling a
+/// carrier invoice can see exactly which strings were counted together.</param>
+public sealed record CarrierGroup(
+    [property: JsonPropertyName("n")] string Name,
+    [property: JsonPropertyName("i")] bool Integrated,
+    [property: JsonPropertyName("v")] IReadOnlyList<string> Variants);
+
+/// <summary>
 /// Cancellation reason codes carry no human-readable text in the export, so the mapping lives here
 /// and travels with the payload — the dashboard never hard-codes it.
 /// </summary>
@@ -83,7 +101,14 @@ public sealed record CancellationReasonLabel(
 
 public sealed record OrderReportData(
     [property: JsonPropertyName("rows")] IReadOnlyList<OrderReportRow> Rows,
-    [property: JsonPropertyName("carrierKeywords")] IReadOnlyList<string> CarrierKeywords,
+
+    /// <summary>
+    /// Dictionary for <see cref="OrderReportRow.k"/>. Index 0 is the "not recorded" slot. The
+    /// integrated flag is decided here rather than in the browser, so the keyword rule is applied
+    /// to the canonical name once instead of to every spelling of it.
+    /// </summary>
+    [property: JsonPropertyName("carriers")] IReadOnlyList<CarrierGroup> Carriers,
+
     [property: JsonPropertyName("canceledStatus")] string CanceledStatus,
 
     /// <summary>Status that marks a line as refunded after delivery, as opposed to canceled before it.</summary>
@@ -129,11 +154,36 @@ public sealed record OrderReportData(
 // Return SLA report
 // ---------------------------------------------------------------------------
 
-/// <summary>One matched return candidate: a template row that carries a tracking number.</summary>
+/// <summary>
+/// One return candidate: a template row that carries a real tracking code, resolved against the
+/// orders export.
+/// </summary>
 public sealed record ReturnSlaRow(
     [property: JsonPropertyName("source")] string Source,
+
+    /// <summary>
+    /// The full Mirakl order number the row resolved to (<c>01259_321097726-A</c>). When the bare
+    /// number matched several orders and none of them could be singled out, every candidate is
+    /// listed; when nothing matched, the number as it appears in the template is repeated here.
+    /// </summary>
     [property: JsonPropertyName("orderNumber")] string OrderNumber,
+
+    /// <summary>The bare number as the return template wrote it — what an operator searches by.</summary>
+    [property: JsonPropertyName("sourceOrderNumber")] string SourceOrderNumber,
+
+    /// <summary>
+    /// How the row resolved: <c>matched</c>, <c>matched-by-status</c> (several orders, all agreeing
+    /// on whether the return completed), <c>ambiguous</c> or <c>not-found</c>. Only the first two
+    /// can carry an SLA verdict.
+    /// </summary>
+    [property: JsonPropertyName("matchState")] string MatchState,
+
+    /// <summary>How many full order numbers the bare number matched.</summary>
+    [property: JsonPropertyName("matchCount")] int MatchCount,
+
     [property: JsonPropertyName("seller")] string Seller,
+
+    /// <summary>The order's status as the export writes it, or why the row could not be resolved.</summary>
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("shippedToSellerDate")] string? ShippedToSellerDate,
     [property: JsonPropertyName("elapsedDays")] double? ElapsedDays,

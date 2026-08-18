@@ -24,7 +24,7 @@
      s   seller            dc  date created (ISO)   st  status
      amt amount            cur currency             sd  shipping deadline
      sh  shipping date     rd  received date        rsn reason
-     sc  shipping company
+     k   carrier index (into data.carriers; 0 = no shipping company recorded)
 
    Extended fields are omitted from the JSON when they hold their default, so
    every read has to fall back to 0 / '' rather than assume the key is present:
@@ -43,7 +43,13 @@
   let MIN_LEAD_TIME_SAMPLE = 2;
 
   let ROWS = [];
-  let INTEGRATED_KEYWORDS = [];
+
+  // Carrier groups as the server merged them: { n: name, i: integrated, v: [raw spellings] }.
+  // Index 0 is the "no shipping company recorded" slot.
+  let CARRIERS = [{ n: '', i: false, v: [] }];
+
+  /** Distinct seller names, for the filter bar's type-ahead list. */
+  let SELLERS = [];
   let CANCELED_STATUS = 'Canceled';
   let REFUNDED_STATUS = 'Refunded';
   let RECEIVED_STATUS = 'Received';
@@ -60,11 +66,15 @@
   // Rules
   // ---------------------------------------------------------------------------
 
-  function isIntegratedCarrier(company) {
-    if (!company) return false;
-    const c = company.toLowerCase();
-    return INTEGRATED_KEYWORDS.some(k => c.includes(k.toLowerCase()));
-  }
+  /**
+   * The carrier of a line, already merged across the spellings the sellers typed. The keyword rule
+   * that decides Integrated vs. Manual now runs once per carrier on the server, against the
+   * canonical name — so one carrier can no longer carry both badges because someone wrote it two
+   * ways.
+   */
+  const carrierOf = r => CARRIERS[r.k || 0] || CARRIERS[0];
+  const carrierName = r => carrierOf(r).n;
+  const isIntegratedCarrier = r => carrierOf(r).i;
 
   function groupBy(arr, keyFn) {
     const m = new Map();
@@ -158,29 +168,115 @@
   }
 
   /**
-   * A chart exports as the two-column table it was drawn from, so a card whose only content is a
-   * canvas still has something to download.
+   * A chart exports as the table it was drawn from, so a card whose only content is a canvas still
+   * has something to download. `extra` adds one more column — the rate printed beside the bars.
    */
-  function registerChartExport(id, labelHeader, valueHeader, labels, data) {
+  function registerChartExport(id, labelHeader, valueHeader, labels, data, extra) {
+    const columns = [{ label: labelHeader }, { label: valueHeader, numeric: true }];
+    if (extra) columns.push({ label: extra.header, numeric: true });
+
     RPA.registerExport(id, {
-      columns: [{ label: labelHeader }, { label: valueHeader, numeric: true }],
-      rows: labels.map((label, i) => [label, data[i]])
+      columns,
+      rows: labels.map((label, i) => (extra ? [label, data[i], extra.values[i]] : [label, data[i]]))
     });
   }
 
-  function hBar(id, labels, data, color, labelHeader, valueHeader) {
-    registerChartExport(id, labelHeader, valueHeader, labels, data);
+  /**
+   * Horizontal bar chart. `rates` turns on the value labels: each bar is annotated with its count
+   * and the rate that count came from, because "95 late" says nothing until you know whether it is
+   * 95 out of 100 or 95 out of 10,000.
+   *
+   * rates = { values: [0.124, …], denominators: [766, …], header: 'Late shipment rate',
+   *           noun: 'late', denominatorNoun: 'shipped' }
+   */
+  function hBar(id, labels, data, color, labelHeader, valueHeader, rates) {
+    registerChartExport(id, labelHeader, valueHeader, labels, data,
+      rates ? { header: rates.header, values: rates.values.map(v => +(v * 100).toFixed(1)) } : null);
 
     const p = RPA.palette();
+    const barLabels = rates ? data.map((v, i) => RPA.fmtInt(v) + ' · ' + RPA.fmtPct(rates.values[i])) : null;
+
     charts[id] = new Chart(document.getElementById(id), {
       type: 'bar',
       data: { labels, datasets: [{ data, backgroundColor: color, borderRadius: 4, maxBarThickness: 26 }] },
+      plugins: barLabels ? [RPA.barLabelPlugin] : [],
       options: {
         indexAxis: 'y', maintainAspectRatio: false, responsive: true,
-        plugins: { legend: { display: false } },
+        // The labels are painted past the end of the longest bar, so the plot area has to give
+        // that space back or they are drawn off-canvas.
+        layout: barLabels ? { padding: { right: 96 } } : {},
+        plugins: {
+          legend: { display: false },
+          rpaBarLabels: { labels: barLabels },
+          tooltip: rates ? {
+            callbacks: {
+              label: ctx => RPA.fmtInt(ctx.parsed.x) + ' ' + rates.noun + ' of ' +
+                RPA.fmtInt(rates.denominators[ctx.dataIndex]) + ' ' + rates.denominatorNoun +
+                ' — ' + RPA.fmtPct(rates.values[ctx.dataIndex])
+            }
+          } : {}
+        },
         scales: {
           x: { beginAtZero: true, grid: { color: p.line }, border: { display: false } },
           y: { grid: { display: false }, border: { display: false } }
+        }
+      }
+    });
+  }
+
+  /**
+   * Doughnut with the total printed in the hole and an HTML legend under it.
+   *
+   * `slices` are `{ label, value, color }`. A null colour takes the next categorical slot — that is
+   * how the status mix gets identity colours, while the outcome mix passes its own semantic ones
+   * (a seller cancellation is not "series 3", it is a bad outcome, and it stays red).
+   */
+  function doughnut(id, slices, options) {
+    const opts = options || {};
+    const p = RPA.palette();
+    const shown = slices.filter(s => s.value > 0);
+    const colors = shown.map((s, i) => s.color || p.series[i % p.series.length]);
+    const total = shown.reduce((sum, s) => sum + s.value, 0);
+
+    registerChartExport(id, opts.labelHeader || 'Label', opts.valueHeader || 'Order lines',
+      shown.map(s => s.label), shown.map(s => s.value));
+
+    if (opts.legend) {
+      RPA.chartLegend(opts.legend, shown.map((s, i) => ({
+        label: s.label,
+        color: colors[i],
+        value: RPA.fmtInt(s.value) + ' · ' + RPA.fmtPct(total ? s.value / total : 0)
+      })));
+    }
+
+    return new Chart(document.getElementById(id), {
+      type: 'doughnut',
+      data: {
+        labels: shown.map(s => s.label),
+        datasets: [{
+          data: shown.map(s => s.value),
+          backgroundColor: colors,
+          // A 2px ring in the surface colour keeps neighbouring arcs from bleeding into each other.
+          borderColor: p.surface,
+          borderWidth: 2,
+          hoverOffset: 5
+        }]
+      },
+      plugins: [RPA.doughnutCenterPlugin],
+      options: {
+        maintainAspectRatio: false, responsive: true, cutout: '62%',
+        plugins: {
+          legend: { display: false },
+          rpaDoughnutCenter: {
+            value: RPA.fmtInt(opts.total === undefined ? total : opts.total),
+            label: opts.totalLabel
+          },
+          tooltip: {
+            callbacks: {
+              label: ctx => ' ' + RPA.fmtInt(ctx.parsed) + ' · ' +
+                RPA.fmtPct(total ? ctx.parsed / total : 0)
+            }
+          }
         }
       }
     });
@@ -220,28 +316,53 @@
    * same. Lines with no shipping company keep a row of their own so the counts add up to the total.
    */
   function renderCarrierVolume(rows) {
-    const total = rows.length;
-    const carriers = [...groupBy(rows, r => r.sc || '').entries()]
-      .map(([carrier, list]) => ({
-        carrier,
-        count: list.length,
-        share: total ? list.length / total : 0,
-        integrated: isIntegratedCarrier(carrier)
-      }))
+    // Lines with no shipping company are not a carrier, so they are neither a row nor part of the
+    // denominator — the shares are read as "of the lines that name a carrier" and add up to 100%.
+    // The count is printed under the table instead, so it is left out but not lost.
+    const recorded = rows.filter(r => r.k);
+    const missing = rows.length - recorded.length;
+    const total = recorded.length;
+
+    const carriers = [...groupBy(recorded, r => r.k).entries()]
+      .map(([key, list]) => {
+        const carrier = CARRIERS[key] || CARRIERS[0];
+        return {
+          carrier: carrier.n,
+          variants: carrier.v || [],
+          count: list.length,
+          share: total ? list.length / total : 0,
+          integrated: carrier.i
+        };
+      })
       .sort((a, b) => b.count - a.count);
 
-    RPA.renderTable('carrier-volume-wrap', carriers, [
-      { label: 'Carrier', render: x => (x.carrier ? RPA.escapeHtml(x.carrier) : 'Not recorded') },
-      { label: 'Order lines', numeric: true, value: x => x.count, render: x => RPA.fmtInt(x.count) },
+    const note = document.getElementById('carrier-volume-note');
+    if (note) {
+      note.hidden = missing === 0;
+      note.textContent = missing
+        ? RPA.fmtInt(missing) + ' order line' + (missing === 1 ? '' : 's') +
+          ' name no shipping company and are left out of this table; shares are taken over the ' +
+          RPA.fmtInt(total) + ' lines that do.'
+        : '';
+    }
+
+    RPA.renderDataTable('carrier-volume-wrap', carriers, [
+      // The spellings that folded into one carrier stay on the cell's tooltip: the merge remains
+      // checkable without a badge on every second row.
+      { label: 'Carrier', filter: 'text', value: x => x.carrier, render: x =>
+          '<span' + (x.variants.length > 1
+            ? ' title="' + RPA.escapeHtml(x.variants.join(' · ')) + '"'
+            : '') + '>' + RPA.escapeHtml(x.carrier) + '</span>' },
+      { label: 'Order lines', numeric: true, filter: 'number', value: x => x.count,
+        render: x => RPA.fmtInt(x.count) },
       { label: 'Share', numeric: true, value: x => +(x.share * 100).toFixed(1),
         render: x => RPA.fmtPct(x.share) },
-      { label: 'Delivery reporting', render: x => {
-          if (!x.carrier) return '—';
-          return x.integrated
-            ? '<span class="badge green">Integrated</span>'
-            : '<span class="badge amber">Manual</span>';
-        } }
-    ], 'No order lines in the selected range.');
+      { label: 'Delivery reporting', filter: 'select',
+        value: x => (x.integrated ? 'Integrated' : 'Manual'),
+        render: x => x.integrated
+          ? '<span class="badge green">Integrated</span>'
+          : '<span class="badge amber">Manual</span>' }
+    ], 'No order line in the selected range names a shipping company.');
   }
 
   function computeAndRender(rows) {
@@ -269,8 +390,8 @@
     const avgHoursToShip = shipDurations.length ? shipDurations.reduce((a, b) => a + b, 0) / shipDurations.length : 0;
 
     const receivedRows = rows.filter(r => r.sh && r.rd);
-    const integratedDurations = receivedRows.filter(r => isIntegratedCarrier(r.sc)).map(r => (new Date(r.rd) - new Date(r.sh)) / 3.6e6);
-    const manualDurations = receivedRows.filter(r => !isIntegratedCarrier(r.sc)).map(r => (new Date(r.rd) - new Date(r.sh)) / 3.6e6);
+    const integratedDurations = receivedRows.filter(isIntegratedCarrier).map(r => (new Date(r.rd) - new Date(r.sh)) / 3.6e6);
+    const manualDurations = receivedRows.filter(r => !isIntegratedCarrier(r)).map(r => (new Date(r.rd) - new Date(r.sh)) / 3.6e6);
     const avgHoursReceiveIntegrated = avg(integratedDurations);
     const avgHoursReceiveManual = avg(manualDurations);
 
@@ -279,46 +400,101 @@
     const sortedCurrencies = Object.entries(currencyCounts).sort((a, b) => b[1] - a[1]);
     const primaryCurrency = sortedCurrencies.length ? sortedCurrencies[0][0] : '';
 
+    const trendMap = {};
+    rows.forEach(r => { if (r.dc) { const d = r.dc.slice(0, 10); trendMap[d] = (trendMap[d] || 0) + 1; } });
+    const trendEntries = Object.entries(trendMap).sort((a, b) => a[0].localeCompare(b[0]));
+
+    const sellerCount = new Set(rows.map(r => r.s).filter(Boolean)).size;
+
+    // The four figures the report exists to answer, set large above everything else. They are the
+    // same numbers as the twelve key metrics below — the whole list still travels to Excel through
+    // `exportRows`, so the workbook and the Summary sheet keep their nine boxes either way.
+    RPA.renderHero('order-hero', [
+      { value: RPA.fmtInt(totalLines), label: 'Order lines',
+        context: RPA.fmtInt(sellerCount) + ' seller' + (sellerCount === 1 ? '' : 's') + ' · ' +
+                 RPA.fmtInt(shipped) + ' shipped' },
+      { value: RPA.fmtPct(receivedRate), label: 'Received rate',
+        tone: receivedRate >= 0.9 ? 'green' : receivedRate >= 0.75 ? 'amber' : 'red',
+        context: RPA.fmtInt(received) + ' of ' + RPA.fmtInt(totalLines) + ' lines' },
+      // Above 5% is where these two stop being background noise and start being a problem worth
+      // opening the report for, which is the only reason they are ever painted red.
+      { value: RPA.fmtPct(lateRate), label: 'Late shipment rate', tone: lateRate > 0.05 ? 'red' : 'green',
+        context: RPA.fmtInt(lateShipped) + ' of ' + RPA.fmtInt(shipped) + ' shipped lines' },
+      { value: RPA.fmtPct(cancelRate), label: 'Cancellation rate', tone: cancelRate > 0.05 ? 'red' : 'green',
+        context: RPA.fmtInt(canceled) + ' of ' + RPA.fmtInt(totalLines) + ' lines' }
+    ], {
+      spark: trendEntries.map(e => e[1]),
+      sparkLabel: 'Order lines / day',
+      sparkRange: trendEntries.length
+        ? trendEntries[0][0].slice(5) + ' → ' + trendEntries[trendEntries.length - 1][0].slice(5)
+        : ''
+    });
+
+    // A tile only turns red when there is something red about it: nought rejected lines is a good
+    // result, and painting the zero red would tell the opposite story at a glance.
+    const badIf = count => (count > 0 ? 'red' : 'green');
+
     RPA.renderKpis('order-kpis', [
-      ['Total order lines', RPA.fmtInt(totalLines), ''],
-      ['Received orders', RPA.fmtInt(received), 'green'],
-      ['Received rate', RPA.fmtPct(receivedRate), 'green'],
-      ['Rejected orders', RPA.fmtInt(rejected), 'red'],
-      ['Rejection rate', RPA.fmtPct(rejectedRate), 'red'],
-      ['Late shipped', RPA.fmtInt(lateShipped), 'red'],
-      ['Late shipment rate', RPA.fmtPct(lateRate), 'red'],
-      ['Canceled orders', RPA.fmtInt(canceled), 'red'],
-      ['Cancellation rate', RPA.fmtPct(cancelRate), 'red'],
-      ['Avg. hours to ship', RPA.fmtHours(avgHoursToShip), ''],
-      ['Avg. hours to receive (integrated)', RPA.fmtHours(avgHoursReceiveIntegrated), 'green'],
-      ['Avg. hours to receive (manual)', RPA.fmtHours(avgHoursReceiveManual), 'red']
-    ]);
+      { group: 'Outcome — read from the Status column alone' },
+      ['Received orders', RPA.fmtInt(received), 'green', RPA.fmtPct(receivedRate) + ' of all lines'],
+      ['Rejected orders', RPA.fmtInt(rejected), badIf(rejected), RPA.fmtPct(rejectedRate) + ' of all lines'],
+      ['Rejection rate', RPA.fmtPct(rejectedRate), badIf(rejected), 'over every order line'],
+      { group: 'Shipping deadline & cancellations' },
+      ['Late shipped', RPA.fmtInt(lateShipped), badIf(lateShipped), 'of ' + RPA.fmtInt(shipped) + ' shipped lines'],
+      ['Canceled orders', RPA.fmtInt(canceled), badIf(canceled), RPA.fmtPct(cancelRate) + ' of all lines'],
+      { group: 'Speed' },
+      ['Avg. hours to ship', RPA.fmtHours(avgHoursToShip), '', 'created → shipped'],
+      ['Avg. hours to receive (integrated)', RPA.fmtHours(avgHoursReceiveIntegrated), 'green',
+        'carriers that report delivery'],
+      ['Avg. hours to receive (manual)', RPA.fmtHours(avgHoursReceiveManual), 'red',
+        'delivery ticked by hand']
+    ], {
+      exportRows: [
+        ['Total order lines', RPA.fmtInt(totalLines)],
+        ['Received orders', RPA.fmtInt(received)],
+        ['Received rate', RPA.fmtPct(receivedRate)],
+        ['Rejected orders', RPA.fmtInt(rejected)],
+        ['Rejection rate', RPA.fmtPct(rejectedRate)],
+        ['Late shipped', RPA.fmtInt(lateShipped)],
+        ['Late shipment rate', RPA.fmtPct(lateRate)],
+        ['Canceled orders', RPA.fmtInt(canceled)],
+        ['Cancellation rate', RPA.fmtPct(cancelRate)],
+        ['Avg. hours to ship', RPA.fmtHours(avgHoursToShip)],
+        ['Avg. hours to receive (integrated)', RPA.fmtHours(avgHoursReceiveIntegrated)],
+        ['Avg. hours to receive (manual)', RPA.fmtHours(avgHoursReceiveManual)]
+      ]
+    });
 
     // Status distribution
     const statusMap = {};
     rows.forEach(r => { if (r.st) statusMap[r.st] = (statusMap[r.st] || 0) + 1; });
     const statusEntries = Object.entries(statusMap).sort((a, b) => b[1] - a[1]);
 
+    // Both top-5 lists carry the denominator their rate is taken over: the seller's own shipped
+    // lines for late, the seller's own order lines for canceled — the same two denominators the
+    // Key metrics row uses, so a bar and a KPI can never disagree.
     const top5Late = [...groupBy(shippedRows, r => r.s).entries()]
-      .map(([seller, list]) => ({ seller, count: list.filter(r => new Date(r.sh) > new Date(r.sd)).length }))
+      .map(([seller, list]) => ({
+        seller, total: list.length,
+        count: list.filter(r => new Date(r.sh) > new Date(r.sd)).length
+      }))
       .filter(x => x.count > 0).sort((a, b) => b.count - a.count).slice(0, 5);
 
     const top5Canceled = [...groupBy(rows, r => r.s).entries()]
-      .map(([seller, list]) => ({ seller, count: list.filter(r => r.st === CANCELED_STATUS).length }))
+      .map(([seller, list]) => ({
+        seller, total: list.length,
+        count: list.filter(r => r.st === CANCELED_STATUS).length
+      }))
       .filter(x => x.count > 0).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    const carrierGroups = [...groupBy(receivedRows.filter(r => r.sc), r => r.sc).entries()]
-      .map(([carrier, list]) => ({
-        carrier, count: list.length,
+    const carrierGroups = [...groupBy(receivedRows.filter(r => r.k), r => r.k).entries()]
+      .map(([key, list]) => ({
+        carrier: CARRIERS[key].n, count: list.length,
         avgHours: avg(list.map(r => (new Date(r.rd) - new Date(r.sh)) / 3.6e6)),
-        integrated: isIntegratedCarrier(carrier)
+        integrated: CARRIERS[key].i
       }))
       .sort((a, b) => b.count - a.count).slice(0, 8)
       .sort((a, b) => a.avgHours - b.avgHours);
-
-    const trendMap = {};
-    rows.forEach(r => { if (r.dc) { const d = r.dc.slice(0, 10); trendMap[d] = (trendMap[d] || 0) + 1; } });
-    const trendEntries = Object.entries(trendMap).sort((a, b) => a[0].localeCompare(b[0]));
 
     // Seller shipping-deadline performance (best & worst)
     const sellerShipGroups = [...groupBy(shippedRows, r => r.s).entries()]
@@ -347,11 +523,20 @@
       data: {
         labels: trendEntries.map(e => e[0].slice(5)),
         datasets: [{
-          label: 'Orders',
+          label: 'Order lines',
           data: trendEntries.map(e => e[1]),
-          borderColor: p.accent,
-          backgroundColor: RPA.alpha(p.accent, .16),
-          fill: true, tension: .3, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2
+          borderColor: p.series[0],
+          // Painted from the plot area's own geometry, so the fill fades out at the baseline
+          // instead of sitting on the axis as a block of colour.
+          backgroundColor: context => {
+            const area = context.chart.chartArea;
+            if (!area) return 'transparent';
+            const gradient = context.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+            gradient.addColorStop(0, RPA.alpha(p.series[0], .30));
+            gradient.addColorStop(1, RPA.alpha(p.series[0], 0));
+            return gradient;
+          },
+          fill: true, tension: .32, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2
         }]
       },
       options: {
@@ -359,8 +544,17 @@
         plugins: { legend: { display: false } },
         interaction: { mode: 'index', intersect: false },
         scales: {
-          y: { beginAtZero: true, grid: { color: p.line }, border: { display: false } },
-          x: { grid: { display: false }, border: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 16 } }
+          y: {
+            beginAtZero: true,
+            grid: { color: p.line, drawTicks: false },
+            border: { display: false, dash: [3, 3] },
+            ticks: { padding: 8, maxTicksLimit: 5 }
+          },
+          x: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: { maxRotation: 0, autoSkipPadding: 20, padding: 6 }
+          }
         }
       }
     });
@@ -368,30 +562,29 @@
     registerChartExport('statusChart', 'Status', 'Order lines',
       statusEntries.map(e => e[0]), statusEntries.map(e => e[1]));
 
-    charts.statusChart = new Chart(document.getElementById('statusChart'), {
-      type: 'doughnut',
-      data: {
-        labels: statusEntries.map(e => e[0]),
-        datasets: [{
-          data: statusEntries.map(e => e[1]),
-          backgroundColor: [p.accent, '#2563EB', p.green, p.red, p.amber, '#7C3AED', '#0EA5E9', '#DB2777'],
-          borderColor: p.surface,
-          borderWidth: 2
-        }]
-      },
-      options: {
-        maintainAspectRatio: false, responsive: true, cutout: '58%',
-        plugins: { legend: { position: 'right', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 } } } }
-      }
-    });
+    charts.statusChart = doughnut('statusChart', statusEntries.map(e => ({
+      label: e[0], value: e[1], color: null
+    })), { total: totalLines, totalLabel: 'order lines', legend: 'statusChart-legend' });
 
     hBar('carrierChart', carrierGroups.map(c => c.carrier), carrierGroups.map(c => +c.avgHours.toFixed(1)),
-      carrierGroups.map(c => (c.integrated ? p.accent : p.red)), 'Carrier', 'Avg. hours to receive');
+      // Integrated vs. manual is a property of the carrier, not a ranking: the series colour marks
+      // the ones that report delivery themselves, amber marks the ones somebody has to tick.
+      carrierGroups.map(c => (c.integrated ? p.series[0] : p.markSerious)), 'Carrier', 'Avg. hours to receive');
     renderCarrierVolume(rows);
-    hBar('lateChart', top5Late.map(x => x.seller), top5Late.map(x => x.count), p.red,
-      'Seller', 'Late shipped lines');
-    hBar('cancelChart', top5Canceled.map(x => x.seller), top5Canceled.map(x => x.count), p.accent,
-      'Seller', 'Canceled lines');
+    hBar('lateChart', top5Late.map(x => x.seller), top5Late.map(x => x.count), p.markCritical,
+      'Seller', 'Late shipped lines', {
+        header: 'Late shipment rate %',
+        values: top5Late.map(x => (x.total ? x.count / x.total : 0)),
+        denominators: top5Late.map(x => x.total),
+        noun: 'late', denominatorNoun: 'shipped lines'
+      });
+    hBar('cancelChart', top5Canceled.map(x => x.seller), top5Canceled.map(x => x.count), p.markSerious,
+      'Seller', 'Canceled lines', {
+        header: 'Cancellation rate %',
+        values: top5Canceled.map(x => (x.total ? x.count / x.total : 0)),
+        denominators: top5Canceled.map(x => x.total),
+        noun: 'canceled', denominatorNoun: 'order lines'
+      });
 
     renderExtended(rows, primaryCurrency, p);
     RPA.syncExportButtons();
@@ -451,29 +644,16 @@
         render: x => RPA.fmtPct(x.share) }
     ], 'No order lines in the selected range.');
 
-    const shown = byOutcome.filter(x => x.count > 0);
-    registerChartExport('cancelClassChart', 'Outcome', 'Order lines',
-      shown.map(x => x.outcome.label), shown.map(x => x.count));
-
-    charts.cancelClassChart = new Chart(document.getElementById('cancelClassChart'), {
-      type: 'doughnut',
-      data: {
-        labels: shown.map(x => x.outcome.label),
-        datasets: [{
-          data: shown.map(x => x.count),
-          backgroundColor: shown.map(x =>
-            x.outcome.tone === 'red' ? p.red :
-            x.outcome.tone === 'amber' ? p.amber :
-            x.outcome.tone === 'green' ? p.green : p.accent),
-          borderColor: p.surface,
-          borderWidth: 2
-        }]
-      },
-      options: {
-        maintainAspectRatio: false, responsive: true, cutout: '58%',
-        plugins: { legend: { position: 'right', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 } } } }
-      }
-    });
+    // Semantic colours, not categorical ones: these five slices are outcomes with a verdict
+    // attached, and the verdict is what the colour has to carry.
+    charts.cancelClassChart = doughnut('cancelClassChart', byOutcome.map(x => ({
+      label: x.outcome.label,
+      value: x.count,
+      color: x.outcome.tone === 'red' ? p.markCritical
+        : x.outcome.tone === 'amber' ? p.markSerious
+        : x.outcome.tone === 'green' ? p.markGood
+        : p.series[0]
+    })), { labelHeader: 'Outcome', total, totalLabel: 'order lines', legend: 'cancelClassChart-legend' });
 
     // Reason codes
     if (!emptyBecauseMissing('cancel-reason-wrap', ['Cancellation Request Payload'])) {
@@ -507,30 +687,33 @@
       ], 'No cancellation requests in the selected range.');
     }
 
-    // Detail list — everything that did not complete cleanly, worst money first.
+    // Detail list — everything that did not complete cleanly, worst money first. The 200-row cap is
+    // applied by the table *after* its own filters, so searching for a seller here searches every
+    // line that did not complete cleanly, not just the 200 costliest.
     const detail = rows
       .filter(r => outcomeOf(r) !== OUTCOME_CLEAN)
       .map(r => ({ r, lost: (r.can || 0) + (r.ref || 0) }))
-      .sort((a, b) => b.lost - a.lost)
-      .slice(0, 200);
+      .sort((a, b) => b.lost - a.lost);
 
-    RPA.renderTable('cancel-detail-wrap', detail, [
-      { label: 'Order', render: x => RPA.escapeHtml(x.r.ord || '—') },
-      { label: 'Seller', render: x => RPA.escapeHtml(x.r.s) },
-      { label: 'Outcome', render: x => {
+    RPA.renderDataTable('cancel-detail-wrap', detail, [
+      { label: 'Order', filter: 'text', value: x => x.r.ord || '—',
+        render: x => RPA.escapeHtml(x.r.ord || '—') },
+      { label: 'Seller', filter: 'text', value: x => x.r.s, render: x => RPA.escapeHtml(x.r.s) },
+      { label: 'Outcome', filter: 'select', render: x => {
           const o = OUTCOMES.find(v => v.id === outcomeOf(x.r));
           return '<span class="badge ' + o.tone + '">' + RPA.escapeHtml(o.label) + '</span>';
         } },
-      { label: 'Category', render: x => RPA.escapeHtml(label(CATEGORIES, x.r.ci)) },
-      { label: 'Reason', render: x => {
+      { label: 'Category', filter: 'text', value: x => label(CATEGORIES, x.r.ci),
+        render: x => RPA.escapeHtml(label(CATEGORIES, x.r.ci)) },
+      { label: 'Reason', filter: 'select', render: x => {
           if (!x.r.crr) return '—';
           const meta = REASON_LABELS[x.r.crr];
           return RPA.escapeHtml(meta ? meta.label : x.r.crr);
         } },
-      { label: 'Already shipped?', render: x => x.r.sh
+      { label: 'Already shipped?', filter: 'select', render: x => x.r.sh
           ? '<span class="badge amber">Yes — return leg cost</span>'
           : 'No' }
-    ], 'Every order line completed normally in the selected range.');
+    ], 'Every order line completed normally in the selected range.', { maxRows: 200 });
   }
 
   function renderLeadTime(rows, cur) {
@@ -570,19 +753,23 @@
 
     const promiseRange = x => (x.minLt === x.maxLt ? x.minLt + ' d' : x.minLt + '–' + x.maxLt + ' d');
 
-    RPA.renderTable('lt-opportunity-wrap', opportunities, [
-      { label: 'Seller', render: x => RPA.escapeHtml(x.seller) },
-      { label: 'Promised (avg.)', numeric: true, value: x => +x.promised.toFixed(1),
+    RPA.renderDataTable('lt-opportunity-wrap', opportunities, [
+      { label: 'Seller', filter: 'text', value: x => x.seller, render: x => RPA.escapeHtml(x.seller) },
+      { label: 'Promised (avg.)', numeric: true, filter: 'number', value: x => +x.promised.toFixed(1),
         render: x => x.promised.toFixed(1) + ' d' },
+      // Sorted and read, never filtered: the cell is a span ("2–15 d"), not a figure to compare.
       { label: 'Promise range', numeric: true, value: promiseRange, render: promiseRange },
-      { label: 'Shipped lines', numeric: true, value: x => x.count, render: x => RPA.fmtInt(x.count) },
-      { label: 'Avg. to ship', numeric: true, value: x => +x.avgHours.toFixed(1),
+      { label: 'Shipped lines', numeric: true, filter: 'number', value: x => x.count,
+        render: x => RPA.fmtInt(x.count) },
+      { label: 'Avg. to ship', numeric: true, filter: 'number', value: x => +x.avgHours.toFixed(1),
         render: x => RPA.fmtHours(x.avgHours) },
-      { label: '90th pct.', numeric: true, value: x => +x.p90.toFixed(1), render: x => RPA.fmtHours(x.p90) },
-      { label: 'SLA usage', numeric: true, value: x => +(x.utilisation * 100).toFixed(1),
+      { label: '90th pct.', numeric: true, filter: 'number', value: x => +x.p90.toFixed(1),
+        render: x => RPA.fmtHours(x.p90) },
+      { label: 'SLA usage', numeric: true, filter: 'number', value: x => +(x.utilisation * 100).toFixed(1),
         render: x => '<span class="badge green">' + RPA.fmtPct(x.utilisation) + '</span>' },
-      { label: 'Suggested', numeric: true, value: x => x.suggested, render: x => x.suggested + ' d' },
-      { label: 'Days to gain', numeric: true, value: x => +x.gain.toFixed(1),
+      { label: 'Suggested', numeric: true, filter: 'number', value: x => x.suggested,
+        render: x => x.suggested + ' d' },
+      { label: 'Days to gain', numeric: true, filter: 'number', value: x => +x.gain.toFixed(1),
         render: x => '<span class="badge green">−' + x.gain.toFixed(1) + ' d</span>' }
     ], 'No seller is shipping a full day earlier than promised (minimum ' +
        MIN_LEAD_TIME_SAMPLE + ' shipped lines per seller).');
@@ -611,7 +798,7 @@
 
     const topRevenue = [...byCategory].sort((a, b) => b.revenue - a.revenue).slice(0, 8);
     hBar('categoryRevenueChart', topRevenue.map(c => c.name),
-      topRevenue.map(c => +c.revenue.toFixed(2)), p.accent,
+      topRevenue.map(c => +c.revenue.toFixed(2)), p.series[0],
       'Category', 'Revenue (' + (cur || 'amount') + ')');
 
     // Ranked by cancellation rate, but only where there is enough volume for the rate to mean
@@ -621,7 +808,7 @@
       .map(c => ({ name: c.name, rate: c.canceled / c.lines }))
       .sort((a, b) => b.rate - a.rate).slice(0, 8);
     hBar('categoryCancelChart', topCancel.map(c => c.name),
-      topCancel.map(c => +(c.rate * 100).toFixed(1)), p.red,
+      topCancel.map(c => +(c.rate * 100).toFixed(1)), p.markCritical,
       'Category', 'Cancellation rate (%)');
   }
 
@@ -685,12 +872,13 @@
   function applyFilter() {
     const fromVal = document.getElementById('order-date-from').value;
     const toVal = document.getElementById('order-date-to').value;
+    const sellerVal = document.getElementById('order-seller').value.trim();
     const from = fromVal ? new Date(fromVal + 'T00:00:00') : null;
     const to = toVal ? new Date(toVal + 'T23:59:59') : null;
 
     let filtered = ROWS;
     if (from || to) {
-      filtered = ROWS.filter(r => {
+      filtered = filtered.filter(r => {
         if (!r.dc) return false;
         const d = new Date(r.dc);
         if (from && d < from) return false;
@@ -699,24 +887,41 @@
       });
     }
 
-    const summary = (from || to)
+    // Picked from the list -> that seller exactly; typed by hand -> everyone whose name contains
+    // it, so a half-remembered name still narrows the dashboard instead of emptying it.
+    let sellerLabel = '';
+    if (sellerVal) {
+      const wanted = RPA.fold(sellerVal);
+      const exact = SELLERS.some(s => RPA.fold(s) === wanted);
+      filtered = filtered.filter(r => {
+        const seller = RPA.fold(r.s);
+        return exact ? seller === wanted : seller.indexOf(wanted) !== -1;
+      });
+      sellerLabel = exact ? sellerVal : 'Seller contains "' + sellerVal + '"';
+    }
+
+    const narrowed = from || to || sellerVal;
+    const summary = narrowed
       ? 'Showing ' + filtered.length.toLocaleString('en-US') + ' of ' + ROWS.length.toLocaleString('en-US') + ' order lines'
       : 'Showing all ' + ROWS.length.toLocaleString('en-US') + ' order lines';
-    document.getElementById('order-filter-summary').textContent = summary;
+    document.getElementById('order-filter-summary').textContent =
+      summary + (sellerLabel ? ' · ' + sellerLabel : '');
 
     // Printed under the title of every section exported from here, so a downloaded sheet says which
     // slice of the file it came from rather than looking like the whole export.
     const range = (from || to)
       ? 'Date created ' + (fromVal || '…') + ' → ' + (toVal || '…') + ' · '
       : '';
-    RPA.setExportContext('Late Shipment & Cancellation Report · ' + range + summary);
+    RPA.setExportContext('Late Shipment & Cancellation Report · ' + range +
+      (sellerLabel ? sellerLabel + ' · ' : '') + summary);
 
     computeAndRender(filtered);
   }
 
   function render(data) {
     ROWS = data.rows || [];
-    INTEGRATED_KEYWORDS = data.carrierKeywords || [];
+    CARRIERS = data.carriers && data.carriers.length ? data.carriers : [{ n: '', i: false, v: [] }];
+    SELLERS = [...new Set(ROWS.map(r => r.s).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
     CANCELED_STATUS = data.canceledStatus || 'Canceled';
     REFUNDED_STATUS = data.refundedStatus || 'Refunded';
     RECEIVED_STATUS = data.receivedStatus || 'Received';
@@ -760,11 +965,19 @@
 
     document.getElementById('order-date-from').value = '';
     document.getElementById('order-date-to').value = '';
+    document.getElementById('order-seller').value = '';
+    RPA.resetDataTables();
+    RPA.fillDatalist('order-seller-list', SELLERS);
     RPA.seedDateRange('order-date-from', 'order-date-to', ROWS.map(r => r.dc));
     RPA.stamp('order-stamp');
 
     document.getElementById('order-results').hidden = false;
     applyFilter();
+
+    // The section index is built from the report itself, so it can only be built once the report
+    // is on screen — and the entrance cascade plays once, on the first report of the session.
+    RPA.initSectionNav('order-section-nav', 'order-results');
+    RPA.revealResults('order-results');
   }
 
   // ---------------------------------------------------------------------------
@@ -829,7 +1042,15 @@
     document.getElementById('order-reset').addEventListener('click', function () {
       document.getElementById('order-date-from').value = '';
       document.getElementById('order-date-to').value = '';
+      document.getElementById('order-seller').value = '';
       applyFilter();
+    });
+
+    // Picking from the datalist fires `change`, not `click`, so the dashboard follows the choice
+    // without a trip to Apply; Enter in the box does the same.
+    document.getElementById('order-seller').addEventListener('change', applyFilter);
+    document.getElementById('order-seller').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') applyFilter();
     });
 
     // Charts bake in theme colours, so redraw them when the theme flips.

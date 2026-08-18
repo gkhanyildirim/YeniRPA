@@ -65,99 +65,188 @@
     U+2C60-2C7F, U+A720-A7FF;
 }
 
-/* ---------- tokens: light ---------- */
+/* ---------- tokens: scales (theme-independent) ---------- */
 
 :root {
-  --bg:            #EEF1F5;
-  --surface:       #FFFFFF;
-  --surface-2:     #F7F9FB;
-  --surface-3:     #EFF3F7;
-
-  --ink:           #0F1720;
-  --ink-2:         #4A5A6B;
-  --ink-3:         #7B8B9C;
-
-  --line:          #DCE3EA;
-  --line-strong:   #C2CDD8;
-
-  --accent:        #0B5FC4;
-  --accent-ink:    #FFFFFF;
-  --accent-soft:   #E3EDFB;
-
-  --red:           #C9312B;
-  --red-soft:      #FBE7E6;
-  --amber:         #9A5B06;
-  --amber-soft:    #FCF0DC;
-  --green:         #0A6B45;
-  --green-soft:    #DEF3E9;
-
   --font-sans: 'IBM Plex Sans VF', ui-sans-serif, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
-  --r-sm: 4px;
-  --r:    8px;
-  --r-lg: 12px;
+  /* One spacing rhythm for the whole app; components pick a step rather than a number. */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 22px;
+  --s-6: 30px;
+  --s-7: 44px;
+  --s-8: 64px;
+
+  --r-xs: 3px;
+  --r-sm: 6px;
+  --r:    10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
 
   --rail-w: 236px;
-  --shadow: 0 1px 2px rgba(15, 23, 32, .05), 0 8px 24px -14px rgba(15, 23, 32, .18);
+
+  --dur:  .16s;
+  --ease: cubic-bezier(.2, .8, .3, 1);
+
+  /* Chart series. Fixed order, assigned by identity and never cycled — a filter that drops a
+     series must not repaint the ones that survive. Both columns are the same eight hues stepped
+     for their surface and validated as a set (lightness band, chroma floor, CVD separation,
+     normal-vision floor, contrast). Status colours are NOT in here on purpose: red/amber/green
+     mean "this is bad / watch it / this is fine" and never stand in for "series 4". */
+  --series-1: #2A78D6;
+  --series-2: #EB6834;
+  --series-3: #1BAF7A;
+  --series-4: #EDA100;
+  --series-5: #E87BA4;
+  --series-6: #008300;
+  --series-7: #4A3AA7;
+  --series-8: #E34948;
+
+  /* Status colours for *marks*, held apart from --red/--amber/--green, which are tuned for text
+     and go muddy when a bar is filled with them. These four are the same in both themes: each
+     clears 3:1 on at least one surface and is always paired with a label, never colour alone. */
+  --mark-critical: #D03B3B;
+  --mark-serious:  #EC835A;
+  --mark-warning:  #FAB219;
+  --mark-good:     #0CA30C;
+}
+
+/* ---------- tokens: light ---------- */
+
+:root {
+  --bg:            #EDF1F6;
+  --bg-glow-1:     rgba(11, 95, 196, .07);
+  --bg-glow-2:     rgba(74, 58, 167, .05);
+  --grain:         .018;
+
+  --surface:       #FFFFFF;
+  --surface-2:     #F6F8FB;
+  --surface-3:     #EAF0F6;
+
+  --ink:           #0C141C;
+  --ink-2:         #46586A;
+  --ink-3:         #7A8B9C;
+
+  --line:          #DEE5EC;
+  --line-strong:   #C3CFDA;
+
+  --accent:        #0B5FC4;
+  --accent-ink:    #FFFFFF;
+  --accent-soft:   #E4EEFC;
+  --accent-glow:   rgba(11, 95, 196, .20);
+
+  --red:           #C0342E;
+  --red-soft:      #FBE8E7;
+  --amber:         #96590A;
+  --amber-soft:    #FBF0DA;
+  --green:         #0A6B45;
+  --green-soft:    #DDF3E8;
+
+  /* A card is a lit surface: hairline ring, a highlight along its top edge, one soft shadow. */
+  --hi:      inset 0 1px 0 rgba(255, 255, 255, .9);
+  --e-1:     0 1px 2px rgba(12, 20, 28, .05);
+  --e-2:     0 2px 4px rgba(12, 20, 28, .04), 0 14px 30px -18px rgba(12, 20, 28, .30);
+  --shadow:  var(--e-2);
 }
 
 /* ---------- tokens: dark ---------- */
 
+/* The dark palette is the one this app is designed around: near-black ink, layered surfaces, a
+   single luminous accent, and colour that only rises when the data is bad. It is declared twice —
+   once for people who never touch the toggle, once for the toggle itself. */
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg:          #0B1015;
-    --surface:     #121A22;
-    --surface-2:   #17212B;
-    --surface-3:   #1D2833;
+    --bg:          #080B10;
+    --bg-glow-1:   rgba(77, 163, 255, .10);
+    --bg-glow-2:   rgba(122, 92, 255, .07);
+    --grain:       .030;
 
-    --ink:         #E4EDF5;
-    --ink-2:       #9BADBE;
-    --ink-3:       #6B7E90;
+    --surface:     #10151C;
+    --surface-2:   #151C25;
+    --surface-3:   #1B242F;
 
-    --line:        #22303C;
-    --line-strong: #33454F;
+    --ink:         #E8F0F8;
+    --ink-2:       #9FB2C4;
+    --ink-3:       #6A7E92;
 
-    --accent:      #59A5FF;
-    --accent-ink:  #06121F;
-    --accent-soft: #142639;
+    --line:        #1E2A36;
+    --line-strong: #2C3B4A;
 
-    --red:         #FF7B7B;
-    --red-soft:    #2C1618;
-    --amber:       #FFBF52;
-    --amber-soft:  #2B2011;
-    --green:       #52D9A0;
-    --green-soft:  #0F2721;
+    --accent:      #4DA3FF;
+    --accent-ink:  #04101C;
+    --accent-soft: #12243A;
+    --accent-glow: rgba(77, 163, 255, .30);
 
-    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 10px 30px -16px rgba(0, 0, 0, .8);
+    --red:         #FF6B6B;
+    --red-soft:    #2A1418;
+    --amber:       #F5B544;
+    --amber-soft:  #2A2011;
+    --green:       #3DD68C;
+    --green-soft:  #0E2A20;
+
+    --series-1: #3987E5;
+    --series-2: #D95926;
+    --series-3: #199E70;
+    --series-4: #C98500;
+    --series-5: #D55181;
+    --series-6: #008300;
+    --series-7: #9085E9;
+    --series-8: #E66767;
+
+    --hi:      inset 0 1px 0 rgba(255, 255, 255, .045);
+    --e-1:     0 1px 2px rgba(0, 0, 0, .5);
+    --e-2:     0 2px 6px rgba(0, 0, 0, .45), 0 20px 44px -26px rgba(0, 0, 0, .95);
+    --shadow:  var(--e-2);
   }
 }
 
 :root[data-theme="dark"] {
-  --bg:          #0B1015;
-  --surface:     #121A22;
-  --surface-2:   #17212B;
-  --surface-3:   #1D2833;
+  --bg:          #080B10;
+  --bg-glow-1:   rgba(77, 163, 255, .10);
+  --bg-glow-2:   rgba(122, 92, 255, .07);
+  --grain:       .030;
 
-  --ink:         #E4EDF5;
-  --ink-2:       #9BADBE;
-  --ink-3:       #6B7E90;
+  --surface:     #10151C;
+  --surface-2:   #151C25;
+  --surface-3:   #1B242F;
 
-  --line:        #22303C;
-  --line-strong: #33454F;
+  --ink:         #E8F0F8;
+  --ink-2:       #9FB2C4;
+  --ink-3:       #6A7E92;
 
-  --accent:      #59A5FF;
-  --accent-ink:  #06121F;
-  --accent-soft: #142639;
+  --line:        #1E2A36;
+  --line-strong: #2C3B4A;
 
-  --red:         #FF7B7B;
-  --red-soft:    #2C1618;
-  --amber:       #FFBF52;
-  --amber-soft:  #2B2011;
-  --green:       #52D9A0;
-  --green-soft:  #0F2721;
+  --accent:      #4DA3FF;
+  --accent-ink:  #04101C;
+  --accent-soft: #12243A;
+  --accent-glow: rgba(77, 163, 255, .30);
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 10px 30px -16px rgba(0, 0, 0, .8);
+  --red:         #FF6B6B;
+  --red-soft:    #2A1418;
+  --amber:       #F5B544;
+  --amber-soft:  #2A2011;
+  --green:       #3DD68C;
+  --green-soft:  #0E2A20;
+
+  --series-1: #3987E5;
+  --series-2: #D95926;
+  --series-3: #199E70;
+  --series-4: #C98500;
+  --series-5: #D55181;
+  --series-6: #008300;
+  --series-7: #9085E9;
+  --series-8: #E66767;
+
+  --hi:      inset 0 1px 0 rgba(255, 255, 255, .045);
+  --e-1:     0 1px 2px rgba(0, 0, 0, .5);
+  --e-2:     0 2px 6px rgba(0, 0, 0, .45), 0 20px 44px -26px rgba(0, 0, 0, .95);
+  --shadow:  var(--e-2);
 }
 
 /* ---------- base ---------- */
@@ -166,21 +255,47 @@
 
 html, body { height: 100%; }
 
+/* The section chips scroll the page; without this they teleport. */
+html { scroll-behavior: smooth; }
+
 body {
   margin: 0;
-  background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+
+  /* Two very faint pools of light instead of one flat fill: the page reads as a lit surface
+     rather than a colour, and the cards on it gain somewhere to sit. Fixed, so they stay put
+     while a long report scrolls past. */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(1100px 680px at 8% -10%, var(--bg-glow-1), transparent 62%),
+    radial-gradient(900px 720px at 102% 104%, var(--bg-glow-2), transparent 60%);
+  background-attachment: fixed, fixed;
+  background-repeat: no-repeat, no-repeat;
+}
+
+/* A grain layer over the whole page. Fine enough to be felt rather than seen — it stops the large
+   dark areas from banding and gives the surfaces a physical quality. Inline SVG, so it costs no
+   request and the app keeps its "no external runtime dependencies" property. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: var(--grain);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--r-sm);
+  box-shadow: 0 0 0 4px var(--accent-glow);
 }
 
 ::selection { background: var(--accent); color: var(--accent-ink); }
@@ -205,7 +320,7 @@ body {
 /* The rail itself stretches the whole grid column so its surface colour reaches the
    bottom of a long dashboard; .rail-inner is the part that actually sticks. */
 .rail {
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 70%, var(--bg));
   border-right: 1px solid var(--line);
 }
 
@@ -294,8 +409,12 @@ body {
   background: var(--surface-3);
   color: var(--ink);
   font-weight: 600;
+  box-shadow: var(--hi);
 }
-.nav-item[aria-selected="true"]::before { height: 20px; }
+.nav-item[aria-selected="true"]::before {
+  height: 20px;
+  box-shadow: 0 0 10px 1px var(--accent-glow);
+}
 
 .nav-item .dot {
   width: 6px; height: 6px; flex: none;
@@ -361,34 +480,55 @@ body {
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
-  padding: 30px 0 22px;
+  gap: var(--s-4);
+  padding: var(--s-7) 0 var(--s-5);
   border-bottom: 1px solid var(--line);
-  margin-bottom: 24px;
+  margin-bottom: var(--s-6);
 }
 
 .page-head h1 {
   margin: 0;
-  font-size: clamp(1.25rem, 2.2vw, 1.6rem);
+  font-size: clamp(1.4rem, 2.6vw, 1.95rem);
   font-weight: 600;
-  letter-spacing: -.022em;
+  letter-spacing: -.03em;
+  line-height: 1.15;
+}
+
+/* A mono eyebrow over the title, so the page announces what kind of document it is. */
+.page-head h1[data-eyebrow]::before {
+  content: attr(data-eyebrow);
+  display: block;
+  margin-bottom: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: .6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .18em;
+  color: var(--accent);
 }
 
 .page-head .lede {
-  margin: 6px 0 0;
-  max-width: 68ch;
+  margin: var(--s-3) 0 0;
+  max-width: 74ch;
   color: var(--ink-2);
-  font-size: .84rem;
+  font-size: .85rem;
+  line-height: 1.65;
 }
 
+/* The stamp is a chip, not loose text — it is metadata about the run, so it is framed like one. */
 .stamp {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
   font-family: var(--font-mono);
-  font-size: .66rem;
-  letter-spacing: .05em;
+  font-size: .63rem;
+  letter-spacing: .06em;
   color: var(--ink-3);
   text-transform: uppercase;
   white-space: nowrap;
 }
+.stamp:empty { display: none; }
 
 /* ---------- panels ---------- */
 
@@ -401,27 +541,37 @@ body {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  padding: 18px;
+  padding: var(--s-5);
   min-width: 0;
+  box-shadow: var(--hi), var(--e-1);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
+.card:hover { border-color: var(--line-strong); box-shadow: var(--hi), var(--e-2); }
 
 .card > h3 {
-  margin: 0 0 2px;
-  font-size: .78rem;
+  margin: 0 0 3px;
+  font-size: .84rem;
   font-weight: 600;
-  letter-spacing: -.005em;
+  letter-spacing: -.012em;
 }
 
 .card .sub {
-  margin: 0 0 14px;
+  margin: 0 0 var(--s-4);
+  max-width: 86ch;
   font-size: .74rem;
+  line-height: 1.6;
   color: var(--ink-3);
 }
 
-.card.accent-red    { border-top: 2px solid var(--red); }
-.card.accent-amber  { border-top: 2px solid var(--amber); }
-.card.accent-green  { border-top: 2px solid var(--green); }
-.card.accent-navy   { border-top: 2px solid var(--accent); }
+/* The accent is a lit edge rather than a border, so it reads as state on the card's own surface. */
+.card.accent-red    { box-shadow: inset 0 2px 0 var(--red),    var(--hi), var(--e-1); }
+.card.accent-amber  { box-shadow: inset 0 2px 0 var(--amber),  var(--hi), var(--e-1); }
+.card.accent-green  { box-shadow: inset 0 2px 0 var(--green),  var(--hi), var(--e-1); }
+.card.accent-navy   { box-shadow: inset 0 2px 0 var(--accent), var(--hi), var(--e-1); }
+.card.accent-red:hover   { box-shadow: inset 0 2px 0 var(--red),    var(--hi), var(--e-2); }
+.card.accent-amber:hover { box-shadow: inset 0 2px 0 var(--amber),  var(--hi), var(--e-2); }
+.card.accent-green:hover { box-shadow: inset 0 2px 0 var(--green),  var(--hi), var(--e-2); }
+.card.accent-navy:hover  { box-shadow: inset 0 2px 0 var(--accent), var(--hi), var(--e-2); }
 
 /* ---------- upload ---------- */
 
@@ -501,13 +651,18 @@ body {
   font-weight: 600;
   letter-spacing: -.005em;
   cursor: pointer;
-  transition: background .14s, border-color .14s, color .14s, transform .1s;
+  transition: background var(--dur), border-color var(--dur), color var(--dur),
+              box-shadow var(--dur), transform .1s;
 }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 
-.btn-primary { background: var(--accent); color: var(--accent-ink); }
-.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 0 var(--accent-glow);
+}
+.btn-primary:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 0 0 4px var(--accent-glow); }
 
 .btn-ghost {
   background: var(--surface);
@@ -589,6 +744,9 @@ body {
 
 /* ---------- filter bar ---------- */
 
+/* The control deck: filters on the first row, the report's own section index on the second. It
+   stays with the operator down a very long report, which is the whole reason the section chips
+   live in here rather than at the top of the page. */
 .filter-bar {
   position: sticky;
   top: 0;
@@ -596,15 +754,52 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 14px;
-  margin: 26px 0 20px;
-  padding: 13px 16px;
+  gap: var(--s-4);
+  margin: var(--s-5) 0 var(--s-5);
+  padding: var(--s-3) var(--s-4);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
-  backdrop-filter: blur(10px);
-  box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: var(--hi), var(--e-2);
 }
+
+.section-nav {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.section-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: .63rem;
+  letter-spacing: .05em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.section-chip .n { color: var(--ink-3); font-size: .92em; }
+.section-chip:hover { color: var(--ink); border-color: var(--line-strong); background: var(--surface-3); }
+.section-chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.section-chip.is-active .n { color: var(--accent); }
 
 .field { display: flex; flex-direction: column; gap: 5px; }
 
@@ -637,6 +832,7 @@ input[type="date"]:focus { border-color: var(--accent); outline: none; box-shado
    free-text inputs in the app, so these did not exist until now. */
 input[type="text"],
 input[type="number"],
+input[type="search"],
 textarea {
   font: inherit;
   font-family: var(--font-mono);
@@ -650,6 +846,7 @@ textarea {
 }
 input[type="text"]:focus,
 input[type="number"]:focus,
+input[type="search"]:focus,
 textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* Same shape again for the dropdowns the Ticket → Seller filters introduced. Unlike the text inputs
@@ -677,7 +874,8 @@ select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px
 .filter-bar input[type="number"] { width: 9ch; }
 
 /* The search box sits between two dropdowns, so it cannot take the default full width either. */
-.filter-bar input[type="text"] { width: 26ch; }
+.filter-bar input[type="text"],
+.filter-bar input[type="search"] { width: 26ch; }
 
 textarea {
   resize: vertical;
@@ -702,105 +900,258 @@ textarea {
 .section-title {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 32px 0 14px;
+  gap: var(--s-3);
+  margin: var(--s-7) 0 var(--s-4);
   font-size: .68rem;
   font-family: var(--font-mono);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .12em;
-  color: var(--ink-2);
+  color: var(--ink);
+  /* Clears the sticky control deck when a section chip scrolls to it. */
+  scroll-margin-top: 118px;
 }
 .section-title::after {
   content: '';
   flex: 1;
   height: 1px;
-  background: var(--line);
+  background: linear-gradient(90deg, var(--line-strong), transparent);
+}
+
+/* Sections number themselves, so the chips in the control deck and the headings on the page can
+   never disagree about which section is which. Scoped to .results: the skeleton and the reference
+   pages use the same class without being a numbered report. */
+.results { counter-reset: section; }
+.results > .section-title { counter-increment: section; }
+.results > .section-title::before {
+  content: counter(section, decimal-leading-zero);
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  padding: 2px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: .6rem;
+  letter-spacing: .06em;
+}
+
+/* ---------- hero ----------
+
+   The four figures the report exists to answer, set large, above everything else. Everything below
+   them is the explanation; this row is the headline, and the sparkline beside it says whether the
+   period was steady or spiky before a single chart has been read. */
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 264px);
+  align-items: center;
+  gap: var(--s-7);
+  margin: var(--s-5) 0 var(--s-6);
+  padding: var(--s-6);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(760px 260px at 0% -40%, var(--accent-soft), transparent 68%),
+    var(--surface);
+  box-shadow: var(--hi), var(--e-2);
+}
+
+.hero-figs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-5);
+}
+
+.hero-fig {
+  padding-left: var(--s-5);
+  border-left: 1px solid var(--line);
+  min-width: 0;
+}
+.hero-fig:first-child { padding-left: 0; border-left: 0; }
+
+.hero-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: clamp(1.5rem, 2.7vw, 2.35rem);
+  line-height: 1.04;
+  letter-spacing: -.03em;
+  color: var(--ink);
+}
+.hero-value.red   { color: var(--red); }
+.hero-value.green { color: var(--green); }
+.hero-value.amber { color: var(--amber); }
+
+.hero-label {
+  margin-top: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: .6rem;
+  text-transform: uppercase;
+  letter-spacing: .13em;
+  color: var(--ink-2);
+}
+
+.hero-context {
+  margin-top: 3px;
+  font-size: .68rem;
+  color: var(--ink-3);
+}
+
+.hero-spark { min-width: 0; }
+.hero-spark svg { display: block; width: 100%; height: 62px; overflow: visible; }
+.hero-spark .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.hero-spark .spark-area { fill: var(--accent); opacity: .12; stroke: none; }
+.hero-spark .spark-dot  { fill: var(--accent); }
+
+.hero-spark-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: .58rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--ink-3);
+}
+
+@media (max-width: 1100px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: var(--s-5); }
+  .hero-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
+  .hero-fig:nth-child(odd) { padding-left: 0; border-left: 0; }
 }
 
 /* ---------- KPIs ---------- */
 
-/* Explicit column counts rather than auto-fit, so tiles keep the same width across
-   the KPI sets on the page (12 for Key metrics, 8 for Delivery quality, 6 for the
-   Return SLA panel) instead of resizing per block. Six columns also means the
-   12-tile set lands as two full rows with no ragged remainder. */
+/* Explicit column counts rather than auto-fit, so tiles keep the same width across the KPI sets on
+   the page instead of resizing per block. Four columns: the tiles are readouts, not chips, and the
+   headline figures now live in the hero above. */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
 }
-@media (max-width: 1400px) { .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 1000px) { .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 680px)  { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* A full-width label that splits the grid into the groups the metrics actually belong to. */
+.kpi-band {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: .58rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  color: var(--ink-3);
+}
+.kpi-band:first-child { margin-top: 0; }
+.kpi-band::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
 .kpi {
   position: relative;
-  padding: 14px 15px 15px;
+  padding: var(--s-4) var(--s-4) var(--s-4) calc(var(--s-4) + 4px);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
+  box-shadow: var(--hi), var(--e-1);
   overflow: hidden;
-  animation: kpi-in .34s cubic-bezier(.2, .8, .3, 1) both;
+  animation: kpi-in .34s var(--ease) both;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
+.kpi:hover { border-color: var(--line-strong); box-shadow: var(--hi), var(--e-2); }
 
-/* A hairline rule at the top of each tile carries the semantic state. */
+/* State is a lit edge down the left of the tile, with the faintest wash bleeding off it. */
 .kpi::before {
   content: '';
   position: absolute;
-  inset: 0 0 auto;
-  height: 2px;
+  inset: 0 auto 0 0;
+  width: 3px;
   background: var(--line-strong);
 }
 .kpi.is-red::before   { background: var(--red); }
 .kpi.is-amber::before { background: var(--amber); }
 .kpi.is-green::before { background: var(--green); }
+/* The wash is a hint of where the edge colour comes from, not a highlight — kept faint so eight
+   tiles side by side stay a readout rather than a warning panel. */
+.kpi.is-red   { background: linear-gradient(90deg, color-mix(in srgb, var(--red-soft)   55%, var(--surface)), var(--surface) 46%); }
+.kpi.is-amber { background: linear-gradient(90deg, color-mix(in srgb, var(--amber-soft) 55%, var(--surface)), var(--surface) 46%); }
+.kpi.is-green { background: linear-gradient(90deg, color-mix(in srgb, var(--green-soft) 55%, var(--surface)), var(--surface) 46%); }
 
 @keyframes kpi-in {
   from { opacity: 0; transform: translateY(7px); }
   to   { opacity: 1; transform: none; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .kpi { animation: none; }
-  * { transition-duration: .01ms !important; }
-}
 
 .kpi-label {
-  font-size: .67rem;
-  font-weight: 500;
+  font-family: var(--font-mono);
+  font-size: .59rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .07em;
+  letter-spacing: .11em;
   color: var(--ink-3);
-  min-height: 30px;
-  line-height: 1.4;
-  margin-bottom: 6px;
+  min-height: 26px;
+  line-height: 1.45;
+  margin-bottom: var(--s-2);
 }
 
 .kpi-value {
-  font-size: clamp(1.05rem, 1.75vw, 1.4rem);
+  font-size: clamp(1.15rem, 1.7vw, 1.5rem);
   font-weight: 600;
-  letter-spacing: -.02em;
+  letter-spacing: -.025em;
   color: var(--ink);
   /* Wrap at the space before the currency code, never inside the number itself. */
   overflow-wrap: normal;
   word-break: keep-all;
 }
-.kpi-value.is-long  { font-size: clamp(.95rem, 1.35vw, 1.1rem); }
-.kpi-value.is-xlong { font-size: clamp(.82rem, 1.1vw, .92rem); }
+.kpi-value.is-long  { font-size: clamp(1rem, 1.35vw, 1.15rem); }
+.kpi-value.is-xlong { font-size: clamp(.85rem, 1.1vw, .95rem); }
 
 .kpi-value.red   { color: var(--red); }
 .kpi-value.green { color: var(--green); }
 .kpi-value.amber { color: var(--amber); }
+
+.kpi-context {
+  margin-top: 4px;
+  font-size: .66rem;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
 
 /* ---------- layout grids ---------- */
 
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 14px;
+  gap: var(--s-4);
 }
+
+/* Four cards that belong together read as a block of four, not as three-and-one: auto-fit would
+   drop the fourth onto a row of its own and stretch it to the full width. */
+.grid-2x2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+@media (max-width: 1080px) { .grid-2x2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* A wide chart with a narrow companion beside it: the trend needs the width to be read as a
+   trend, the doughnut beside it does not. */
+.grid-lead {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(300px, 1fr);
+  gap: var(--s-4);
+}
+@media (max-width: 1080px) { .grid-lead { grid-template-columns: minmax(0, 1fr); } }
 
 .chart-box { position: relative; height: 300px; }
 .chart-box.tall { height: 340px; }
+/* Shorter, because the legend under it carries the labels the ring would otherwise need room for. */
+.chart-box.is-donut { height: 232px; }
 
 /* ---------- seller performance lists ---------- */
 
@@ -863,62 +1214,212 @@ thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 9px 12px;
+  padding: 10px 14px;
   text-align: left;
   white-space: nowrap;
-  background: var(--surface-3);
+  background: color-mix(in srgb, var(--surface-3) 88%, transparent);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line-strong);
   font-family: var(--font-mono);
-  font-size: .62rem;
+  font-size: .61rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .09em;
+  letter-spacing: .1em;
   color: var(--ink-2);
 }
 
 tbody td {
-  padding: 8px 12px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--line);
-  vertical-align: top;
+  vertical-align: middle;
 }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr:nth-child(even) td { background: var(--surface-2); }
-tbody tr:hover td { background: var(--accent-soft); }
+/* No zebra: hairlines separate the rows and the hover wash is the only fill, which keeps long
+   tables quiet and makes the row under the cursor unmistakable. */
+tbody tr:hover td { background: var(--surface-2); }
+
+/* Figures line up on their right edge so magnitudes can be compared down the column, and never
+   wrap: an order number broken across two lines cannot be read back or copied. */
+th.num, td.num { text-align: right; }
+td.num { white-space: nowrap; }
+.table-filters th.num { text-align: left; }
+
+/* ---------- sortable / filterable tables ----------
+
+   Two sticky header rows: the labels on top, the filter controls under them. The second row has to
+   start exactly where the first one ends or it covers the labels, so its offset is the label row's
+   measured height, published as --head-h by renderDataTable. The literal is only a fallback for the
+   moment before that measurement lands. */
+
+.data-table thead tr:first-child th { top: 0; }
+.data-table thead tr.table-filters th { top: var(--head-h, 34px); }
+
+.table-filters th {
+  padding: 5px 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.table-filters input,
+.table-filters select {
+  width: 100%;
+  max-width: none;
+  min-width: 6ch;
+  padding: 4px 6px;
+  font-family: var(--font-mono);
+  font-size: .68rem;
+}
+
+/* Two boxes in one cell (≥ and ≤) share the column rather than each claiming its width. */
+.table-filters .range { display: flex; gap: 4px; }
+
+/* A header that sorts is a button, but it has to read as the header it replaced. */
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.th-sort:hover { color: var(--ink); }
+
+.sort-mark::before {
+  content: "↕";
+  opacity: .35;
+  font-size: .8em;
+}
+th[aria-sort="ascending"] .sort-mark::before { content: "↑"; opacity: 1; color: var(--accent); }
+th[aria-sort="descending"] .sort-mark::before { content: "↓"; opacity: 1; color: var(--accent); }
+th[aria-sort="ascending"] .th-sort,
+th[aria-sort="descending"] .th-sort { color: var(--ink); }
+
+/* Sits below the table inside the scroll box, so it is pinned to the left edge and stays readable
+   while the table itself is scrolled sideways. */
+.table-count {
+  position: sticky;
+  left: 0;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: .64rem;
+  letter-spacing: .04em;
+  color: var(--ink-3);
+}
+
+/* Filters that match nothing keep the header and the controls on screen — the operator has to be
+   able to see what they typed and undo it. */
+.empty-cell {
+  padding: 22px 12px;
+  text-align: center;
+  color: var(--ink-3);
+}
 
 /* ---------- badges ---------- */
 
+/* A badge is a dot plus a word: the dot carries the colour, the word carries the meaning, so the
+   state survives both colour blindness and a black-and-white print. */
 .badge {
-  display: inline-block;
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
   border-radius: 999px;
   background: var(--surface-3);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: .64rem;
+  font-size: .63rem;
   font-weight: 600;
-  letter-spacing: .03em;
+  letter-spacing: .04em;
   white-space: nowrap;
 }
-.badge.red   { background: var(--red-soft);   border-color: var(--red);   color: var(--red); }
-.badge.amber { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); }
-.badge.green { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+.badge::before {
+  content: '';
+  width: 5px; height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .85;
+}
+.badge.red   { background: var(--red-soft);   border-color: color-mix(in srgb, var(--red) 45%, transparent);   color: var(--red); }
+.badge.amber { background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 45%, transparent); color: var(--amber); }
+.badge.green { background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 45%, transparent); color: var(--green); }
+
+/* The raw value behind a badge — the verdict and the data it was read from, on one line. */
+.cell-sub {
+  margin-left: 7px;
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+/* ---------- chart legend ----------
+   Rendered as HTML rather than by Chart.js: the type then matches the rest of the page and the
+   share sits next to the label instead of only inside a tooltip. */
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin-top: var(--s-3);
+}
+.legend-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: .73rem;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.legend-dot {
+  width: 9px; height: 9px;
+  flex: none;
+  border-radius: var(--r-xs);
+  align-self: center;
+}
+.legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 22ch; }
+.legend-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: .69rem;
+  color: var(--ink-3);
+}
 
 /* ---------- notes / empty states ---------- */
 
 .note {
-  margin: 14px 0 0;
+  margin: var(--s-4) 0 0;
   max-width: 92ch;
-  padding-left: 12px;
+  padding-left: var(--s-3);
   border-left: 2px solid var(--line-strong);
   color: var(--ink-3);
   font-size: .76rem;
   line-height: 1.65;
 }
 
+/* Says what a table left out. Sits under the table, quieter than a .note and without its rule. */
+.table-note {
+  margin: var(--s-3) 0 0;
+  font-family: var(--font-mono);
+  font-size: .66rem;
+  line-height: 1.6;
+  letter-spacing: .02em;
+  color: var(--ink-3);
+}
+.table-note[hidden] { display: none; }
+
 .empty-state {
-  padding: 28px 18px;
-  border: 1px dashed var(--line-strong);
+  padding: 30px 18px;
+  border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--surface-2);
   color: var(--ink-3);
@@ -931,19 +1432,19 @@ tbody tr:hover td { background: var(--accent-soft); }
 .skeleton { display: none; }
 .skeleton.is-shown { display: block; }
 
+/* Mirrors the KPI grid it stands in for, so the page does not reflow when the real tiles land. */
 .sk-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
 }
-@media (max-width: 1400px) { .sk-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 1000px) { .sk-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 680px)  { .sk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) { .sk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .sk-box {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
-  height: 96px;
+  box-shadow: var(--hi), var(--e-1);
+  height: 104px;
   position: relative;
   overflow: hidden;
 }
@@ -1092,6 +1593,31 @@ tbody tr:hover td { background: var(--accent-soft); }
 /* ---------- results wrapper ---------- */
 
 .results[hidden] { display: none; }
+
+/* One orchestrated reveal when a report first appears: the sections rise in the order they are
+   read. Only on the first render — re-filtering redraws the same page and must not replay it.
+   The per-child delay is set as --d by the dashboard, so the cascade follows the real DOM order
+   however the report is composed. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+.results.is-entering > * { animation: rise .5s var(--ease) both; animation-delay: var(--d, 0ms); }
+
+/* ---------- motion preferences ----------
+   One place that switches the whole app to a still version of itself. */
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .kpi,
+  .results.is-entering > * { animation: none; }
+  .sk-box::after { animation: none; }
+  *, *::before, *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
 
 footer.page-foot {
   margin-top: 44px;

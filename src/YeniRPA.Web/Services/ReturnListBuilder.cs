@@ -1,5 +1,7 @@
-using System.Globalization;
 using YeniRPA.Web.Models;
+
+// Aliased so the call sites below stay exactly as they were when the rule lived in this file.
+using TrackingState = YeniRPA.Web.Services.TabularFile.TrackingState;
 
 namespace YeniRPA.Web.Services;
 
@@ -437,25 +439,11 @@ public static class ReturnListBuilder
     // Helpers
     // ---------------------------------------------------------------------
 
-    enum TrackingState { Missing, Malformed, Ok }
-
-    /// <summary>
-    /// The MP export writes the literal text <c>NULL</c> into the tracking column on three rows out
-    /// of four. Treating "not empty" as "has a code" would file the word NULL as a tracking number,
-    /// so the placeholder counts as missing. Every real code on both templates is digits only;
-    /// anything else is surfaced for review rather than sent to the marketplace.
-    /// </summary>
-    static (TrackingState State, string Code) ReadTracking(string raw)
-    {
-        var code = raw.Trim();
-
-        if (code.Length == 0 || code.Equals("NULL", StringComparison.OrdinalIgnoreCase))
-            return (TrackingState.Missing, "");
-
-        return code.All(char.IsAsciiDigit)
-            ? (TrackingState.Ok, code)
-            : (TrackingState.Malformed, code);
-    }
+    // The tracking-code rule moved to TabularFile when the Return SLA report needed the same one —
+    // the two reports read the same two templates, and a row that was never shipped back must not be
+    // a candidate here or an open SLA clock there.
+    static (TabularFile.TrackingState State, string Code) ReadTracking(string raw) =>
+        TabularFile.ReadTracking(raw);
 
     // The two below moved to TabularFile when TicketSellerBuilder needed the same order-number key.
     // They are forwarded rather than inlined at the call sites so this module keeps running on
@@ -473,37 +461,12 @@ public static class ReturnListBuilder
         requestType.Trim() is "İade" or "Iade" or "iade" or "İADE" or "IADE";
 
     /// <summary>
-    /// Both templates write the day first, so the explicit formats have to be tried before anything
-    /// lenient. <see cref="TabularFile.ParseDate"/> leads with
-    /// <c>DateTime.TryParse(…, InvariantCulture)</c>, which is month-first and accepts '.' as a
-    /// separator — it reads "12.08.2026" as 8 December and "07.08.2026" as 8 July. Every date whose
-    /// day and month are both 12 or under comes out transposed, which here would silently move rows
-    /// in and out of the operator's date range.
-    ///
-    /// This does not correct <see cref="TabularFile.ParseDate"/> itself: the Return SLA report has
-    /// always run on it and its published figures would shift. That is a real bug in that report and
-    /// is worth fixing on its own terms, not as a side effect of this module.
+    /// Both templates write the day first. The rule moved to <see cref="TabularFile.ParseDayFirstDate"/>
+    /// when the Return SLA report was corrected to read "Talep Tarihi" the same way — it had been
+    /// running on the month-first <see cref="TabularFile.ParseDate"/> and reading "12.08.2026" as
+    /// 8 December.
     /// </summary>
-    static DateTime? ParseTemplateDate(string text)
-    {
-        text = text.Trim();
-        if (text.Length == 0)
-            return null;
-
-        string[] dayFirstFormats =
-        [
-            "dd.MM.yyyy HH:mm", "dd.MM.yyyy HH:mm:ss", "dd.MM.yyyy",
-            "d.M.yyyy HH:mm", "d.M.yyyy",
-            "yyyy-MM-dd HH:mm:ss.fffffff", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd",
-        ];
-
-        if (DateTime.TryParseExact(text, dayFirstFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
-            return parsed;
-
-        // An unexpected shape is better read leniently than dropped; only the ambiguous day/month
-        // case above needed pinning down.
-        return TabularFile.ParseDate(text);
-    }
+    static DateTime? ParseTemplateDate(string text) => TabularFile.ParseDayFirstDate(text);
 
     static bool InRange(DateTime? date, ReturnListOptions options)
     {

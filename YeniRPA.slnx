@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="src/YeniRPA.Web/YeniRPA.Web.csproj" />
+  <Project Path="tests/YeniRPA.Tests/YeniRPA.Tests.csproj" />
 </Solution>

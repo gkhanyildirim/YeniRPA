@@ -5,7 +5,7 @@ with tab navigation between them and results rendered in place.
 
 | Module | Input | Output |
 |---|---|---|
-| **Order Report** (Late Shipment & Cancellation) | `orders.xlsx` | In-page dashboard (20 KPIs, 8 charts, 5 tables, 2 ranked lists) + 4-sheet Excel workbook |
+| **Order Report** (Late Shipment & Cancellation) | `orders.xlsx` | In-page dashboard (20 KPIs, 8 charts, 5 tables, 2 ranked lists), filterable by date range and seller + 4-sheet Excel workbook |
 | **Return SLA Report** | `orders` export + 1–2 return tracking templates (`.xlsx` or `.csv`) | In-page dashboard (6 KPIs, 4 tables) |
 | **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
 | **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per seller (copy to clipboard or export to Excel) |
@@ -85,6 +85,16 @@ dotnet run --project src/YeniRPA.Web
 
 Then open <http://localhost:5080>.
 
+```bash
+dotnet test
+```
+
+`tests/YeniRPA.Tests` covers the rules that decide what an operator acts on: the order-number join
+and the SLA verdict behind the Return SLA report, the day-first template dates, what counts as a
+tracking code, and carrier canonicalisation. They run on CSV built in memory and go through the same
+readers the app does. The test packages are a **build-time** dependency only — the app itself still
+ships with no external runtime dependencies.
+
 Requires the .NET 10 SDK. `ClosedXML` and `Microsoft.Playwright` are the only NuGet dependencies;
 Chart.js and the IBM Plex fonts are vendored under `wwwroot/lib`, so the app has **no external
 network dependencies at runtime**. Playwright is needed only by Create Return — the report modules
@@ -92,13 +102,43 @@ never touch it, and it launches no browser until that module is used.
 
 ## Layout
 
+## Design system
+
+`wwwroot/css/app.css` is the whole of it: tokens first, components after, no framework. The
+direction is a **monitoring console** — a near-black canvas with layered surfaces, one luminous
+accent, hairline rules, and figures in IBM Plex Mono with tabular numerals. Colour is reserved:
+red/amber/green mean *this is bad / watch it / this is fine* and never decorate anything.
+
+Things worth knowing before changing it:
+
+- **Dark is the default theme.** The inline script in `_Layout.cshtml` stamps `data-theme="dark"`
+  before first paint unless a choice is stored; the toggle wins in both directions. Every colour is
+  a token declared on bare `:root` (light) and redefined twice for dark — once under
+  `prefers-color-scheme`, once under `[data-theme="dark"]`.
+- **Charts have their own eight-slot palette** (`--series-1…8`), assigned by series identity and
+  never cycled, validated for the lightness band, chroma floor, colour-blind separation and contrast
+  against both surfaces. **Status colours are not in it**: filled marks use `--mark-critical` /
+  `--mark-serious` / `--mark-warning` / `--mark-good`, which are separate from the text-grade
+  `--red` / `--amber` / `--green` because a bar filled with a text colour reads brown.
+- **The Order Report opens with a hero row** of four figures plus a sparkline, and its sections
+  number themselves through a CSS counter. The chips in the sticky control deck are built from the
+  sections themselves (`RPA.initSectionNav` reads `data-section`), so a section cannot be renamed in
+  one place and stay stale in the other.
+- `RPA.renderKpis` takes `{ group: '…' }` band labels between tiles and an `exportRows` override —
+  the order report shows eight tiles and still exports all twelve key metrics, four of which are in
+  the hero.
+- Motion is one orchestrated entrance per report (`RPA.revealResults`) plus small state
+  transitions, and all of it is switched off under `prefers-reduced-motion`.
+
 ```
 src/YeniRPA.Web/
 ├── Services/
 │   ├── OrderReportBuilder.cs        Build() -> xlsx, BuildData() -> dashboard JSON
+│   ├── CarrierNames.cs              Free-text shipping company -> canonical carrier
 │   ├── ReturnSlaReportBuilder.cs    BuildData() -> dashboard JSON
 │   ├── ReturnListBuilder.cs         4 exports -> the Create Return input list
-│   ├── TabularFile.cs               xlsx/csv -> row-column table, shared by both
+│   ├── TabularFile.cs               xlsx/csv -> table, plus the order-number key, the
+│   │                                day-first template dates and the tracking-code rule
 │   └── Automation/
 │       ├── AutomationJobBus.cs      Single-run lock + SSE progress fan-out
 │       ├── MiraklBrowser.cs         Playwright browser + encrypted saved login
@@ -111,6 +151,8 @@ src/YeniRPA.Web/
 ├── Views/Home/Index.cshtml          The single page: every module, one visible at a time
 └── wwwroot/
     ├── css/app.css                  Design tokens, light + dark themes
+
+tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrier names
     ├── js/app.js                    Shell: nav, theme, uploads, fetch
     ├── js/order-report.js           Order dashboard aggregation + charts
     ├── js/return-sla-report.js      Return SLA dashboard
@@ -225,38 +267,52 @@ Things worth knowing before changing it:
 - **There is no way to stop a running batch.** That was true of the original too, but it matters
   more now that a prepare can hand the runner 177 orders in one click. Worth adding.
 
-### Two bugs this work uncovered in the Return SLA report
+## Return SLA report
 
-Both predate the port and neither is fixed here — fixing them moves that report's published numbers,
-which is a decision to take on its own terms rather than as a side effect of another module. They
-are written down because they are real and currently invisible.
+The report answers one question per return: *the parcel went back to the seller N days ago — is that
+return finished?* The answer is the **order's status**, so everything rests on joining the return
+templates to the orders export. Three bugs used to break that join; all three are fixed and covered
+by tests.
 
-**1. `TabularFile.ParseDate` transposes day and month**
+**1. The join never matched — the report's central failure**
 
-`ParseDate` leads with `DateTime.TryParse(text, InvariantCulture)`, which is month-first and accepts
-`.` as a date separator. Every `dd.MM.yyyy` value whose day **and** month are both 12 or under comes
-back transposed:
+The templates carry the bare customer order number (`321097726`); the orders export carries the full
+Mirakl form (`01259_321097726-A`). The old key was "every digit in the number", which turns the full
+form into `01259321097726` and the bare one into `321097726`: **no row ever matched**. Every seller
+came out blank, every status read *"not matched"*, and so every return older than 15 days was
+reported as an SLA breach — including the ones whose order had been canceled weeks earlier. The join
+now uses `TabularFile.OrderCore`, the same key `ReturnListBuilder` and `TicketSellerBuilder` use.
 
-| Input | Read as | Should be |
-|---|---|---|
-| `13.08.2026 13:21` | 2026-08-13 | correct — day > 12, unambiguous |
-| `12.08.2026 22:34` | 2026-12-08 | 2026-08-12 |
-| `07.08.2026 10:00` | 2026-07-08 | 2026-08-07 |
-| `01.08.2026 09:00` | 2026-01-08 | 2026-08-01 |
+Resolution order, since one customer order splits per seller into `…-A` / `…-B`:
 
-The only `dd.MM.yyyy` source is return template A's `Talep Tarihi`, which the Return SLA report uses
-as its SLA start date — so its elapsed days, breach flags and warning flags are wrong for most
-template A rows. `ReturnListBuilder.ParseTemplateDate` works around it locally by trying the
-day-first formats before anything lenient; without it the last-month filter kept 226 rows instead of
-245. Fixing it properly is a one-line reorder of the same format list.
+| Situation | Result |
+|---|---|
+| Template B's `MarketPlaceId` is in the export | matched to that order |
+| The bare number matches one order | matched |
+| Several, and the template's seller id picks one | matched |
+| Several, all agreeing on whether the return closed | `matched-by-status` — the verdict holds whichever it was |
+| Several that disagree, or nothing at all | listed under *Needs review*, **never** counted as a breach |
 
-**2. `ReadTemplateB` counts `NULL` as a tracking code**
+A return with no order behind it has no status to be late against; reporting those as breaches is
+what made the old list unusable. `slaMissed` and `pastWarning` therefore both require a resolved,
+still-open return — the second of those is a deliberate change from the original, where a completed
+return still showed up as a 10-day warning. The status column now prints the order's own Mirakl
+status next to the verdict badge, which is what an operator would otherwise look up by hand.
 
-It skips a row when `YK Takip Kodu` is null or whitespace, but the MP export writes the literal text
-`NULL`, which is neither. On the sample export all 2685 rows are therefore treated as "shipped back
-to the seller" when only 694 actually have a tracking code — so ~74% of the template B rows on that
-dashboard, and the SLA breaches counted from them, describe returns that were never shipped.
-`ReturnListBuilder.ReadTracking` shows the handling this needs.
+**2. `Talep Tarihi` was read month-first**
+
+`TabularFile.ParseDate` leads with `DateTime.TryParse(text, InvariantCulture)`, which is month-first
+and accepts `.` as a separator, so every `dd.MM.yyyy` value whose day **and** month are 12 or under
+came back transposed (`12.08.2026` → 8 December). That column is the SLA start date. Template dates
+now go through `TabularFile.ParseDayFirstDate`, which `ReturnListBuilder` had been carrying locally.
+
+**3. `NULL` counted as a tracking code**
+
+The MP export writes the literal text `NULL` into `YK Takip Kodu` on roughly three rows out of four
+(1991 of 2685 on the sample export). "Not empty" therefore read as "shipped back to the seller", so
+most of template B's rows were on an SLA clock for a parcel that had never been sent.
+`TabularFile.ReadTracking` — the rule Create Return already used — is now applied by both reports,
+to both templates.
 
 ## Notes for maintainers
 
@@ -265,11 +321,14 @@ byte-identical output. Specifically:
 
 - Late = shipping date present **and** later than the shipping deadline. Rows with no shipping date
   are excluded from the late-rate denominator.
-- Carriers count as integrated when the name contains `Aras`, `Yurtici`, `Yurtiçi`, `DHL` or
-  `Hepsijet`.
+- Carriers count as integrated when the name contains `Aras`, `Yurtici`, `Yurtiçi`, `DHL`,
+  `Hepsijet` or `MNG` — applied to the **canonical** carrier name (see below), not to the raw
+  column. (`MNG` was added after the first production run; the list is the single source for the
+  dashboard, the workbook formula and the Methodology page.)
 - Return SLA is **15 days** from the ship-back date, early warning at **10 days**. Return template A
   has no ship-date column, so `Talep Tarihi` is used as a proxy.
-- `pastWarning` is deliberately not gated on `isConfirmedReturn`, matching the original.
+- `pastWarning` **is** gated on the return still being open, unlike the original — see
+  [Return SLA report](#return-sla-report).
 
 **One rule was deliberately changed away from the port.** *Key metrics* used to report *shipped
 orders*, which counted rows with a shipping date rather than rows with a status. The outcome counts
@@ -302,6 +361,22 @@ if the column is summed naively, so the handling is deliberate and should not be
   reads the commission or withholding-tax columns any more; do not reintroduce a VAT figure derived
   from them.
 
+- **There is no carrier column.** `Shipping method` is the delivery type ("Standard delivery") on
+  every line, `Tracking number` names no company, and `Shipping company` is typed by the seller — so
+  one carrier arrives as `YURTİÇİ`, `Yurtiçi`, `yurtici` and `YURTICI KARGO` and splits into four
+  rows, each with its own share and its own integrated/manual badge. `CarrierNames` folds them onto
+  one name: the host of `Tracking URL` decides where there is one (it is copied from the carrier's
+  own site), otherwise the name is folded — Turkish i family, accents, case, punctuation — and
+  matched against a catalogue of aliases. **No fuzzy matching, ever**, for the reason spelled out on
+  `SellerGroupMap`: a name the catalogue does not know keeps its own group and merges only with its
+  own spellings, and the carrier table lists those spellings on the name's tooltip, so no merge is
+  invisible. `DHL` and `DHL e-Commerce` are deliberately one catalogue entry — the export separates
+  them, operations reconciles them as one carrier. Lines with no shipping company are left out of
+  *Order lines by carrier* and counted in a note underneath it, so its shares are taken over the
+  lines that name a carrier and add up to 100%. The workbook writes the canonical name into
+  `Data!R` and its `Carrier Group` formula reads that column, so the two outputs cannot group
+  carriers differently.
+
 Two more rules worth knowing:
 
 - Lines whose `Reason` is `Received automatically` were closed by the platform without a carrier
@@ -316,8 +391,10 @@ Two more rules worth knowing:
   recommend cutting a 15-day white-goods promise to a day because their accessory orders ship fast.
 
 Payload shape: rows carry terse field names, extended fields are omitted when they hold their default
-value, and category/brand/city travel as indexes into dictionaries on the payload rather than as
-strings on every row. Index 0 in each dictionary is the "unknown" slot.
+value, and carrier/category/brand/city travel as indexes into dictionaries on the payload rather than
+as strings on every row. Index 0 in each dictionary is the "unknown" slot. The carrier dictionary
+carries more than a label — `{ n: canonical name, i: integrated, v: [raw spellings] }` — because the
+merge and the keyword rule both belong to the builder, not to the browser.
 
 ### Keeping the Methodology page honest
 
@@ -344,4 +421,13 @@ matching the old reports:
 them. Save source files as UTF-8.
 
 The Excel `Data` sheet's column **order is load-bearing**: the Summary and Top-5 sheets reference it
-by column letter (`Data!K`, `Data!I`, …), and columns K, L, O, P, Q are live formulas.
+by column letter (`Data!K`, `Data!I`, …), and columns K, L, O, P, Q are live formulas. A new column
+goes on the **end** for that reason — `R` (`Carrier (Normalized)`) was added there rather than next
+to `Shipping Company`, which is where it belongs visually and where it would have repointed every
+formula on the other three sheets.
+
+The dashboard's long tables (lead time, carrier volume, cancellation detail) are rendered by
+`RPA.renderDataTable`, which adds a sortable header and a per-column filter row on top of the same
+column contract `RPA.renderTable` uses. Its sort and filters are kept per wrapper id and survive a
+date or seller change — but not a new upload, which clears them. What a section exports is always
+what its table currently shows, filters included.
