@@ -39,6 +39,7 @@ builder.Services.AddDataProtection();
 builder.Services.AddSingleton<AutomationJobBus>();
 builder.Services.AddSingleton<MiraklBrowser>();
 builder.Services.AddSingleton<CreateReturnRunner>();
+builder.Services.AddSingleton<MarkAsReceivedRunner>();
 
 // Late Order Warnings. The store owns the seller → WhatsApp group mapping and the message templates;
 // group names are not credentials, so unlike the Mirakl session it is not encrypted. WhatsAppBrowser

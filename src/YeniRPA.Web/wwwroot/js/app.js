@@ -246,8 +246,12 @@ window.RPA = window.RPA || {};
   const MODULES = {
     'order-report': { tab: 'tab-order', panel: 'panel-order' },
     'return-sla': { tab: 'tab-return', panel: 'panel-return' },
+    // Lookup rather than a report: joins the Oracle case list to the orders export by order number.
+    'ticket-seller': { tab: 'tab-ticket-seller', panel: 'panel-ticket-seller' },
     // Browser automation rather than a report: writes to Mirakl instead of reading a file.
     'create-return': { tab: 'tab-create-return', panel: 'panel-create-return' },
+    // Also drives Mirakl, but the input is nothing more than a list of order IDs.
+    'mark-received': { tab: 'tab-mark-received', panel: 'panel-mark-received' },
     // Reads an export like the reports do, but its output is messages to external parties.
     'late-orders': { tab: 'tab-late-orders', panel: 'panel-late-orders' },
     // Reference page: static content, no upload and no dashboard of its own.

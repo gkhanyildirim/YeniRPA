@@ -8,7 +8,9 @@ namespace YeniRPA.Web.Services;
 /// crossed a 10-day early-warning threshold, and computes the refund/payment time for canceled,
 /// rejected or refunded orders.
 ///
-/// Three files are uploaded on every run:
+/// The orders export is required; the two return templates are not — at least one of them has to be
+/// uploaded, and a template that is left out simply contributes no rows. Refund times are unaffected
+/// either way because they are computed from the orders file alone.
 ///  - orders export (orders.xlsx/csv) from Mirakl,
 ///  - Return template A ("Marketplace Iade &amp; Degisim Talepleri...") - a row counts as "shipped to
 ///    seller" when "Kargo Takip Kodu" is filled in. This template has no explicit ship date column,
@@ -51,11 +53,14 @@ public static class ReturnSlaReportBuilder
     /// The <paramref name="ordersFileName"/> / <paramref name="templateAFileName"/> /
     /// <paramref name="templateBFileName"/> arguments are load-bearing: the table reader picks the
     /// XLSX or the CSV path purely from the file extension.
+    ///
+    /// Either template stream may be null (that template was not uploaded); the caller is responsible
+    /// for rejecting the case where both are missing.
     /// </summary>
     public static ReturnSlaData BuildData(
         Stream ordersStream, string ordersFileName,
-        Stream templateAStream, string templateAFileName,
-        Stream templateBStream, string templateBFileName)
+        Stream? templateAStream, string? templateAFileName,
+        Stream? templateBStream, string? templateBFileName)
     {
         var orders = ReadOrders(ordersStream, ordersFileName);
         if (orders.Count == 0)
@@ -71,8 +76,13 @@ public static class ReturnSlaReportBuilder
                 ordersByRaw[o.OrderNumberRaw] = o;
         }
 
-        var candidatesA = ReadTemplateA(templateAStream, templateAFileName);
-        var candidatesB = ReadTemplateB(templateBStream, templateBFileName);
+        // A template that was not uploaded contributes no rows; the caller guarantees at least one.
+        List<ReturnCandidate> candidatesA = templateAStream is null
+            ? []
+            : ReadTemplateA(templateAStream, templateAFileName!);
+        List<ReturnCandidate> candidatesB = templateBStream is null
+            ? []
+            : ReadTemplateB(templateBStream, templateBFileName!);
         var allCandidates = candidatesA.Concat(candidatesB).ToList();
 
         OrderInfo? Match(ReturnCandidate c)

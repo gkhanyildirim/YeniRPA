@@ -9,7 +9,7 @@
     <aside class="rail">
       <div class="rail-inner">
         <div class="brand">
-            <div class="brand-mark">MP</div>
+            <img class="brand-mark" src="~/images/brand-mark.png" alt="MediaMarkt Saturn" />
             <div class="brand-text">
                 <div class="brand-title">Marketplace Reporting</div>
                 <div class="brand-sub">Mirakl&nbsp;Ops</div>
@@ -31,12 +31,24 @@
                 <span>Return SLA Report</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-ticket-seller"
+                    aria-controls="panel-ticket-seller" aria-selected="false" data-module="ticket-seller" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Ticket &rarr; Seller</span>
+            </button>
+
             <div class="nav-label">Automation</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-create-return"
                     aria-controls="panel-create-return" aria-selected="false" data-module="create-return" tabindex="-1">
                 <span class="dot" aria-hidden="true"></span>
                 <span>Create Return</span>
+            </button>
+
+            <button type="button" class="nav-item" role="tab" id="tab-mark-received"
+                    aria-controls="panel-mark-received" aria-selected="false" data-module="mark-received" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Mark as Received</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-late-orders"
@@ -338,8 +350,9 @@
                 <div>
                     <h1>Return SLA Report</h1>
                     <p class="lede">
-                        Upload three files: the Mirakl <strong>orders</strong> export and the two return tracking
-                        templates. Rows that carry a tracking code are matched against the orders export by order
+                        Upload the Mirakl <strong>orders</strong> export plus <strong>at least one</strong> of the two
+                        return tracking templates &mdash; a template you leave out simply contributes no rows. Rows
+                        that carry a tracking code are matched against the orders export by order
                         number; the SLA runs for <strong>15 days</strong> from the date the return was shipped back
                         to the seller, with an early warning at <strong>10 days</strong>. Refund time is also
                         computed for canceled and refunded orders.
@@ -363,7 +376,7 @@
                         <label class="drop" id="return-templateA-drop">
                             <span class="drop-step">Input 2</span>
                             <span class="drop-title">Return template A</span>
-                            <span class="drop-hint">Marketplace Iade &amp; Degisim Talepleri</span>
+                            <span class="drop-hint">Marketplace Iade &amp; Degisim Talepleri &mdash; optional, at least one of A/B</span>
                             <span class="drop-file"><span class="name"></span><span class="size"></span></span>
                             <input type="file" id="return-templateA-file" accept=".xlsx,.xls,.csv"
                                    aria-label="Return template A file" />
@@ -372,7 +385,7 @@
                         <label class="drop" id="return-templateB-drop">
                             <span class="drop-step">Input 3</span>
                             <span class="drop-title">Return template B</span>
-                            <span class="drop-hint">NNNNNN-MP.csv</span>
+                            <span class="drop-hint">NNNNNN-MP.csv &mdash; optional, at least one of A/B</span>
                             <span class="drop-file"><span class="name"></span><span class="size"></span></span>
                             <input type="file" id="return-templateB-file" accept=".xlsx,.xls,.csv"
                                    aria-label="Return template B file" />
@@ -459,6 +472,125 @@
                 </div>
 
                 <footer class="page-foot">Marketplace Reporting &middot; Return SLA Report</footer>
+            </div>
+        </section>
+
+        @* ================= TICKET -> SELLER ================= *@
+        <section class="panel" id="panel-ticket-seller" role="tabpanel" aria-labelledby="tab-ticket-seller" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1>Ticket &rarr; Seller</h1>
+                    <p class="lede">
+                        Upload the Oracle <strong>case list</strong> and the Mirakl <strong>orders</strong> export.
+                        Cases in an <strong>HQ queue</strong> are matched to the orders file on their order number,
+                        and the list comes back as case number, order number, subject, seller and queue. A customer
+                        order that split across sellers (<code>&hellip;-A</code> / <code>&hellip;-B</code>) shows the
+                        case once per seller rather than picking one, so the right seller can be chosen by hand.
+                    </p>
+                </div>
+                <span class="stamp" id="ts-stamp"></span>
+            </header>
+
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="ts-tickets-drop">
+                            <span class="drop-step">Input 1</span>
+                            <span class="drop-title">Case list</span>
+                            <span class="drop-hint">Oracle vaka listesi &mdash; .xlsx or .csv</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="ts-tickets-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Case list file" />
+                        </label>
+
+                        <label class="drop" id="ts-orders-drop">
+                            <span class="drop-step">Input 2</span>
+                            <span class="drop-title">Orders export</span>
+                            <span class="drop-hint">.xlsx or .csv from Mirakl</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="ts-orders-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Orders export file" />
+                        </label>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="ts-generate">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Match cases</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="ts-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="skeleton" id="ts-skeleton" aria-hidden="true">
+                <div class="section-title">Loading</div>
+                <div class="sk-grid">
+                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
+                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
+                </div>
+                <div class="section-title">Loading</div>
+                <div class="sk-box wide"></div>
+            </div>
+
+            <div class="results" id="ts-results" hidden>
+
+                <div class="filter-bar">
+                    <div class="field">
+                        <label for="ts-queue">Queue</label>
+                        <select id="ts-queue"></select>
+                    </div>
+                    <div class="field">
+                        <label for="ts-seller">Seller</label>
+                        <select id="ts-seller"></select>
+                    </div>
+                    <div class="field">
+                        <label for="ts-search">Search</label>
+                        <input type="text" id="ts-search" placeholder="Vaka / sipariş no / konu" />
+                    </div>
+                    <button type="button" class="btn btn-ghost" id="ts-reset">Reset</button>
+                    <span class="filter-summary" id="ts-filter-summary"></span>
+                </div>
+
+                <div class="section-title">Overview</div>
+                <div class="kpi-grid" id="ts-kpis"></div>
+                <p class="note">
+                    Only cases whose <code>Kuyruk</code> names an <strong>HQ</strong> queue are listed
+                    (&ldquo;TR MM HQ MediaMarkt Pazaryeri&rdquo;, &ldquo;TR MM HQ Customer Care&rdquo;); everything
+                    in the call-centre, outbound and unassigned queues is left out, including from the Excel export.
+                    Cases are counted by case number, not by row: an order split across two sellers produces two
+                    rows for one case. The case list marks an empty cell with the text &ldquo;Değer Yok&rdquo; and
+                    writes a bare <code>0</code> when no order is attached &mdash; both count as
+                    <strong>no order number</strong> rather than as a failed lookup. A case with no subject of its
+                    own falls back to its category chain.
+                </p>
+
+                <div class="section-title">
+                    Cases needing a manual look
+                    <partial name="_ExportButton" model='new ExportButton("ts-open-wrap", "Unresolved", "Ticket Seller")' />
+                </div>
+                <div class="card accent-amber">
+                    <h3>Unresolved</h3>
+                    <p class="sub">No order number on the case, or the order is not in the orders export</p>
+                    <div class="table-scroll" id="ts-open-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    All cases
+                    <partial name="_ExportButton" model='new ExportButton("ts-all-wrap", "Case list", "Ticket Seller")' />
+                </div>
+                <div class="card">
+                    <h3>Case list</h3>
+                    <p class="sub">Case number, order number, subject, seller and queue</p>
+                    <div class="table-scroll" id="ts-all-wrap"></div>
+                </div>
+
+                <footer class="page-foot">Marketplace Reporting &middot; Ticket &rarr; Seller</footer>
             </div>
         </section>
 
@@ -721,6 +853,110 @@
             </div>
 
             <footer class="page-foot">Marketplace Reporting &middot; Create Return</footer>
+        </section>
+
+        @* ================= MARK AS RECEIVED ================= *@
+        <section class="panel" id="panel-mark-received" role="tabpanel" aria-labelledby="tab-mark-received" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1>Mark as Received</h1>
+                    <p class="lede">
+                        Opens each order on the Mirakl back office and clicks every
+                        <strong>Mark as received</strong> button it finds, confirming where Mirakl asks for
+                        it. Like Create Return, this <strong>writes to the marketplace</strong> and cannot be
+                        undone from here &mdash; check the list before starting.
+                    </p>
+                </div>
+                <span class="stamp" id="mr-stamp"></span>
+            </header>
+
+            <div class="section-title">Mirakl session</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="mr-session-badge">Checking&hellip;</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="mr-login">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Open login window</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="mr-save-session" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Save session</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="mr-clear-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Clear session</span>
+                        </button>
+                    </div>
+                </div>
+                <p class="note">
+                    Shares the same Mirakl login as Create Return &mdash; sign in once from either panel and
+                    both use it.
+                </p>
+            </div>
+
+            <div class="section-title">Order IDs</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="mr-drop">
+                            <span class="drop-step">Input</span>
+                            <span class="drop-title">Order ID list</span>
+                            <span class="drop-hint">.txt &mdash; one order ID per line</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="mr-file" accept=".txt" aria-label="Order ID list (.txt)" />
+                        </label>
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="mr-orders-text">Or paste order IDs directly</label>
+                        <textarea id="mr-orders-text" rows="8" spellcheck="false"
+                                  placeholder="01259_303210452-A&#10;01259_303210748-A"></textarea>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="mr-start" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Start marking as received</span>
+                        </button>
+                        <span class="filter-summary" id="mr-order-count"></span>
+                    </div>
+
+                    <div class="alert" id="mr-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+                <p class="note">
+                    Picking a file clears the pasted text and vice versa &mdash; only one source is used per
+                    run. Blank lines and lines starting with <code>#</code> are ignored; duplicate order IDs
+                    are counted once. Very large batches are rejected outright rather than silently
+                    truncated &mdash; run them in a few smaller batches instead.
+                </p>
+            </div>
+
+            <div class="results" id="mr-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span>Orders processed</span>
+                        <span class="mono" id="mr-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="mr-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Mark as Received progress">
+                        <span class="progress-fill" id="mr-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="mr-console"></pre>
+                </div>
+                <p class="note">
+                    An order that fails is screenshotted to <code>artifacts/mark-received</code> beside the
+                    executable and the run moves on to the next one.
+                </p>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Mark as Received</footer>
         </section>
 
         @* ================= LATE ORDER WARNINGS ================= *@
@@ -1446,6 +1682,10 @@
                                     <td>Return rows are matched to the orders export by order number. Rows with no match are labelled rather than dropped.</td>
                                 </tr>
                                 <tr>
+                                    <td><strong>Missing template</strong></td>
+                                    <td>Either template may be omitted as long as one of the two is uploaded; the report is then built from the remaining one and only that template's rows disappear. Refund times come from the orders file and are unaffected.</td>
+                                </tr>
+                                <tr>
                                     <td><strong>Refund time</strong></td>
                                     <td>Order created &rarr; customer debit date, computed over the whole orders file rather than only the rows present in the templates.</td>
                                 </tr>
@@ -1504,6 +1744,8 @@
     <script src="~/js/app.js" asp-append-version="true"></script>
     <script src="~/js/order-report.js" asp-append-version="true"></script>
     <script src="~/js/return-sla-report.js" asp-append-version="true"></script>
+    <script src="~/js/ticket-seller.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>
+    <script src="~/js/mark-received.js" asp-append-version="true"></script>
     <script src="~/js/late-orders.js" asp-append-version="true"></script>
 }

@@ -563,9 +563,10 @@
         };
       })
       .filter(x => x.count >= MIN_LEAD_TIME_SAMPLE && x.gain >= 1)
-      // Equal gains are broken by shipped lines rather than by revenue, so the ranking is explained
-      // by a column that is actually on screen.
-      .sort((a, b) => b.gain - a.gain || b.count - a.count);
+      // Ranked by shipped lines, so the sellers whose promise affects the most order lines come
+      // first. Equal volumes fall back to the size of the opportunity — both keys are columns that
+      // are actually on screen.
+      .sort((a, b) => b.count - a.count || b.gain - a.gain);
 
     const promiseRange = x => (x.minLt === x.maxLt ? x.minLt + ' d' : x.minLt + '–' + x.maxLt + ' d');
 

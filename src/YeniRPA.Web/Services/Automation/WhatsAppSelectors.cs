@@ -53,10 +53,20 @@ public static class WhatsAppSelectors
     /// The chat search box.
     ///
     /// <para><c>data-tab='3'</c> is the search box and <c>data-tab='10'</c> is the message composer, so
-    /// the number is what separates the two <c>contenteditable</c> divs on the page. It leads here
-    /// <b>without</b> an <c>#side</c> ancestor: that id has been the left column for years but is not
-    /// guaranteed to survive a layout rewrite, and requiring it turned a findable box into a timeout.
-    /// The <c>#side</c>-scoped form stays as a fallback for the reverse case.</para>
+    /// the number is what separates the two on the page. It leads here <b>without</b> an <c>#side</c>
+    /// ancestor: that id has been the left column for years but is not guaranteed to survive a layout
+    /// rewrite, and requiring it turned a findable box into a timeout. The <c>#side</c>-scoped form
+    /// stays as a fallback for the reverse case.</para>
+    ///
+    /// <para><b>Two different elements, depending on state, not one.</b> On an empty search — nothing
+    /// typed yet in this browser session — it is a <c>div[contenteditable='true']</c>. Once a search has
+    /// actually been run once, WhatsApp swaps the whole search bar for a different implementation built
+    /// around a plain <c>&lt;input type="text"&gt;</c> (with the filter chips — "All / Unread / ..." —
+    /// that appear alongside it), and every one of the <c>contenteditable</c>-only candidates below then
+    /// matches nothing: confirmed by capturing <c>#side</c>'s <c>outerHTML</c> on a run immediately
+    /// following a successful one and finding exactly this, `&lt;input data-tab="3" value="..."&gt;`, with
+    /// no <c>contenteditable</c> element anywhere in the container. Both forms carry <c>data-tab='3'</c>,
+    /// so that is what both candidates key on rather than the tag or role.</para>
     ///
     /// <para>Nothing here may match inside <c>#main</c>. A generic <c>div[contenteditable='true']</c>
     /// would happily resolve to the message composer of whatever chat is open, and typing a group name
@@ -66,6 +76,8 @@ public static class WhatsAppSelectors
     [
         "div[contenteditable='true'][data-tab='3']",
         "#side div[contenteditable='true'][data-tab='3']",
+        "input[data-tab='3']",
+        "#side input[data-tab='3']",
         "[role='textbox'][aria-label='Search input textbox']",
         "[role='textbox'][aria-label*='Ara']",
         "#side div[contenteditable='true']",
@@ -96,11 +108,31 @@ public static class WhatsAppSelectors
     /// "click here for group info"), both with a <c>title</c>, and <c>.First</c> picked the subtitle —
     /// which failed the guard on a chat that was in fact the right one. The guard's strength is the
     /// exact string comparison, not which element supplied the string.</para>
+    ///
+    /// <para><b>This is not enough on its own.</b> A later WhatsApp build was observed rendering a
+    /// header where <em>nothing</em> under it carries the chat name as a <c>title</c> — only the
+    /// avatar's "Profil detayları" / "Profile details" tooltip and the "grup bilgisi..." subtitle do.
+    /// See <see cref="HeaderNameText"/> for the fallback this forced.</para>
     /// </summary>
     public static readonly string[] HeaderTitle =
     [
         "#main header [title]",
         "#main header span[title]",
+    ];
+
+    /// <summary>
+    /// Fallback for reading the header chat name when no element carries it as a <c>title</c> (see the
+    /// note on <see cref="HeaderTitle"/>). <c>dir="auto"</c> is structure, not a label: WhatsApp puts it
+    /// on every piece of user-generated text it renders — message bubbles, chat list titles, and this
+    /// header name — for RTL/LTR detection, so it survives markup changes that drop <c>title</c>.
+    ///
+    /// <para>Read via a child-node walk that substitutes each <c>&lt;img alt&gt;</c> for its emoji,
+    /// never <c>InnerText</c> — the same emoji-as-image problem documented on
+    /// <see cref="ResultTitleInRow"/> applies here too.</para>
+    /// </summary>
+    public static readonly string[] HeaderNameText =
+    [
+        "#main header span[dir='auto']",
     ];
 
     /// <summary>

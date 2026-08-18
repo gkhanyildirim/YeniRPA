@@ -76,6 +76,40 @@ internal static class TabularFile
         return double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : 0;
     }
 
+    /// <summary>
+    /// The key both sides of an order-number match are reduced to: <c>01259_311911494-A</c> and a bare
+    /// <c>311911494</c> both become <c>311911494</c>. The prefix is the marketplace and the suffix is
+    /// the per-seller split, so neither belongs in the identity of the customer order.
+    ///
+    /// Started life private inside <see cref="ReturnListBuilder"/> and moved here unchanged when
+    /// <see cref="TicketSellerBuilder"/> needed the same key.
+    /// </summary>
+    public static string OrderCore(string orderNumber)
+    {
+        var value = orderNumber.Trim();
+        if (value.Length == 0)
+            return "";
+
+        var underscore = value.IndexOf('_');
+        if (underscore >= 0)
+        {
+            value = value[(underscore + 1)..];
+            var dash = value.IndexOf('-');
+            if (dash >= 0)
+                value = value[..dash];
+        }
+
+        return value.Trim();
+    }
+
+    /// <summary>The orders export writes seller ids as floats ("11842.0"); the templates use "11842".</summary>
+    public static string NormalizeSellerId(string raw)
+    {
+        var value = raw.Trim();
+        var dot = value.IndexOf('.');
+        return dot >= 0 ? value[..dot] : value;
+    }
+
     // ---------------------------------------------------------------------
 
     static List<List<string>> ReadXlsx(Stream stream)

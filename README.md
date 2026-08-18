@@ -6,7 +6,7 @@ with tab navigation between them and results rendered in place.
 | Module | Input | Output |
 |---|---|---|
 | **Order Report** (Late Shipment & Cancellation) | `orders.xlsx` | In-page dashboard (20 KPIs, 8 charts, 5 tables, 2 ranked lists) + 4-sheet Excel workbook |
-| **Return SLA Report** | `orders` export + 2 return tracking templates (`.xlsx` or `.csv`) | In-page dashboard (6 KPIs, 4 tables) |
+| **Return SLA Report** | `orders` export + 1–2 return tracking templates (`.xlsx` or `.csv`) | In-page dashboard (6 KPIs, 4 tables) |
 | **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
 | **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per seller (copy to clipboard or export to Excel) |
 | **Data & Methodology** | — | Reference page: source column per metric, calculation rules, known export traps, limits |

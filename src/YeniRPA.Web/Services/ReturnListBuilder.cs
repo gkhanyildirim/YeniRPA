@@ -457,36 +457,13 @@ public static class ReturnListBuilder
             : (TrackingState.Malformed, code);
     }
 
-    /// <summary>
-    /// The key both sides of every match are reduced to: <c>01259_311911494-A</c> and a bare
-    /// <c>311911494</c> both become <c>311911494</c>. The prefix is the marketplace and the suffix is
-    /// the per-seller split, so neither belongs in the identity of the customer order.
-    /// </summary>
-    static string Core(string orderNumber)
-    {
-        var value = orderNumber.Trim();
-        if (value.Length == 0)
-            return "";
+    // The two below moved to TabularFile when TicketSellerBuilder needed the same order-number key.
+    // They are forwarded rather than inlined at the call sites so this module keeps running on
+    // byte-identical code, the same way ReturnSlaReportBuilder forwards its file readers.
 
-        var underscore = value.IndexOf('_');
-        if (underscore >= 0)
-        {
-            value = value[(underscore + 1)..];
-            var dash = value.IndexOf('-');
-            if (dash >= 0)
-                value = value[..dash];
-        }
+    static string Core(string orderNumber) => TabularFile.OrderCore(orderNumber);
 
-        return value.Trim();
-    }
-
-    /// <summary>The orders export writes seller ids as floats ("11842.0"); the templates use "11842".</summary>
-    static string NormalizeSellerId(string raw)
-    {
-        var value = raw.Trim();
-        var dot = value.IndexOf('.');
-        return dot >= 0 ? value[..dot] : value;
-    }
+    static string NormalizeSellerId(string raw) => TabularFile.NormalizeSellerId(raw);
 
     /// <summary>
     /// Only "İade" counts as a return request. The template also carries "Değişim" (exchange), and

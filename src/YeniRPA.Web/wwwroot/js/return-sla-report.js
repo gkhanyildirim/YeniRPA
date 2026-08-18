@@ -19,6 +19,16 @@
   let ROWS = [];
   let PAYMENT_ROWS = [];
 
+  // Set at upload time and appended to the filter summary, so a dashboard built from a single
+  // template never looks like a complete one that happens to be short of rows.
+  let MISSING_NOTE = '';
+
+  const missingNote = (templateA, templateB) => {
+    if (!templateA) return ' — template A was not uploaded, so return-request rows are not included';
+    if (!templateB) return ' — template B (MP) was not uploaded, so MP rows are not included';
+    return '';
+  };
+
   // ---------------------------------------------------------------------------
   // Columns
   // ---------------------------------------------------------------------------
@@ -102,10 +112,10 @@
       });
     }
 
-    document.getElementById('return-filter-summary').textContent = (from || to)
+    document.getElementById('return-filter-summary').textContent = ((from || to)
       ? 'Showing ' + filteredRows.length.toLocaleString('en-US') + ' of ' +
         ROWS.length.toLocaleString('en-US') + ' return records'
-      : 'Showing all ' + ROWS.length.toLocaleString('en-US') + ' return records';
+      : 'Showing all ' + ROWS.length.toLocaleString('en-US') + ' return records') + MISSING_NOTE;
 
     renderAll(filteredRows, filteredPayments);
   }
@@ -139,17 +149,24 @@
       const templateA = document.getElementById('return-templateA-file').files[0];
       const templateB = document.getElementById('return-templateB-file').files[0];
 
-      if (!orders || !templateA || !templateB) {
+      if (!orders) {
+        RPA.showError('return-alert', 'Please upload the orders export.');
+        return;
+      }
+      // Either template may be left out — the report is then built from whichever one is present.
+      if (!templateA && !templateB) {
         RPA.showError('return-alert',
-          'Please upload all three files: the orders export, return template A and return template B.');
+          'Please upload at least one return template: A (Marketplace Iade & Degisim Talepleri) or B (NNNNNN-MP.csv).');
         return;
       }
       RPA.clearError('return-alert');
 
       const form = new FormData();
       form.append('orders', orders);
-      form.append('templateA', templateA);
-      form.append('templateB', templateB);
+      if (templateA) form.append('templateA', templateA);
+      if (templateB) form.append('templateB', templateB);
+
+      MISSING_NOTE = missingNote(templateA, templateB);
 
       RPA.setBusy(generateBtn, true, 'Generating…');
       RPA.showSkeleton('return-skeleton', 'return-results');

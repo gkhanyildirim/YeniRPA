@@ -230,12 +230,7 @@ body {
   width: 30px; height: 30px;
   flex: none;
   border-radius: var(--r-sm);
-  background: var(--ink);
-  color: var(--surface);
-  display: grid; place-items: center;
-  font-family: var(--font-mono);
-  font-weight: 600; font-size: .78rem;
-  letter-spacing: -.03em;
+  object-fit: cover;
 }
 
 .brand-text { min-width: 0; }
@@ -657,8 +652,32 @@ input[type="text"]:focus,
 input[type="number"]:focus,
 textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 
+/* Same shape again for the dropdowns the Ticket → Seller filters introduced. Unlike the text inputs
+   these size to their content: the options are seller and queue names of wildly different lengths,
+   and a full-width box would push the rest of the filter bar off screen. */
+select {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: .76rem;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  max-width: 34ch;
+  color-scheme: light;
+}
+:root[data-theme="dark"] select { color-scheme: dark; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) select { color-scheme: dark; }
+}
+select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+
 /* The offset is a two-digit number in a filter bar, not a full-width field. */
 .filter-bar input[type="number"] { width: 9ch; }
+
+/* The search box sits between two dropdowns, so it cannot take the default full width either. */
+.filter-bar input[type="text"] { width: 26ch; }
 
 textarea {
   resize: vertical;
