@@ -120,6 +120,9 @@ public sealed record OrderReportData(
     /// <summary>Status of a line the seller turned down. Counted for the Key metrics row.</summary>
     [property: JsonPropertyName("rejectedStatus")] string RejectedStatus,
 
+    /// <summary>Status of a line the seller has not decided on yet; excluded from the acceptance rate.</summary>
+    [property: JsonPropertyName("pendingAcceptanceStatus")] string PendingAcceptanceStatus,
+
     /// <summary>
     /// Reason value the platform writes when it closes a line as delivered without a real carrier
     /// notification. Delivery-time metrics exclude these rows.
@@ -187,7 +190,13 @@ public sealed record ReturnSlaRow(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("shippedToSellerDate")] string? ShippedToSellerDate,
     [property: JsonPropertyName("elapsedDays")] double? ElapsedDays,
+
+    /// <summary>
+    /// The two thresholds ride along on every row so the dashboard can label the buckets without
+    /// hard-coding numbers that then drift out of step with the server the day they are changed.
+    /// </summary>
     [property: JsonPropertyName("slaDays")] int SlaDays,
+    [property: JsonPropertyName("warningDays")] int WarningDays,
     [property: JsonPropertyName("isConfirmedReturn")] bool IsConfirmedReturn,
     [property: JsonPropertyName("slaMissed")] bool SlaMissed,
     [property: JsonPropertyName("pastWarning")] bool PastWarning,

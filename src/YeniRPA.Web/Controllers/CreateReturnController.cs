@@ -13,7 +13,6 @@ namespace YeniRPA.Web.Controllers;
 /// <c>prepare</c> turns the four exports into a reviewable list; <c>list/excel</c> and
 /// <c>start-list</c> then take that list back as JSON rather than asking for the files again — the
 /// orders export alone is ~30 MB and re-uploading it to produce a two-column workbook is waste.
-/// <c>start</c> stays for the hand-made workbook the operator has always been able to upload.
 ///
 /// Every entry point validates synchronously so a bad input is rejected with a message; the run
 /// itself happens in the background and reports on <c>/api/automation/events</c>.
@@ -108,67 +107,6 @@ public sealed class CreateReturnController : ControllerBase
     }
 
     // -----------------------------------------------------------------
-    // Hand-made workbook
-    // -----------------------------------------------------------------
-
-    [HttpPost("start")]
-    public async Task<IActionResult> Start(IFormFile? file, CancellationToken cancellationToken)
-    {
-        if (file is not { Length: > 0 })
-            return BadRequest(new { error = "Please upload an Excel file (.xlsx)." });
-
-        List<ReturnRow> rows;
-        try
-        {
-            rows = await ReadRowsAsync(file, cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return BadRequest(new { error = $"The uploaded file could not be read as an Excel workbook: {ex.Message}" });
-        }
-
-        if (rows.Count == 0)
-        {
-            return BadRequest(new
-            {
-                error = "No usable rows were found. Column A must hold the order ID and column B the tracking number, " +
-                        "with the first row as a header."
-            });
-        }
-
-        if (!_runner.TryStart(rows))
-            return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });
-
-        return Ok(new { count = rows.Count });
-    }
-
-    /// <summary>Column A = order ID, column B = tracking number, first used row is the header.</summary>
-    static async Task<List<ReturnRow>> ReadRowsAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        // ClosedXML needs a seekable stream; the raw request body is not one.
-        using var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-
-        using var workbook = new XLWorkbook(stream);
-        var sheet = workbook.Worksheets.First();
-
-        var rows = new List<ReturnRow>();
-        foreach (var row in sheet.RowsUsed().Skip(1))
-        {
-            var orderId = row.Cell(OrderIdColumn).GetString().Trim();
-            var trackingNumber = row.Cell(TrackingNumberColumn).GetString().Trim();
-
-            // A row missing either half cannot produce a return, so it is dropped rather than
-            // failing the whole upload.
-            if (orderId.Length > 0 && trackingNumber.Length > 0)
-                rows.Add(new ReturnRow(orderId, trackingNumber));
-        }
-
-        return rows;
-    }
-
-    // -----------------------------------------------------------------
 
     static List<ReturnRow> ParseRows(ListRequest? request)
     {
@@ -181,8 +119,9 @@ public sealed class CreateReturnController : ControllerBase
     }
 
     /// <summary>
-    /// The plain two-column shape <see cref="ReadRowsAsync"/> expects — deliberately not
+    /// The plain two-column shape the operator used to build by hand — deliberately not
     /// <c>TableWorkbookBuilder</c>, which writes a styled report with title rows above the data.
+    /// This is a record of what the run was given, not an input: the run itself takes the list as JSON.
     /// </summary>
     static byte[] BuildWorkbook(IReadOnlyList<ReturnRow> rows)
     {

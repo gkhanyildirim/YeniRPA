@@ -47,13 +47,12 @@
 
   /** Idempotent: the run state arrives from several places (POST, status, events). */
   function setRunning(running) {
-    const button = el('cr-start');
+    const button = el('cr-run-list');
     if (running !== button.classList.contains('is-busy')) {
       RPA.setBusy(button, running, 'Running…');
     }
-    // Both ways into a run are blocked while one is going, so a second click cannot queue a batch
-    // the server would only reject anyway.
-    el('cr-run-list').disabled = running || preparedRows.length === 0;
+    // setBusy re-enables the button when a run ends, so the empty-list case is applied after it.
+    button.disabled = running || preparedRows.length === 0;
     // Wiping the session out from under a running batch would fail every remaining order.
     el('cr-clear-session').disabled = running;
   }
@@ -215,6 +214,7 @@
     { label: 'Date range', render: f => RPA.fmtInt(f.inDateRange), numeric: true, value: f => f.inDateRange },
     { label: 'Not duplicated', render: f => RPA.fmtInt(f.afterDuplicates), numeric: true, value: f => f.afterDuplicates },
     { label: 'Request type', render: f => RPA.fmtInt(f.afterRequestType), numeric: true, value: f => f.afterRequestType },
+    { label: 'Not cancelled', render: f => RPA.fmtInt(f.afterState), numeric: true, value: f => f.afterState },
     { label: 'No return yet', render: f => RPA.fmtInt(f.afterExistingReturns), numeric: true, value: f => f.afterExistingReturns },
     { label: 'Ready', render: f => '<strong>' + RPA.fmtInt(f.ready) + '</strong>', numeric: true, value: f => f.ready }
   ];
@@ -309,7 +309,6 @@
     ['cr-templateA', 'cr-templateB', 'cr-returns', 'cr-orders'].forEach(function (id) {
       RPA.initDropzone(id + '-drop', id + '-file');
     });
-    RPA.initDropzone('cr-drop', 'cr-file');
     seedDateRange();
 
     el('cr-prepare').addEventListener('click', prepare);
@@ -362,31 +361,6 @@
 
     el('cr-clear-session').addEventListener('click', function () {
       runSessionAction('cr-clear-session', 'Clearing…', '/api/automation/clear-session');
-    });
-
-    el('cr-start').addEventListener('click', async function () {
-      const file = el('cr-file').files[0];
-      if (!file) {
-        RPA.showError('cr-alert',
-          'Upload a workbook with order IDs in column A and tracking numbers in column B.');
-        return;
-      }
-      RPA.clearError('cr-alert');
-
-      const form = new FormData();
-      form.append('file', file);
-
-      // Opened before the POST so the first events of the run cannot be missed.
-      connect();
-      setRunning(true);
-      el('cr-run').hidden = false;
-
-      try {
-        await RPA.postJson('/api/create-return/start', form);
-      } catch (err) {
-        RPA.showError('cr-alert', err.message);
-        setRunning(false);
-      }
     });
 
     // app.js selects the initial module while running its own DOMContentLoaded handler, which is

@@ -29,11 +29,13 @@ public static class ReturnListBuilder
     const string ReasonBothTemplates = "Same order in both templates";
     const string ReasonNotAReturn = "Request type is not İade";
     const string ReasonAlreadyReturned = "Return already exists";
+    const string ReasonCanceledState = "Request state is CANCELLED";
+    const string ReasonCanceledOrder = "Order is canceled in the orders export";
     const string ReasonNotInOrders = "Not found in the orders export";
     const string ReasonAmbiguous = "Ambiguous order number (…-A / …-B)";
 
     /// <summary>One order line of the orders export, reduced to what the lookup needs.</summary>
-    sealed record OrderRef(string FullNumber, string SellerId, string Seller);
+    sealed record OrderRef(string FullNumber, string SellerId, string Seller, string Status);
 
     /// <summary>A template row that survived the tracking-code and date filters.</summary>
     sealed record Candidate(
@@ -81,8 +83,8 @@ public static class ReturnListBuilder
         excluded.AddRange(scanB.Excluded);
 
         // Per-template narrowing: duplicates, request type, and returns that already exist.
-        var narrowedA = Narrow(scanA, options, alreadyReturned, excluded, out var afterDupA, out var afterTypeA);
-        var narrowedB = Narrow(scanB, options, alreadyReturned, excluded, out var afterDupB, out var afterTypeB);
+        var narrowedA = Narrow(scanA, options, alreadyReturned, excluded, out var afterDupA, out var afterTypeA, out var afterStateA);
+        var narrowedB = Narrow(scanB, options, alreadyReturned, excluded, out var afterDupB, out var afterTypeB, out var afterStateB);
 
         // The same order turning up in both templates would file two returns for it. Not seen on the
         // current exports, but it was before the "NULL" tracking codes were excluded, so the guard
@@ -105,8 +107,8 @@ public static class ReturnListBuilder
 
         var funnels = new List<ReturnListFunnel>
         {
-            new(scanA.Source, scanA.Total, scanA.WithTracking, scanA.Candidates.Count, afterDupA, afterTypeA, narrowedA.Count, rowsA.Count),
-            new(scanB.Source, scanB.Total, scanB.WithTracking, scanB.Candidates.Count, afterDupB, afterTypeB, narrowedB.Count, rowsB.Count)
+            new(scanA.Source, scanA.Total, scanA.WithTracking, scanA.Candidates.Count, afterDupA, afterTypeA, afterStateA, narrowedA.Count, rowsA.Count),
+            new(scanB.Source, scanB.Total, scanB.WithTracking, scanB.Candidates.Count, afterDupB, afterTypeB, afterStateB, narrowedB.Count, rowsB.Count)
         };
 
         return new ReturnListData([.. rowsA, .. rowsB], excluded, funnels);
@@ -122,7 +124,8 @@ public static class ReturnListBuilder
         HashSet<string> alreadyReturned,
         List<ReturnListExcludedRow> excluded,
         out int afterDuplicates,
-        out int afterRequestType)
+        out int afterRequestType,
+        out int afterState)
     {
         // An order number appearing more than once is dropped entirely — no copy is kept. Two return
         // requests against one order cannot both be right, and picking one silently is worse than
@@ -155,6 +158,18 @@ public static class ReturnListBuilder
         }
         afterRequestType = remaining.Count;
 
+        // A request the marketplace already cancelled needs no return filed against it. Template B is
+        // the only one that carries a state, so this drops nothing on template A — the rule still
+        // lives here, on the shared field, rather than inside one scanner.
+        var open = new List<Candidate>();
+        foreach (var candidate in remaining)
+        {
+            if (IsCanceledState(candidate.TypeOrState)) excluded.Add(Exclude(candidate, ReasonCanceledState));
+            else open.Add(candidate);
+        }
+        remaining = open;
+        afterState = remaining.Count;
+
         var withoutExisting = new List<Candidate>();
         foreach (var candidate in remaining)
         {
@@ -181,7 +196,7 @@ public static class ReturnListBuilder
                 continue;
             }
 
-            string fullOrderNumber;
+            OrderRef match;
 
             if (candidate.FullOrderNumber is { Length: > 0 } fromTemplate)
             {
@@ -194,11 +209,11 @@ public static class ReturnListBuilder
                     excluded.Add(Exclude(candidate, ReasonNotInOrders));
                     continue;
                 }
-                fullOrderNumber = confirmed.FullNumber;
+                match = confirmed;
             }
             else if (matches.Count == 1)
             {
-                fullOrderNumber = matches[0].FullNumber;
+                match = matches[0];
             }
             else
             {
@@ -214,12 +229,21 @@ public static class ReturnListBuilder
                     excluded.Add(Exclude(candidate, ReasonAmbiguous));
                     continue;
                 }
-                fullOrderNumber = bySeller[0].FullNumber;
+                match = bySeller[0];
+            }
+
+            // A canceled order cannot take a return: the automation would open its page, fail to fill
+            // the form and leave a screenshot behind. The orders export is the only place template A
+            // rows carry a status at all, which is why the check lives here rather than in Narrow.
+            if (string.Equals(match.Status, OrderReportBuilder.CanceledStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                excluded.Add(Exclude(candidate, ReasonCanceledOrder));
+                continue;
             }
 
             rows.Add(new ReturnListRow(
                 Source: candidate.Source,
-                OrderNumber: fullOrderNumber,
+                OrderNumber: match.FullNumber,
                 TrackingNumber: candidate.TrackingNumber,
                 SourceOrderNo: candidate.SourceOrderNo,
                 Seller: candidate.Seller,
@@ -409,6 +433,10 @@ public static class ReturnListBuilder
         var cSellerId = Optional(idx, "Seller ID");
         var cSeller = Optional(idx, "Seller");
 
+        // Optional so an export that predates the column still produces a list — the canceled-order
+        // check simply finds nothing to drop.
+        var cStatus = Optional(idx, "Status");
+
         // The export is one row per order line, so a single order number repeats once per item.
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -429,7 +457,8 @@ public static class ReturnListBuilder
             refs.Add(new OrderRef(
                 full,
                 NormalizeSellerId(TabularFile.GetCell(row, cSellerId)),
-                TabularFile.GetCell(row, cSeller).Trim()));
+                TabularFile.GetCell(row, cSeller).Trim(),
+                TabularFile.GetCell(row, cStatus).Trim()));
         }
 
         return index;
@@ -459,6 +488,15 @@ public static class ReturnListBuilder
     /// </summary>
     static bool IsIade(string requestType) =>
         requestType.Trim() is "İade" or "Iade" or "iade" or "İADE" or "IADE";
+
+    /// <summary>
+    /// Template B's State column. Matched positively for the same reason as <see cref="IsIade"/>: a
+    /// state nobody has seen before must reach the review table, not be dropped as if it were
+    /// cancelled. Both spellings are listed because the export writes CANCELLED and the orders export
+    /// writes Canceled.
+    /// </summary>
+    static bool IsCanceledState(string state) =>
+        state.Trim() is "CANCELLED" or "CANCELED" or "Cancelled" or "Canceled" or "İptal" or "Iptal";
 
     /// <summary>
     /// Both templates write the day first. The rule moved to <see cref="TabularFile.ParseDayFirstDate"/>

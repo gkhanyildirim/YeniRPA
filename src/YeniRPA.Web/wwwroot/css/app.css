@@ -342,9 +342,11 @@ body::after {
 }
 
 .brand-mark {
-  width: 30px; height: 30px;
+  width: 32px; height: 32px;
   flex: none;
   border-radius: var(--r-sm);
+  /* The file is a square crop of the pinwheel, so nothing is cropped away here — the rule stays as
+     insurance against a replacement asset that is not square. */
   object-fit: cover;
 }
 
@@ -918,6 +920,11 @@ textarea {
   background: linear-gradient(90deg, var(--line-strong), transparent);
 }
 
+/* `display: flex` above outranks the browser's own [hidden] rule, so a section hidden because it
+   had nothing in it would otherwise stay on the page. Being display:none is also what keeps it out
+   of the counter below, so the sections after it renumber. */
+.section-title[hidden] { display: none; }
+
 /* Sections number themselves, so the chips in the control deck and the headings on the page can
    never disagree about which section is which. Scoped to .results: the skeleton and the reference
    pages use the same class without being a numbered report. */
@@ -945,7 +952,9 @@ textarea {
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(190px, 264px);
+  /* Single column by default: a hero with no sparkline must not reserve the column it would have
+     sat in, which would leave a 264px hole on the right of the strip. */
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: var(--s-7);
   margin: var(--s-5) 0 var(--s-6);
@@ -958,9 +967,13 @@ textarea {
   box-shadow: var(--hi), var(--e-2);
 }
 
+.hero:has(.hero-spark) { grid-template-columns: minmax(0, 1fr) minmax(190px, 264px); }
+
+/* The column count comes from how many figures were rendered — renderHero publishes it as
+   --hero-cols — so adding or dropping a figure needs no change here. */
 .hero-figs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--hero-cols, 4), minmax(0, 1fr));
   gap: var(--s-5);
 }
 
@@ -1018,7 +1031,9 @@ textarea {
 }
 
 @media (max-width: 1100px) {
-  .hero { grid-template-columns: minmax(0, 1fr); gap: var(--s-5); }
+  .hero,
+  .hero:has(.hero-spark) { grid-template-columns: minmax(0, 1fr); gap: var(--s-5); }
+  /* Two per row whatever --hero-cols says: five figures across a narrow screen are unreadable. */
   .hero-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
   .hero-fig:nth-child(odd) { padding-left: 0; border-left: 0; }
 }
@@ -1366,14 +1381,22 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
    Rendered as HTML rather than by Chart.js: the type then matches the rest of the page and the
    share sits next to the label instead of only inside a tooltip. */
 
+/*
+  A grid, not a wrapping flex row: with flex, every entry is as wide as its own label, so the second
+  entry of each row starts at a different place and the figures never form a column — which is
+  exactly how a status legend with eight entries reads as ragged. Fixed tracks put every entry in a
+  column at whatever width the card happens to be, and auto-fit picks the column count, so the same
+  rule serves the narrow doughnut card beside a trend and the full-width one.
+*/
 .chart-legend {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--s-2) var(--s-4);
   margin-top: var(--s-3);
+  align-items: start;
 }
 .legend-item {
-  display: inline-flex;
+  display: flex;
   align-items: baseline;
   gap: 7px;
   font-size: .73rem;
@@ -1386,7 +1409,18 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   border-radius: var(--r-xs);
   align-self: center;
 }
-.legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 22ch; }
+/* Holds the label and its figure. Wrapping happens here rather than on .legend-item so the figure
+   drops under the label instead of under the dot — and truncating the label, which would leave an
+   entry reading "Seller / operator cancell…", stays the last resort. */
+.legend-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1px 7px;
+  min-width: 0;
+}
+/* Truncates only when a single column cannot hold the label at all, rather than at a fixed 22ch. */
+.legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .legend-value {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;

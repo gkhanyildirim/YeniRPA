@@ -170,7 +170,6 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
 | `POST` | `/api/create-return/prepare` | `templateA`, `templateB`, `returns`, `orders`, `from`, `to`, `returnsOnly` | Prepared list JSON: ready rows, dropped rows, funnel |
 | `POST` | `/api/create-return/list/excel` | JSON `{ rows }` | Two-column `.xlsx` |
 | `POST` | `/api/create-return/start-list` | JSON `{ rows }` | `{ count }`; the run continues in the background |
-| `POST` | `/api/create-return/start` | `file` | `{ count }`; the run continues in the background |
 | `GET` | `/api/automation/status` | — | `{ hasSession, browserReady, isRunning, runningModule }` |
 | `POST` | `/api/automation/login` \| `save-session` \| `clear-session` | — | `200` |
 | `GET` | `/api/automation/events` | — | `text/event-stream` of run progress |
@@ -197,11 +196,12 @@ the orders export — and out comes the two-column list the automation runs on, 
 a table of everything that was dropped and why. Nothing is read from disk; all four are uploaded.
 
 Per template: keep rows with a real tracking code, keep rows inside the date range, drop **every**
-copy of an order number that appears more than once, optionally keep only `İade` requests, and drop
-anything the returns export already covers. The two lists are then merged (an order in both is
-dropped from both) and matched against the orders export for the full `01259_311911494-A` form.
+copy of an order number that appears more than once, optionally keep only `İade` requests, drop
+requests the marketplace has already cancelled, and drop anything the returns export already covers.
+The two lists are then merged (an order in both is dropped from both) and matched against the orders
+export for the full `01259_311911494-A` form — which is also where a **canceled order** is caught.
 
-Four things about this are load-bearing:
+Five things about this are load-bearing:
 
 - **The MP export writes the literal text `NULL` into `YK Takip Kodu`** on roughly three rows out of
   four (1991 of 2685 on the sample export). Testing "is it empty" would file the word NULL as a
@@ -214,12 +214,22 @@ Four things about this are load-bearing:
   this replaces.
 - **Duplicate order numbers drop every copy, not all-but-one.** Two return requests against one
   order cannot both be right, and silently picking one is worse than leaving it to be checked.
+- **Cancelled rows are dropped twice over, from two different files.** Template B's `State` column
+  says whether the request itself was cancelled; the orders export's `Status` column says whether the
+  order was — and it is the only place a template A row carries a status at all. Neither can take a
+  return, so filing one costs a page load, a failure and a screenshot for nothing. Both checks match
+  positively (`IsCanceledState`, `OrderReportBuilder.CanceledStatus`), so an unfamiliar state reaches
+  the review table instead of being dropped as if it were a cancellation, and both drops are listed
+  with their reason. The `Status` column is read as optional: an export without it still builds a
+  list, only without that check.
 - **`ReturnListBuilder` parses template dates itself** rather than through `TabularFile.ParseDate` —
   see the warning at the end of this section.
 
 The prepared rows go back to the server as JSON for the Excel download and for `start-list`, so the
-~30 MB orders export is uploaded once per prepare and never again. The hand-made workbook upload
-still works and is unchanged.
+~30 MB orders export is uploaded once per prepare and never again. Preparing the list is the only way
+into a run: the hand-made workbook upload it replaced — the *Or upload a ready list* card and its
+`POST /api/create-return/start` endpoint — is gone. **Download Excel** stays, as a record of what a
+run was given rather than as an input.
 
 ### Filing the returns
 
@@ -279,7 +289,7 @@ by tests.
 The templates carry the bare customer order number (`321097726`); the orders export carries the full
 Mirakl form (`01259_321097726-A`). The old key was "every digit in the number", which turns the full
 form into `01259321097726` and the bare one into `321097726`: **no row ever matched**. Every seller
-came out blank, every status read *"not matched"*, and so every return older than 15 days was
+came out blank, every status read *"not matched"*, and so every return past the SLA window was
 reported as an SLA breach — including the ones whose order had been canceled weeks earlier. The join
 now uses `TabularFile.OrderCore`, the same key `ReturnListBuilder` and `TicketSellerBuilder` use.
 
@@ -296,7 +306,7 @@ Resolution order, since one customer order splits per seller into `…-A` / `…
 A return with no order behind it has no status to be late against; reporting those as breaches is
 what made the old list unusable. `slaMissed` and `pastWarning` therefore both require a resolved,
 still-open return — the second of those is a deliberate change from the original, where a completed
-return still showed up as a 10-day warning. The status column now prints the order's own Mirakl
+return still showed up as an early warning. The status column now prints the order's own Mirakl
 status next to the verdict badge, which is what an operator would otherwise look up by hand.
 
 **2. `Talep Tarihi` was read month-first**
@@ -325,8 +335,10 @@ byte-identical output. Specifically:
   `Hepsijet` or `MNG` — applied to the **canonical** carrier name (see below), not to the raw
   column. (`MNG` was added after the first production run; the list is the single source for the
   dashboard, the workbook formula and the Methodology page.)
-- Return SLA is **15 days** from the ship-back date, early warning at **10 days**. Return template A
-  has no ship-date column, so `Talep Tarihi` is used as a proxy.
+- Return SLA is **20 days** from the ship-back date, early warning at **15 days**
+  (`ReturnSlaReportBuilder.SlaDays` / `.WarningDays`, which every row carries to the dashboard so the
+  labels cannot drift from the arithmetic). Return template A has no ship-date column, so
+  `Talep Tarihi` is used as a proxy.
 - `pastWarning` **is** gated on the return still being open, unlike the original — see
   [Return SLA report](#return-sla-report).
 

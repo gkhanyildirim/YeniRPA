@@ -609,8 +609,10 @@ window.RPA = window.RPA || {};
         (f.context ? '<div class="hero-context">' + RPA.escapeHtml(f.context) + '</div>' : '') +
       '</div>').join('');
 
+    // The grid takes its column count from the figures themselves, so a hero of four and one of five
+    // both come out evenly spaced without a rule per case.
     el.innerHTML =
-      '<div class="hero-figs">' + figuresHtml + '</div>' +
+      '<div class="hero-figs" style="--hero-cols:' + figures.length + '">' + figuresHtml + '</div>' +
       (opts.spark && opts.spark.length > 1
         ? '<div class="hero-spark">' + sparkSvg(opts.spark) +
             '<div class="hero-spark-foot">' +
@@ -654,26 +656,48 @@ window.RPA = window.RPA || {};
   RPA.chartLegend = function (elId, items) {
     const el = document.getElementById(elId);
     if (!el) return;
+    // The label and its figure share a wrapper so that a column too narrow for both drops the figure
+    // under the label rather than under the dot — the entry then still reads as one block.
     el.innerHTML = items.map(item =>
       '<span class="legend-item">' +
         '<span class="legend-dot" style="background:' + RPA.escapeHtml(item.color) + '"></span>' +
-        '<span class="legend-name" title="' + RPA.escapeHtml(item.label) + '">' +
-          RPA.escapeHtml(item.label) + '</span>' +
-        (item.value ? '<span class="legend-value">' + RPA.escapeHtml(item.value) + '</span>' : '') +
+        '<span class="legend-text">' +
+          '<span class="legend-name" title="' + RPA.escapeHtml(item.label) + '">' +
+            RPA.escapeHtml(item.label) + '</span>' +
+          (item.value ? '<span class="legend-value">' + RPA.escapeHtml(item.value) + '</span>' : '') +
+        '</span>' +
       '</span>').join('');
+  };
+
+  /**
+   * Shows or hides one report section — its heading and the card that holds `wrapperId` — as a unit.
+   *
+   * A section with nothing in it is worth dropping rather than printing an empty table, and hiding
+   * the heading along with the card is what makes that clean: the CSS counter skips a heading that
+   * is `display: none`, so the remaining sections renumber themselves, and initSectionNav skips it
+   * for the same reason.
+   */
+  RPA.toggleSection = function (titleId, wrapperId, show) {
+    const title = document.getElementById(titleId);
+    const wrap = document.getElementById(wrapperId);
+    const card = wrap ? wrap.closest('.card') : null;
+    if (title) title.hidden = !show;
+    if (card) card.hidden = !show;
   };
 
   /**
    * Builds the section index for a long report out of the sections themselves: every element inside
    * `rootId` carrying `data-section` becomes a chip, numbered in document order — the same numbers
-   * the headings print via a CSS counter, so the two can never disagree.
+   * the headings print via a CSS counter, so the two can never disagree. A hidden heading is skipped
+   * on both sides, which is why they still agree when a section drops out.
    */
   RPA.initSectionNav = function (navId, rootId) {
     const nav = document.getElementById(navId);
     const root = document.getElementById(rootId);
     if (!nav || !root) return;
 
-    const sections = Array.prototype.slice.call(root.querySelectorAll('[data-section][id]'));
+    const sections = Array.prototype.slice.call(root.querySelectorAll('[data-section][id]'))
+      .filter(section => !section.hidden);
     if (!sections.length) { nav.innerHTML = ''; return; }
 
     nav.innerHTML = sections.map((section, i) =>

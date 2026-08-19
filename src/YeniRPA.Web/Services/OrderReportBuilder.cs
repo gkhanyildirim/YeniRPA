@@ -33,6 +33,13 @@ public static partial class OrderReportBuilder
     /// </summary>
     public const string ReceivedStatus = "Received";
     public const string RejectedStatus = "Rejected";
+
+    /// <summary>
+    /// Status of a line the seller has neither accepted nor turned down yet. It is the denominator
+    /// correction behind the acceptance rate: a line still awaiting a decision has not been accepted,
+    /// but counting it as a non-acceptance would understate every seller who simply has fresh orders.
+    /// </summary>
+    public const string PendingAcceptanceStatus = "Pending acceptance";
     const string IntegratedGroup = "Integrated";
     const string ManualGroup = "Manual";
 
@@ -288,6 +295,7 @@ public static partial class OrderReportBuilder
             RefundedStatus,
             ReceivedStatus,
             RejectedStatus,
+            PendingAcceptanceStatus,
             AutoReceivedReason,
             categories.Values,
             brands.Values,

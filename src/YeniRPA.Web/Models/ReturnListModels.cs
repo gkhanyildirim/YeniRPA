@@ -62,6 +62,10 @@ public sealed record ReturnListFunnel(
     /// <summary>Equal to <paramref name="AfterDuplicates"/> unless the "only İade" filter is on.</summary>
     [property: JsonPropertyName("afterRequestType")] int AfterRequestType,
 
+    /// <summary>Survived the cancelled-state drop. Only template B carries a state, so on template A
+    /// this equals <paramref name="AfterRequestType"/>.</summary>
+    [property: JsonPropertyName("afterState")] int AfterState,
+
     [property: JsonPropertyName("afterExistingReturns")] int AfterExistingReturns,
 
     /// <summary>Survived the cross-template check and got a full order number out of the orders export.</summary>

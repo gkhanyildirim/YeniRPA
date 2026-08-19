@@ -23,6 +23,13 @@
 
   const isResolved = r => r.matchState === MATCHED || r.matchState === MATCHED_BY_STATUS;
 
+  // Fallbacks only: every row carries the real thresholds, so these are what an empty report prints.
+  const DEFAULT_SLA_DAYS = 20;
+  const DEFAULT_WARNING_DAYS = 15;
+
+  const slaDays = rows => (rows.length && rows[0].slaDays) || DEFAULT_SLA_DAYS;
+  const warningDays = rows => (rows.length && rows[0].warningDays) || DEFAULT_WARNING_DAYS;
+
   let ROWS = [];
   let PAYMENT_ROWS = [];
 
@@ -47,7 +54,8 @@
   const statusCell = r => {
     const verdict = r.isConfirmedReturn ? '<span class="badge green">Return completed</span>'
       : r.slaMissed ? '<span class="badge red">SLA breached</span>'
-      : r.pastWarning ? '<span class="badge amber">10-day warning</span>'
+      : r.pastWarning ? '<span class="badge amber">' +
+          (r.warningDays || DEFAULT_WARNING_DAYS) + '-day warning</span>'
       : r.matchState === NOT_FOUND ? '<span class="badge amber">Not in orders</span>'
       : r.matchState === AMBIGUOUS ? '<span class="badge amber">Ambiguous</span>'
       : '<span class="badge">Return open</span>';
@@ -66,8 +74,9 @@
       : number;
   };
 
+  // No Source column: every row here is a return-template row, and which of the two templates it came
+  // from is a fact about the upload rather than about the return an operator is chasing.
   const baseColumns = [
-    { label: 'Source', filter: 'select', render: r => RPA.escapeHtml(r.source) },
     { label: 'Order number', numeric: true, filter: 'text',
       value: r => r.orderNumber, render: r => orderCell(r) },
     { label: 'Source no', numeric: true, filter: 'text',
@@ -83,7 +92,7 @@
   ];
 
   // Why a row could not be given an SLA verdict — the whole point of the review list.
-  const reviewColumns = baseColumns.slice(0, 4).concat([
+  const reviewColumns = baseColumns.slice(0, 3).concat([
     { label: 'Why', filter: 'select', value: r => reviewReason(r), render: r => RPA.escapeHtml(reviewReason(r)) },
     { label: 'Shipped to seller', numeric: true, value: r => r.shippedToSellerDate || '',
       render: r => RPA.escapeHtml(r.shippedToSellerDate || '-') },
@@ -114,12 +123,22 @@
   // ---------------------------------------------------------------------------
 
   function renderAll(rows, paymentRows) {
+    const sla = slaDays(rows);
+    const warn = warningDays(rows);
+
     const resolved = rows.filter(isResolved);
     const overdue = rows.filter(r => r.slaMissed);
     const warning = rows.filter(r => r.pastWarning);
     const confirmedReturns = rows.filter(r => r.isConfirmedReturn);
     const review = rows.filter(r => !isResolved(r));
     const open = resolved.filter(r => !r.isConfirmedReturn);
+
+    // The SLA clock starts on the ship-back date, so a row without one is open but not yet ticking.
+    // It is split out rather than folded into "open within SLA", which would claim the row is inside
+    // a window that has not started.
+    const notStarted = open.filter(r => r.elapsedDays === null || r.elapsedDays === undefined);
+    const openWithinSla = open.filter(r =>
+      r.elapsedDays !== null && r.elapsedDays !== undefined && !r.slaMissed && !r.pastWarning);
 
     RPA.renderKpis('return-kpis', [
       { group: 'Records' },
@@ -129,9 +148,9 @@
       ['Refund payment records', RPA.fmtInt(paymentRows.length), '', 'from the orders file alone'],
       { group: 'Returns still open' },
       ['SLA breached', RPA.fmtInt(overdue.length), overdue.length ? 'red' : 'green',
-        'more than ' + (rows.length && rows[0].slaDays ? rows[0].slaDays : 15) + ' days, still open'],
-      ['10-day warning', RPA.fmtInt(warning.length), warning.length ? 'amber' : 'green',
-        'between 10 and 15 days'],
+        'more than ' + sla + ' days, still open'],
+      [warn + '-day warning', RPA.fmtInt(warning.length), warning.length ? 'amber' : 'green',
+        'between ' + warn + ' and ' + sla + ' days'],
       ['Open returns', RPA.fmtInt(open.length), '', 'matched, no closing status yet'],
       { group: 'Closed & unresolved' },
       ['Completed returns', RPA.fmtInt(confirmedReturns.length), 'green',
@@ -143,8 +162,10 @@
         ['Return records', RPA.fmtInt(rows.length)],
         ['Matched to an order', RPA.fmtInt(resolved.length)],
         ['SLA breached', RPA.fmtInt(overdue.length)],
-        ['10-day warning', RPA.fmtInt(warning.length)],
+        [warn + '-day warning', RPA.fmtInt(warning.length)],
         ['Open returns', RPA.fmtInt(open.length)],
+        ['Open within SLA', RPA.fmtInt(openWithinSla.length)],
+        ['Not yet shipped back', RPA.fmtInt(notStarted.length)],
         ['Completed returns', RPA.fmtInt(confirmedReturns.length)],
         ['Needs review', RPA.fmtInt(review.length)],
         ['Refund payment records', RPA.fmtInt(paymentRows.length)]
@@ -152,27 +173,73 @@
     });
 
     RPA.renderDataTable('overdue-wrap', overdue, baseColumns,
-      'No SLA-breached returns — every return past 15 days has a closing status on its order.');
-    RPA.renderDataTable('warning-wrap', warning, baseColumns, 'No open returns past the 10-day mark.');
+      'No SLA-breached returns — every return past ' + sla +
+      ' days has a closing status on its order.');
+    RPA.renderDataTable('warning-wrap', warning, baseColumns,
+      'No open returns past the ' + warn + '-day mark.');
     RPA.renderDataTable('review-wrap', review, reviewColumns,
       'Every return record was matched to an order in the export.');
     RPA.renderDataTable('payment-wrap', paymentRows, paymentColumns,
       'No canceled or returned orders with a known debit date.');
     RPA.renderDataTable('all-wrap', rows, baseColumns, 'No return records found.', { maxRows: 500 });
 
-    // The four buckets partition the record set; if they ever stop adding up, the report is lying.
+    // Nothing to review is the normal outcome, and an empty section every reader has to scroll past
+    // only makes the report longer. The heading is hidden with it, so the section numbering and the
+    // index above close up as well.
+    RPA.toggleSection('return-sec-review', 'review-wrap', review.length > 0);
+
+    renderConsistency(rows, {
+      sla: sla, warn: warn,
+      completed: confirmedReturns.length,
+      breached: overdue.length,
+      warned: warning.length,
+      openWithinSla: openWithinSla.length,
+      notStarted: notStarted.length,
+      review: review.length
+    });
+  }
+
+  /**
+   * The line under the KPI grid. Every return record lands in exactly one of these buckets, so the
+   * parts have to add back up to the whole — if they ever stop, the report is lying and says so.
+   *
+   * The second line spells the buckets out, because "31 open within SLA" is the one figure on the
+   * page that is defined by what it is *not*: matched, not completed, and past neither threshold.
+   */
+  function renderConsistency(rows, b) {
     const summary = document.getElementById('return-consistency');
-    if (summary) {
-      const accounted = confirmedReturns.length + overdue.length + warning.length +
-        open.filter(r => !r.slaMissed && !r.pastWarning).length + review.length;
-      summary.textContent = RPA.fmtInt(rows.length) + ' return records = ' +
-        RPA.fmtInt(confirmedReturns.length) + ' completed + ' +
-        RPA.fmtInt(overdue.length) + ' breached + ' +
-        RPA.fmtInt(warning.length) + ' warned + ' +
-        RPA.fmtInt(open.filter(r => !r.slaMissed && !r.pastWarning).length) + ' open within SLA + ' +
-        RPA.fmtInt(review.length) + ' to review' +
-        (accounted === rows.length ? '' : ' — MISMATCH, ' + RPA.fmtInt(accounted) + ' accounted for');
-    }
+    if (!summary) return;
+
+    const parts = [
+      RPA.fmtInt(b.completed) + ' completed',
+      RPA.fmtInt(b.breached) + ' breached',
+      RPA.fmtInt(b.warned) + ' warned',
+      RPA.fmtInt(b.openWithinSla) + ' open within SLA'
+    ];
+    // Only shown when it happens; on a clean upload it is zero and would just be noise.
+    if (b.notStarted) parts.push(RPA.fmtInt(b.notStarted) + ' not yet shipped back');
+    parts.push(RPA.fmtInt(b.review) + ' to review');
+
+    const accounted = b.completed + b.breached + b.warned + b.openWithinSla + b.notStarted + b.review;
+    summary.textContent = RPA.fmtInt(rows.length) + ' return records = ' + parts.join(' + ') +
+      (accounted === rows.length ? '' : ' — MISMATCH, ' + RPA.fmtInt(accounted) + ' accounted for');
+
+    const legend = document.getElementById('return-consistency-note');
+    if (!legend) return;
+    legend.innerHTML =
+      '<strong>Completed</strong> — the order reads Refused / Canceled / Refunded / Rejected, so the ' +
+      'return is done. ' +
+      '<strong>Breached</strong> — still open more than ' + b.sla + ' days after it was shipped back. ' +
+      '<strong>Warned</strong> — still open, between ' + b.warn + ' and ' + b.sla + ' days. ' +
+      '<strong>Open within SLA</strong> — matched to an order, no closing status yet, and ' + b.warn +
+      ' days or fewer since it was shipped back: nothing to chase, the seller is still inside the ' +
+      'agreed window. ' +
+      (b.notStarted
+        ? '<strong>Not yet shipped back</strong> — open, but with no ship-back date, so the SLA clock ' +
+          'has not started. '
+        : '') +
+      '<strong>To review</strong> — the order is not in the uploaded export, or the bare number matches ' +
+      'several orders that disagree, so there is no status to be late against.';
   }
 
   function applyFilter() {
@@ -215,6 +282,10 @@
 
     renderAll(filteredRows, filteredPayments);
     RPA.syncExportButtons();
+
+    // Rebuilt on every filter, not just on upload: a filter that empties the review section removes
+    // it, and the index has to renumber with the headings rather than point at something hidden.
+    RPA.initSectionNav('return-section-nav', 'return-results');
   }
 
   function render(data) {
@@ -228,9 +299,8 @@
     RPA.stamp('return-stamp');
 
     document.getElementById('return-results').hidden = false;
-    applyFilter();
+    applyFilter();          // also builds the section index, once the sections know their visibility
 
-    RPA.initSectionNav('return-section-nav', 'return-results');
     RPA.revealResults('return-results');
   }
 

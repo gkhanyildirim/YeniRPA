@@ -3,9 +3,9 @@ using YeniRPA.Web.Models;
 namespace YeniRPA.Web.Services;
 
 /// <summary>
-/// Builds the Return SLA Report: tracks orders whose return shipment has missed the 15-day SLA
+/// Builds the Return SLA Report: tracks orders whose return shipment has missed the 20-day SLA
 /// (measured from the date the return was shipped back to the seller), highlights orders that have
-/// crossed a 10-day early-warning threshold, and computes the refund/payment time for canceled,
+/// crossed a 15-day early-warning threshold, and computes the refund/payment time for canceled,
 /// rejected or refunded orders.
 ///
 /// The orders export is required; the two return templates are not — at least one of them has to be
@@ -25,7 +25,7 @@ namespace YeniRPA.Web.Services;
 /// the order's <em>status</em>, so a report that cannot join the two sides cannot tell a return that
 /// is genuinely overdue from one that was completed weeks ago. An earlier version keyed on "every
 /// digit in the number", which never matched a single row: every seller came out blank and every row
-/// older than 15 days was reported as a breach.</para>
+/// past the SLA window was reported as a breach.</para>
 ///
 /// One customer order splits per seller into …-A / …-B, so a bare number can match several full ones.
 /// The seller id on template A and the MarketPlaceId on template B resolve that; where they cannot,
@@ -37,8 +37,11 @@ namespace YeniRPA.Web.Services;
 /// </summary>
 public static class ReturnSlaReportBuilder
 {
-    public const int SlaDays = 15;
-    public const int WarningDays = 10;
+    /// <summary>A return still open past this many days has breached the SLA.</summary>
+    public const int SlaDays = 20;
+
+    /// <summary>A return still open past this many days is flagged early, before it breaches.</summary>
+    public const int WarningDays = 15;
 
     static readonly string[] ConfirmedReturnKeywords =
         ["refused", "cancel", "refund", "reject", "iade", "ret"];
@@ -150,7 +153,7 @@ public static class ReturnSlaReportBuilder
             var slaMissed = open && elapsedDays!.Value > SlaDays;
 
             // Gated on the return still being open, unlike the original: a return that is already
-            // completed is not "at risk at 12 days", and before the order match was fixed nothing
+            // completed is not "at risk at 18 days", and before the order match was fixed nothing
             // was ever completed, so the difference never showed.
             var pastWarning = open && elapsedDays!.Value > WarningDays && elapsedDays.Value <= SlaDays;
 
@@ -165,6 +168,7 @@ public static class ReturnSlaReportBuilder
                 ShippedToSellerDate: candidate.ShippedToSellerDate?.ToString("yyyy-MM-dd"),
                 ElapsedDays: elapsedDays.HasValue ? Math.Round(elapsedDays.Value, 1) : (double?)null,
                 SlaDays: SlaDays,
+                WarningDays: WarningDays,
                 IsConfirmedReturn: resolution.IsConfirmedReturn,
                 SlaMissed: slaMissed,
                 PastWarning: pastWarning,

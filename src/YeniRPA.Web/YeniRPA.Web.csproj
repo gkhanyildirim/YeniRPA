@@ -21,4 +21,13 @@
     <InternalsVisibleTo Include="YeniRPA.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The Web SDK serves static files straight from the source tree in Debug and never refreshes
+         $(OutDir)wwwroot. Run the built exe directly, though, and *that* folder is the content root:
+         a copy left there by an old publish then gets served instead, silently handing out an
+         interface months out of step with the code. Keeping it in sync costs a file copy and closes
+         a trap that otherwise only shows up as "my change did nothing". -->
+    <Content Update="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

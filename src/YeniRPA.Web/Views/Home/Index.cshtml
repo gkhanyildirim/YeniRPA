@@ -273,6 +273,13 @@
 
                 @* ---------- extended analysis ---------- *@
 
+                @* ---------------------------------------------------------------------------
+                   Delivery quality — temporarily switched off for a presentation, not retired.
+                   To bring it back, remove this comment wrapper AND uncomment the matching
+                   renderDeliveryQuality(...) call in wwwroot/js/order-report.js. Both are needed:
+                   the markup alone leaves the call writing into an element that is not there, and
+                   the call alone renders nothing.
+
                 <div class="section-title" id="sec-delivery" data-section="Delivery quality">
                     Delivery quality
                     <partial name="_ExportButton" model='new ExportButton("delivery-kpis", "Delivery quality")' />
@@ -286,6 +293,7 @@
                     counted, which is the reason they are not. The <em>Avg. hours to receive</em> cards under
                     &ldquo;Key metrics&rdquo; above are the original ported metric, which does include them.
                 </p>
+                --------------------------------------------------------------------------- *@
 
                 <div class="section-title" id="sec-cancellations" data-section="Cancellations">Cancellation, rejection &amp; refund breakdown</div>
                 <div class="card">
@@ -381,8 +389,8 @@
                         Upload the Mirakl <strong>orders</strong> export plus <strong>at least one</strong> of the two
                         return tracking templates &mdash; a template you leave out simply contributes no rows. Rows
                         that carry a tracking code are matched against the orders export by order
-                        number; the SLA runs for <strong>15 days</strong> from the date the return was shipped back
-                        to the seller, with an early warning at <strong>10 days</strong>. Refund time is also
+                        number; the SLA runs for <strong>20 days</strong> from the date the return was shipped back
+                        to the seller, with an early warning at <strong>15 days</strong>. Refund time is also
                         computed for canceled and refunded orders.
                     </p>
                 </div>
@@ -468,13 +476,16 @@
                 </div>
                 <div class="kpi-grid" id="return-kpis"></div>
                 <p class="table-note" id="return-consistency"></p>
+                @* What each bucket on the line above means — written by the dashboard, because the
+                   day counts in it come from the server rather than from this markup. *@
+                <p class="note" id="return-consistency-note"></p>
                 <p class="note">
                     Every return row is matched to the orders export on the <strong>bare customer order
                     number</strong>: the templates carry <code>321097726</code> while the export carries the full
                     <code>01259_321097726-A</code>, and the tables below show the full form the row resolved to.
                     The SLA verdict comes from that order&rsquo;s status &mdash; a return is
                     <strong>completed</strong> once its order reads Refused / Canceled / Refunded / Rejected, and
-                    only a return that is still open can breach the 15-day SLA or raise the 10-day warning.
+                    only a return that is still open can breach the 20-day SLA or raise the 15-day warning.
                     One customer order splits per seller into <code>&hellip;-A</code> / <code>&hellip;-B</code>, so a
                     bare number can hit several orders; the seller id on the template decides, and where it cannot,
                     the row is only given a verdict when every candidate agrees. Anything left undecided is listed
@@ -483,22 +494,22 @@
                     date) is used as the closest available proxy for the SLA start date, read day-first.
                 </p>
 
-                <div class="section-title" id="return-sec-breach" data-section="SLA breach">SLA breached &mdash; past 15 days, return not completed</div>
+                <div class="section-title" id="return-sec-breach" data-section="SLA breach">SLA breached &mdash; past 20 days, return not completed</div>
                 <div class="card accent-red">
                     <partial name="_ExportButton" model='new ExportButton("overdue-wrap", "SLA breach")' />
                     <h3>SLA breach</h3>
                     <p class="sub">
-                        More than 15 days since the return was shipped, and the order still carries no closing
+                        More than 20 days since the return was shipped, and the order still carries no closing
                         status
                     </p>
                     <div class="table-scroll" id="overdue-wrap"></div>
                 </div>
 
-                <div class="section-title" id="return-sec-warning" data-section="Early warning">Past 10 days &mdash; early warning</div>
+                <div class="section-title" id="return-sec-warning" data-section="Early warning">Past 15 days &mdash; early warning</div>
                 <div class="card accent-amber">
                     <partial name="_ExportButton" model='new ExportButton("warning-wrap", "Early warning")' />
                     <h3>Early warning</h3>
-                    <p class="sub">Between 10 and 15 days since the return was shipped, and still open</p>
+                    <p class="sub">Between 15 and 20 days since the return was shipped, and still open</p>
                     <div class="table-scroll" id="warning-wrap"></div>
                 </div>
 
@@ -660,10 +671,10 @@
                 <div>
                     <h1 data-eyebrow="Mirakl &middot; Automation">Create Return</h1>
                     <p class="lede">
-                        Files a return on the Mirakl back office for every row of the uploaded workbook, by
+                        Files a return on the Mirakl back office for every row of the prepared list, by
                         driving a real browser window. Unlike the report modules this one
                         <strong>writes to the marketplace</strong> &mdash; each row it completes creates a
-                        return that can only be undone by hand, so check the file before starting. Progress
+                        return that can only be undone by hand, so check the list before starting. Progress
                         streams in below as each order is processed.
                     </p>
                 </div>
@@ -689,6 +700,12 @@
                         </button>
                     </div>
                 </div>
+
+                <div class="alert" id="cr-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
                 <p class="note">
                     Mirakl signs in through Google SSO, which cannot be scripted. <strong>Open login
                     window</strong> launches Chrome on the order list &mdash; sign in there, then click
@@ -767,8 +784,11 @@
                     Both templates are filtered to rows that carry a real tracking code and fall inside the
                     date range, orders that appear twice are dropped entirely, and anything the returns
                     export already covers is left out. What survives is matched against the orders export to
-                    get the full <code>01259_311911494-A</code> form the automation needs. Nothing is uploaded
-                    anywhere and nothing is stored &mdash; leaving this page discards it.
+                    get the full <code>01259_311911494-A</code> form the automation needs. A request the
+                    marketplace has already <strong>cancelled</strong>, and an order the orders export reports
+                    as <code>Canceled</code>, are both dropped there &mdash; neither can take a return, so
+                    filing one would only cost a failed page. Nothing is uploaded anywhere and nothing is
+                    stored &mdash; leaving this page discards it.
                 </p>
             </div>
 
@@ -828,40 +848,6 @@
                 </div>
             </div>
 
-            <div class="section-title">Or upload a ready list</div>
-            <div class="card">
-                <div class="uploader">
-                    <div class="uploader-grid">
-                        <label class="drop" id="cr-drop">
-                            <span class="drop-step">Input</span>
-                            <span class="drop-title">Orders &amp; tracking numbers</span>
-                            <span class="drop-hint">Column A: order ID &middot; Column B: tracking number</span>
-                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
-                            <input type="file" id="cr-file" accept=".xlsx,.xls"
-                                   aria-label="Return list workbook (.xlsx)" />
-                        </label>
-                    </div>
-
-                    <div class="actions">
-                        <button type="button" class="btn btn-primary" id="cr-start">
-                            <span class="spinner" aria-hidden="true"></span>
-                            <span class="btn-text">Start create returns</span>
-                        </button>
-                    </div>
-
-                    <div class="alert" id="cr-alert" role="alert">
-                        <strong>Error</strong>
-                        <span class="msg"></span>
-                    </div>
-                </div>
-                <p class="note">
-                    For a workbook prepared elsewhere, or one downloaded from the step above and edited by
-                    hand. The first row is treated as a header and skipped. A row missing either the order ID
-                    or the tracking number is dropped rather than failing the upload, so the count reported
-                    on start is what will actually be attempted.
-                </p>
-            </div>
-
             <div class="results" id="cr-run" hidden>
                 <div class="section-title">Run log</div>
                 <div class="card">
@@ -887,7 +873,7 @@
             <div class="card">
                 <h3>Every return is filed the same way</h3>
                 <p class="sub">
-                    Only the order and its tracking number come from the file &mdash; the rest of the form is
+                    Only the order and its tracking number come from the list &mdash; the rest of the form is
                     fixed, and these are the values to change when the module is tailored further
                 </p>
                 <div class="table-scroll is-full">
@@ -899,8 +885,8 @@
                             <tr><td>Reason</td><td><code>Other reason</code></td><td>Fixed</td></tr>
                             <tr><td>Carrier</td><td><code>Other</code></td><td>Fixed</td></tr>
                             <tr><td>Name</td><td><code>Yurtici</code></td><td>Fixed</td></tr>
-                            <tr><td>Tracking number</td><td>&mdash;</td><td>Column B</td></tr>
-                            <tr><td>Tracking address</td><td>Yurtiçi Kargo lookup URL</td><td>Built from column B</td></tr>
+                            <tr><td>Tracking number</td><td>&mdash;</td><td>Prepared list</td></tr>
+                            <tr><td>Tracking address</td><td>Yurtiçi Kargo lookup URL</td><td>Built from the tracking number</td></tr>
                         </tbody>
                     </table>
                 </div>

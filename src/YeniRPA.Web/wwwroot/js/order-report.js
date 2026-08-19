@@ -54,6 +54,7 @@
   let REFUNDED_STATUS = 'Refunded';
   let RECEIVED_STATUS = 'Received';
   let REJECTED_STATUS = 'Rejected';
+  let PENDING_ACCEPTANCE_STATUS = 'Pending acceptance';
   let AUTO_RECEIVED_REASON = 'Received automatically';
   let CATEGORIES = [''];
   let BRANDS = [''];
@@ -386,6 +387,13 @@
     const receivedRate = totalLines ? received / totalLines : 0;
     const rejectedRate = totalLines ? rejected / totalLines : 0;
 
+    // Acceptance is measured over the lines the seller has actually decided on: a line still
+    // "Pending acceptance" has not been accepted, but counting it against the seller would mark
+    // every fresh batch of orders down as a refusal that has not happened.
+    const pendingAcceptance = rows.filter(r => r.st === PENDING_ACCEPTANCE_STATUS).length;
+    const decided = totalLines - pendingAcceptance;
+    const acceptanceRate = decided ? (decided - rejected) / decided : 0;
+
     const shipDurations = rows.filter(r => r.dc && r.sh).map(r => (new Date(r.sh) - new Date(r.dc)) / 3.6e6);
     const avgHoursToShip = shipDurations.length ? shipDurations.reduce((a, b) => a + b, 0) / shipDurations.length : 0;
 
@@ -406,29 +414,31 @@
 
     const sellerCount = new Set(rows.map(r => r.s).filter(Boolean)).size;
 
-    // The four figures the report exists to answer, set large above everything else. They are the
-    // same numbers as the twelve key metrics below — the whole list still travels to Excel through
+    // The figures the report exists to answer, set large above everything else. They are the same
+    // numbers as the twelve key metrics below — the whole list still travels to Excel through
     // `exportRows`, so the workbook and the Summary sheet keep their nine boxes either way.
+    //
+    // The four rates read as one sequence: how many orders the sellers took, how many fell over
+    // afterwards, and how many of the survivors shipped late. The order-lines-per-day sparkline that
+    // used to sit beside them is gone — the same trend has its own chart further down the page.
     RPA.renderHero('order-hero', [
       { value: RPA.fmtInt(totalLines), label: 'Order lines',
         context: RPA.fmtInt(sellerCount) + ' seller' + (sellerCount === 1 ? '' : 's') + ' · ' +
                  RPA.fmtInt(shipped) + ' shipped' },
-      { value: RPA.fmtPct(receivedRate), label: 'Received rate',
-        tone: receivedRate >= 0.9 ? 'green' : receivedRate >= 0.75 ? 'amber' : 'red',
-        context: RPA.fmtInt(received) + ' of ' + RPA.fmtInt(totalLines) + ' lines' },
-      // Above 5% is where these two stop being background noise and start being a problem worth
-      // opening the report for, which is the only reason they are ever painted red.
-      { value: RPA.fmtPct(lateRate), label: 'Late shipment rate', tone: lateRate > 0.05 ? 'red' : 'green',
-        context: RPA.fmtInt(lateShipped) + ' of ' + RPA.fmtInt(shipped) + ' shipped lines' },
+      { value: RPA.fmtPct(acceptanceRate), label: 'Acceptance rate',
+        tone: acceptanceRate >= 0.99 ? 'green' : acceptanceRate >= 0.95 ? 'amber' : 'red',
+        context: RPA.fmtInt(decided - rejected) + ' of ' + RPA.fmtInt(decided) + ' decided lines' },
+      // Above 5% is where these stop being background noise and start being a problem worth opening
+      // the report for, which is the only reason they are ever painted red.
       { value: RPA.fmtPct(cancelRate), label: 'Cancellation rate', tone: cancelRate > 0.05 ? 'red' : 'green',
-        context: RPA.fmtInt(canceled) + ' of ' + RPA.fmtInt(totalLines) + ' lines' }
-    ], {
-      spark: trendEntries.map(e => e[1]),
-      sparkLabel: 'Order lines / day',
-      sparkRange: trendEntries.length
-        ? trendEntries[0][0].slice(5) + ' → ' + trendEntries[trendEntries.length - 1][0].slice(5)
-        : ''
-    });
+        context: RPA.fmtInt(canceled) + ' of ' + RPA.fmtInt(totalLines) + ' lines' },
+      // Any refusal at all is worth seeing: a rejected line is an order the customer placed and did
+      // not get, so nought is the only good number and the only green one.
+      { value: RPA.fmtPct(rejectedRate), label: 'Rejection rate', tone: rejected > 0 ? 'red' : 'green',
+        context: RPA.fmtInt(rejected) + ' of ' + RPA.fmtInt(totalLines) + ' lines' },
+      { value: RPA.fmtPct(lateRate), label: 'Late shipment rate', tone: lateRate > 0.05 ? 'red' : 'green',
+        context: RPA.fmtInt(lateShipped) + ' of ' + RPA.fmtInt(shipped) + ' shipped lines' }
+    ]);
 
     // A tile only turns red when there is something red about it: nought rejected lines is a good
     // result, and painting the zero red would tell the opposite story at a glance.
@@ -862,7 +872,10 @@
   }
 
   function renderExtended(rows, cur, p) {
-    renderDeliveryQuality(rows, cur);
+    // Delivery quality is temporarily switched off for a presentation. Its markup is commented out
+    // in Views/Home/Index.cshtml; uncomment both together — renderKpis writes straight into the
+    // element and would throw here if the section is missing, taking every section below it down.
+    // renderDeliveryQuality(rows, cur);
     renderCancellationBreakdown(rows, cur, p);
     renderLeadTime(rows, cur);
     renderCategories(rows, cur, p);
@@ -926,6 +939,7 @@
     REFUNDED_STATUS = data.refundedStatus || 'Refunded';
     RECEIVED_STATUS = data.receivedStatus || 'Received';
     REJECTED_STATUS = data.rejectedStatus || 'Rejected';
+    PENDING_ACCEPTANCE_STATUS = data.pendingAcceptanceStatus || 'Pending acceptance';
     AUTO_RECEIVED_REASON = data.autoReceivedReason || 'Received automatically';
     CATEGORIES = data.categories || [''];
     BRANDS = data.brands || [''];
