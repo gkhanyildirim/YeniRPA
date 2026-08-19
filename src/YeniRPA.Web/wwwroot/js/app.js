@@ -1038,13 +1038,139 @@ window.RPA = window.RPA || {};
     document.getElementById(alertId).classList.remove('is-shown');
   };
 
+  // ---------------------------------------------------------------------------
+  // The waiting scene
+  //
+  // Drives the control tower in Views/Shared/_TowerLoader.cshtml. The two functions keep the
+  // signatures every module already calls, so the stage engine is invisible to them.
+  //
+  // There is no progress to report: each module POSTs its file once and waits for one JSON
+  // response. So the bar shows an *estimate* that decays towards a ceiling — fast at first, never
+  // arriving — and only the response itself takes it to 100%. A linear bar would either finish
+  // early on a slow file or crawl on a fast one; this one is honest at both ends, because it never
+  // claims to be done until it is.
+  // ---------------------------------------------------------------------------
+
+  const TOWER_CEILING = 0.92;   // where the estimate flattens out
+  const TOWER_TAU = 2600;       // ms; how quickly it gets most of the way there
+  const TOWER_HOLD = 220;       // ms at 100% — long enough for the flare to read
+  const TOWER_COLLAPSE = 380;   // ms to fold the scene away; matches the CSS transition
+
+  const towerRuns = new Map();
+
+  function towerOf(skeletonId) {
+    const skeleton = document.getElementById(skeletonId);
+    return skeleton ? skeleton.querySelector('.tower') : null;
+  }
+
+  function towerPaint(tower, p, stageText) {
+    tower.style.setProperty('--p', p.toFixed(4));
+    const pct = tower.querySelector('.tower-pct');
+    if (pct) pct.textContent = Math.round(p * 100) + '%';
+    if (stageText) {
+      const stage = tower.querySelector('.tower-stage');
+      if (stage && stage.textContent !== stageText) stage.textContent = stageText;
+    }
+  }
+
+  function towerStop(skeletonId) {
+    const run = towerRuns.get(skeletonId);
+    if (!run) return;
+    if (run.frame) cancelAnimationFrame(run.frame);
+    run.timers.forEach(clearTimeout);
+    towerRuns.delete(skeletonId);
+  }
+
+  function towerStart(skeletonId) {
+    const tower = towerOf(skeletonId);
+    if (!tower) return;
+
+    // A retry after an error starts the scene again; the previous run's loop must not survive it.
+    towerStop(skeletonId);
+    tower.classList.remove('is-done');
+
+    const stages = (tower.dataset.stages || '').split('|').filter(Boolean);
+
+    if (RPA.reducedMotion()) {
+      towerPaint(tower, 0.5, stages[0] || '');
+      return;
+    }
+
+    const started = performance.now();
+    const run = { tower, frame: 0, timers: [] };
+    towerRuns.set(skeletonId, run);
+
+    (function frame(now) {
+      const p = TOWER_CEILING * (1 - Math.exp(-(now - started) / TOWER_TAU));
+
+      // Stages are spread across the ceiling rather than across time, so the last one is reached
+      // only by a genuinely slow file instead of by every one of them.
+      const index = stages.length
+        ? Math.min(stages.length - 1, Math.floor((p / TOWER_CEILING) * stages.length))
+        : -1;
+
+      towerPaint(tower, p, index >= 0 ? stages[index] : '');
+      run.frame = requestAnimationFrame(frame);
+    })(started);
+  }
+
+  function towerReset(skeleton) {
+    skeleton.classList.remove('is-leaving');
+    skeleton.style.height = '';
+  }
+
+  /**
+   * Takes the scene to 100% and folds it away.
+   *
+   * Every module renders its results *before* it calls hideSkeleton, so by this point the dashboard
+   * is already on the page below the scene. Snapping the scene out from above it would jump the
+   * whole page; collapsing it instead lets the dashboard rise into the space, which is also when
+   * its own entrance cascade is playing. The height is measured rather than transitioned from
+   * `auto`, which no browser animates.
+   */
+  function towerFinish(skeletonId, done) {
+    const skeleton = document.getElementById(skeletonId);
+    const tower = towerOf(skeletonId);
+    if (!skeleton || !tower) { done(); return; }
+
+    towerStop(skeletonId);
+    tower.classList.add('is-done');
+    towerPaint(tower, 1, 'Hazır');
+
+    if (RPA.reducedMotion()) { towerReset(skeleton); done(); return; }
+
+    const run = { tower, frame: 0, timers: [] };
+    towerRuns.set(skeletonId, run);
+
+    run.timers.push(setTimeout(function () {
+      skeleton.style.height = skeleton.scrollHeight + 'px';
+      // The height has to be committed as a number before the class that takes it to zero lands,
+      // or there is nothing for the transition to run between.
+      run.frame = requestAnimationFrame(function () {
+        skeleton.classList.add('is-leaving');
+        skeleton.style.height = '0px';
+      });
+
+      run.timers.push(setTimeout(function () {
+        towerRuns.delete(skeletonId);
+        towerReset(skeleton);
+        done();
+      }, TOWER_COLLAPSE));
+    }, TOWER_HOLD));
+  }
+
   RPA.showSkeleton = function (skeletonId, resultsId) {
-    document.getElementById(skeletonId).classList.add('is-shown');
+    const skeleton = document.getElementById(skeletonId);
+    towerReset(skeleton);
+    skeleton.classList.add('is-shown');
     document.getElementById(resultsId).hidden = true;
+    towerStart(skeletonId);
   };
 
   RPA.hideSkeleton = function (skeletonId) {
-    document.getElementById(skeletonId).classList.remove('is-shown');
+    towerFinish(skeletonId, function () {
+      document.getElementById(skeletonId).classList.remove('is-shown');
+    });
   };
 
   /** POSTs a FormData and returns parsed JSON, turning a 400 { error } into a throw. */

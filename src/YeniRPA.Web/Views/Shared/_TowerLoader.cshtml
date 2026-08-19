@@ -1,0 +1,160 @@
+@model YeniRPA.Web.Models.TowerLoader
+
+@*
+    The waiting scene: a control tower sweeping for signal while the upload is processed.
+
+    Every colour comes from the theme tokens, so the scene follows the dark/light toggle without a
+    second palette. The animation lives entirely in app.css — this file only lays out the geometry.
+
+    Five of these render into one page, so the gradient/clip ids are suffixed per instance. Without
+    that, every copy would resolve url(#…) to the first one in the document.
+*@
+
+@{
+    var uid = "tw" + Guid.NewGuid().ToString("N")[..8];
+}
+
+<div class="tower" data-stages="@string.Join('|', Model.Stages)">
+
+    <svg class="tower-scene" viewBox="0 0 600 300" preserveAspectRatio="xMidYMid meet"
+         aria-hidden="true" focusable="false">
+        <defs>
+            @* The radar wedge fades out along its own radius, so it reads as reach rather than
+               as a solid slice of pie. *@
+            <radialGradient id="@(uid)-sweep" gradientUnits="userSpaceOnUse"
+                            cx="300" cy="102" r="100">
+                <stop offset="0" class="tw-stop-sweep-in" />
+                <stop offset="1" class="tw-stop-sweep-out" />
+            </radialGradient>
+
+            <linearGradient id="@(uid)-beam" gradientUnits="userSpaceOnUse"
+                            x1="300" y1="96" x2="300" y2="4">
+                <stop offset="0" class="tw-stop-beam-in" />
+                <stop offset="1" class="tw-stop-beam-out" />
+            </linearGradient>
+
+            <linearGradient id="@(uid)-glass" gradientUnits="userSpaceOnUse"
+                            x1="254" y1="86" x2="346" y2="118">
+                <stop offset="0" class="tw-stop-glass-a" />
+                <stop offset="1" class="tw-stop-glass-b" />
+            </linearGradient>
+
+            @* Keeps the sweep in the sky. Pointed at the ground it would cut through the tower's
+               own base, which stops reading as a radar and starts reading as a bug. *@
+            <clipPath id="@(uid)-sky">
+                <rect x="0" y="0" width="600" height="236" />
+            </clipPath>
+
+            @* The floor grid is drawn full width and faded at both edges, so the lines end by
+               running out of light rather than by stopping at a hard edge. *@
+            <linearGradient id="@(uid)-floorfade" gradientUnits="userSpaceOnUse"
+                            x1="0" y1="0" x2="600" y2="0">
+                <stop offset="0" stop-color="#000" stop-opacity="0" />
+                <stop offset="0.28" stop-color="#000" stop-opacity="1" />
+                <stop offset="0.72" stop-color="#000" stop-opacity="1" />
+                <stop offset="1" stop-color="#000" stop-opacity="0" />
+            </linearGradient>
+            <mask id="@(uid)-floormask">
+                <rect x="0" y="236" width="600" height="64" fill="url(#@(uid)-floorfade)" />
+            </mask>
+        </defs>
+
+        @* ---------- perspective floor ---------- *@
+        <g class="tw-floor" mask="url(#@(uid)-floormask)">
+            @* Rays from the vanishing point. Static: they are the thing the moving rows read
+               against, and scrolling both at once just looks like noise. *@
+            <g class="tw-floor-rays">
+                @for (var x = -260; x <= 860; x += 80)
+                {
+                    <line x1="300" y1="236" x2="@x" y2="300" />
+                }
+            </g>
+            @* Evenly spaced so the loop is seamless: the group travels exactly one gap and
+               restarts, and the row that leaves the bottom is replaced by the one above it. The
+               range runs one row past the mask at both ends — without the row above the horizon
+               the top of the grid is empty for the frame after each restart. *@
+            <g class="tw-floor-rows">
+                @for (var y = 228; y <= 312; y += 12)
+                {
+                    <line x1="0" y1="@y" x2="600" y2="@y" />
+                }
+            </g>
+        </g>
+
+        <line class="tw-horizon" x1="0" y1="236" x2="600" y2="236" />
+        <ellipse class="tw-shadow" cx="300" cy="236" rx="132" ry="6" />
+
+        @* ---------- signal ---------- *@
+        <g clip-path="url(#@(uid)-sky)">
+            <path class="tw-sweep" fill="url(#@(uid)-sweep)"
+                  d="M300,102 L257.7,11.4 A100,100 0 0,1 342.3,11.4 Z" />
+
+            <circle class="tw-ring" cx="300" cy="102" r="100" />
+            <circle class="tw-ring tw-ring-2" cx="300" cy="102" r="100" />
+            <circle class="tw-ring tw-ring-3" cx="300" cy="102" r="100" />
+
+            <path class="tw-beam" fill="url(#@(uid)-beam)" d="M292,98 L164,8 L120,44 Z" />
+            <path class="tw-beam tw-beam-2" fill="url(#@(uid)-beam)" d="M308,98 L436,8 L480,44 Z" />
+        </g>
+
+        @* ---------- inbound data ----------
+           Each packet carries its own travel distance in --tx and its own lane timing, so the
+           stream never falls into a marching lockstep. *@
+        <g class="tw-packets">
+            <rect class="tw-packet tw-s1" x="24"  y="150" width="8" height="3" rx="1.5" style="--tx:246px; --dur:2.1s; --delay:0s" />
+            <rect class="tw-packet tw-s3" x="24"  y="176" width="8" height="3" rx="1.5" style="--tx:246px; --dur:2.7s; --delay:.55s" />
+            <rect class="tw-packet tw-s2" x="24"  y="202" width="8" height="3" rx="1.5" style="--tx:246px; --dur:2.4s; --delay:1.15s" />
+            <rect class="tw-packet tw-s4" x="24"  y="128" width="8" height="3" rx="1.5" style="--tx:246px; --dur:3.1s; --delay:1.7s" />
+
+            <rect class="tw-packet tw-s2" x="568" y="158" width="8" height="3" rx="1.5" style="--tx:-238px; --dur:2.3s; --delay:.3s" />
+            <rect class="tw-packet tw-s1" x="568" y="184" width="8" height="3" rx="1.5" style="--tx:-238px; --dur:2.9s; --delay:.9s" />
+            <rect class="tw-packet tw-s4" x="568" y="210" width="8" height="3" rx="1.5" style="--tx:-238px; --dur:2.2s; --delay:1.45s" />
+            <rect class="tw-packet tw-s3" x="568" y="132" width="8" height="3" rx="1.5" style="--tx:-238px; --dur:3.3s; --delay:2s" />
+        </g>
+
+        @* ---------- tower ---------- *@
+        <g class="tw-tower">
+            <path class="tw-plinth" d="M244,224 h112 a3,3 0 0 1 3,3 v6 a3,3 0 0 1 -3,3 h-112 a3,3 0 0 1 -3,-3 v-6 a3,3 0 0 1 3,-3 Z" />
+            <rect class="tw-plinth" x="258" y="214" width="84" height="11" rx="2" />
+
+            <path class="tw-shaft" d="M282,125 L318,125 L324,214 L276,214 Z" />
+            <rect class="tw-shaft-win" x="290" y="140" width="20" height="4" rx="2" />
+            <rect class="tw-shaft-win" x="290" y="158" width="21" height="4" rx="2" />
+            <rect class="tw-shaft-win" x="289" y="176" width="23" height="4" rx="2" />
+            <rect class="tw-shaft-win" x="289" y="194" width="24" height="4" rx="2" />
+
+            <rect class="tw-deck" x="248" y="118" width="104" height="8" rx="2" />
+
+            @* The cabin. The scanline is clipped to the glass so it reads as something moving
+               behind the window rather than across the whole drawing. *@
+            <clipPath id="@(uid)-cabin">
+                <path d="M262,86 L338,86 L346,118 L254,118 Z" />
+            </clipPath>
+            <path class="tw-glass" fill="url(#@(uid)-glass)" d="M262,86 L338,86 L346,118 L254,118 Z" />
+            <g clip-path="url(#@(uid)-cabin)">
+                <rect class="tw-scan" x="248" y="82" width="104" height="7" />
+            </g>
+            <path class="tw-cabin-edge" d="M262,86 L338,86 L346,118 L254,118 Z" />
+
+            <rect class="tw-roof" x="252" y="78" width="96" height="9" rx="2" />
+            <line class="tw-mast" x1="300" y1="30" x2="300" y2="78" />
+            <line class="tw-mast" x1="288" y1="56" x2="312" y2="56" />
+
+            <circle class="tw-beacon" cx="300" cy="27" r="3.4" />
+            <circle class="tw-beacon tw-beacon-2" cx="257" cy="74" r="2.6" />
+            <circle class="tw-beacon tw-beacon-3" cx="343" cy="74" r="2.6" />
+        </g>
+
+        @* Fires once when the response lands: one bright ring pushed out from the cabin. *@
+        <circle class="tw-flare" cx="300" cy="102" r="100" />
+    </svg>
+
+    <div class="tower-readout">
+        <div class="tower-head">
+            <span class="tower-caption">@Model.Caption</span>
+            <span class="tower-pct">0%</span>
+        </div>
+        <div class="tower-bar"><span class="tower-bar-fill"></span></div>
+        <p class="tower-stage" role="status" aria-live="polite">@Model.Stages[0]</p>
+    </div>
+</div>

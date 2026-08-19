@@ -135,14 +135,10 @@
                 </div>
             </div>
 
-            <div class="skeleton" id="order-skeleton" aria-hidden="true">
-                <div class="section-title">Loading</div>
-                <div class="sk-grid">
-                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
-                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
-                </div>
-                <div class="section-title">Loading</div>
-                <div class="sk-box wide"></div>
+            @* The scene is decorative and marks itself aria-hidden; the stage line inside it is
+               not, and announces progress through its own aria-live. *@
+            <div class="skeleton" id="order-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Report()" />
             </div>
 
             <div class="results" id="order-results" hidden>
@@ -442,14 +438,8 @@
                 </div>
             </div>
 
-            <div class="skeleton" id="return-skeleton" aria-hidden="true">
-                <div class="section-title">Loading</div>
-                <div class="sk-grid">
-                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
-                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
-                </div>
-                <div class="section-title">Loading</div>
-                <div class="sk-box wide"></div>
+            <div class="skeleton" id="return-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Report()" />
             </div>
 
             <div class="results" id="return-results" hidden>
@@ -598,14 +588,8 @@
                 </div>
             </div>
 
-            <div class="skeleton" id="ts-skeleton" aria-hidden="true">
-                <div class="section-title">Loading</div>
-                <div class="sk-grid">
-                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
-                    <div class="sk-box"></div><div class="sk-box"></div><div class="sk-box"></div>
-                </div>
-                <div class="section-title">Loading</div>
-                <div class="sk-box wide"></div>
+            <div class="skeleton" id="ts-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Report()" />
             </div>
 
             <div class="results" id="ts-results" hidden>
@@ -792,9 +776,8 @@
                 </p>
             </div>
 
-            <div class="skeleton" id="cr-prepare-skeleton" aria-hidden="true">
-                <div class="section-title">Working</div>
-                <div class="sk-box wide"></div>
+            <div class="skeleton" id="cr-prepare-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Automation()" />
             </div>
 
             <div class="results" id="cr-prepared" hidden>
@@ -1169,9 +1152,8 @@
                 </p>
             </div>
 
-            <div class="skeleton" id="lo-prepare-skeleton" aria-hidden="true">
-                <div class="section-title">Working</div>
-                <div class="sk-box wide"></div>
+            <div class="skeleton" id="lo-prepare-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Automation()" />
             </div>
 
             <div class="results" id="lo-prepared" hidden>

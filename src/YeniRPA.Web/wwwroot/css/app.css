@@ -1461,37 +1461,242 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   text-align: center;
 }
 
-/* ---------- skeletons ---------- */
+/* ---------- the waiting scene ----------
+
+   Uploading an export and waiting for the dashboard is the one moment the app has nothing to show,
+   and a row of grey boxes made it read as a stall. A control tower sweeping for signal fills it
+   instead: the same wait, but the app looks like it is working.
+
+   Everything here is drawn from the theme tokens, so the scene follows the dark/light toggle with
+   no second palette. Geometry lives in Views/Shared/_TowerLoader.cshtml; this block is motion.
+   -------------------------------------------------------------------------------------------- */
 
 .skeleton { display: none; }
-.skeleton.is-shown { display: block; }
 
-/* Mirrors the KPI grid it stands in for, so the page does not reflow when the real tiles land. */
-.sk-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--s-3);
+/* The dashboard is rendered before the scene is dismissed, so the scene folds away rather than
+   vanishing — otherwise the whole page jumps up by its height. app.js measures the height and
+   drives it to zero; the transition below is what makes that a fold. */
+.skeleton.is-shown {
+  display: block;
+  overflow: hidden;
+  transition: height .38s var(--ease), opacity .3s var(--ease);
 }
-@media (max-width: 860px) { .sk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.sk-box {
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: var(--hi), var(--e-1);
-  height: 104px;
+.skeleton.is-leaving { opacity: 0; }
+
+.tower {
   position: relative;
   overflow: hidden;
+  padding: var(--s-4) var(--s-5) var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(120% 90% at 50% 0%, var(--bg-glow-1), transparent 62%),
+    var(--surface);
+  box-shadow: var(--hi), var(--e-2);
 }
-.sk-box.wide { height: 300px; }
-.sk-box::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, var(--surface-3), transparent);
-  transform: translateX(-100%);
-  animation: shimmer 1.25s infinite;
+
+.tower-scene {
+  display: block;
+  width: 100%;
+  max-width: 620px;
+  height: auto;
+  margin: 0 auto;
 }
-@keyframes shimmer { to { transform: translateX(100%); } }
+
+/* ---- floor ---- */
+
+.tw-floor line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  fill: none;
+}
+.tw-floor-rays line { opacity: .5; }
+/* One gap of travel, then back to the start. With the rows evenly spaced the seam is invisible:
+   the row that slides off the bottom lands exactly where its neighbour was. */
+.tw-floor-rows { animation: tw-scroll 1.5s linear infinite; }
+@keyframes tw-scroll { to { transform: translateY(12px); } }
+
+.tw-horizon {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.tw-shadow { fill: var(--accent-glow); opacity: .35; }
+
+/* ---- signal ---- */
+
+.tw-stop-sweep-in  { stop-color: var(--accent); stop-opacity: .40; }
+.tw-stop-sweep-out { stop-color: var(--accent); stop-opacity: 0; }
+.tw-stop-beam-in   { stop-color: var(--accent); stop-opacity: .22; }
+.tw-stop-beam-out  { stop-color: var(--accent); stop-opacity: 0; }
+.tw-stop-glass-a   { stop-color: var(--accent); stop-opacity: .55; }
+.tw-stop-glass-b   { stop-color: var(--accent); stop-opacity: .18; }
+
+/* view-box keeps the origin in the coordinates the markup is written in, so the wedge turns about
+   the cabin rather than about its own bounding box. */
+.tw-sweep {
+  transform-box: view-box;
+  transform-origin: 300px 102px;
+  animation: tw-sweep 4.2s linear infinite;
+}
+@keyframes tw-sweep { to { transform: rotate(360deg); } }
+
+.tw-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.25;
+  transform-box: view-box;
+  transform-origin: 300px 102px;
+  opacity: 0;
+  animation: tw-ring 3.6s cubic-bezier(.2, .7, .35, 1) infinite;
+}
+.tw-ring-2 { animation-delay: 1.2s; }
+.tw-ring-3 { animation-delay: 2.4s; }
+@keyframes tw-ring {
+  0%   { transform: scale(.12); opacity: 0; }
+  12%  { opacity: .55; }
+  100% { transform: scale(1);   opacity: 0; }
+}
+
+.tw-beam { animation: tw-beam 3.4s ease-in-out infinite; }
+.tw-beam-2 { animation-delay: 1.7s; }
+@keyframes tw-beam {
+  0%, 100% { opacity: .35; }
+  50%      { opacity: 1; }
+}
+
+/* ---- inbound data ---- */
+
+/* Distance and timing are per packet (--tx / --dur / --delay in the markup) so the lanes never
+   fall into lockstep, which is what makes eight rectangles read as a stream. */
+.tw-packet {
+  opacity: 0;
+  animation: tw-packet var(--dur, 2.4s) linear infinite;
+  animation-delay: var(--delay, 0s);
+}
+@keyframes tw-packet {
+  0%   { transform: translateX(0);          opacity: 0; }
+  12%  {                                    opacity: 1; }
+  78%  {                                    opacity: 1; }
+  100% { transform: translateX(var(--tx));  opacity: 0; }
+}
+.tw-s1 { fill: var(--series-1); }
+.tw-s2 { fill: var(--series-3); }
+.tw-s3 { fill: var(--series-4); }
+.tw-s4 { fill: var(--accent); }
+
+/* ---- tower ---- */
+
+.tw-plinth { fill: var(--surface-3); stroke: var(--line-strong); stroke-width: 1; }
+.tw-shaft  { fill: var(--surface-2); stroke: var(--line-strong); stroke-width: 1; }
+.tw-shaft-win { fill: var(--accent); opacity: .30; }
+.tw-deck   { fill: var(--surface-3); stroke: var(--line-strong); stroke-width: 1; }
+.tw-roof   { fill: var(--surface-3); stroke: var(--line-strong); stroke-width: 1; }
+.tw-cabin-edge { fill: none; stroke: var(--accent); stroke-width: 1.25; opacity: .7; }
+.tw-mast   { stroke: var(--line-strong); stroke-width: 2; stroke-linecap: round; }
+
+/* Something moving behind the glass. Clipped to the cabin in the markup, so it never leaks. */
+.tw-scan {
+  fill: var(--accent);
+  opacity: .5;
+  animation: tw-scan 2.6s ease-in-out infinite;
+}
+@keyframes tw-scan {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(30px); }
+}
+
+/* Out of phase on purpose: three lights blinking together look like one light. */
+.tw-beacon { fill: var(--red); animation: tw-blink 1.9s ease-in-out infinite; }
+.tw-beacon-2 { animation-delay: .55s; }
+.tw-beacon-3 { animation-delay: 1.15s; }
+@keyframes tw-blink {
+  0%, 100% { opacity: .25; }
+  45%      { opacity: 1; }
+}
+
+/* ---- the finish ----
+   One ring pushed out hard when the response lands. Without it the scene just vanishes mid-sweep
+   and the wait reads as interrupted rather than completed. */
+.tw-flare {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  transform-box: view-box;
+  transform-origin: 300px 102px;
+  opacity: 0;
+}
+.tower.is-done .tw-flare { animation: tw-flare .5s cubic-bezier(.15, .75, .3, 1) forwards; }
+@keyframes tw-flare {
+  0%   { transform: scale(.1); opacity: .95; stroke-width: 4; }
+  100% { transform: scale(1.9); opacity: 0;  stroke-width: 1; }
+}
+.tower.is-done .tw-beacon { animation: none; opacity: 1; fill: var(--green); }
+.tower.is-done .tw-sweep  { opacity: 0; transition: opacity .3s var(--ease); }
+
+/* ---- readout ---- */
+
+.tower-readout {
+  max-width: 620px;
+  margin: var(--s-4) auto 0;
+}
+
+.tower-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.tower-caption {
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.tower-pct {
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
+.tower-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.tower-bar-fill {
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--series-3));
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+/* The estimate is redrawn every frame, so only the jump to 100% at the end needs easing. */
+.tower.is-done .tower-bar-fill { transition: width .3s var(--ease); }
+
+.tower-stage {
+  margin: var(--s-3) 0 0;
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  letter-spacing: .02em;
+  color: var(--ink-2);
+}
+.tower-stage::after {
+  content: '…';
+  color: var(--ink-3);
+}
+.tower.is-done .tower-stage::after { content: ''; }
+
+/* The app-wide reduced-motion block near the end of this file already stops every animation and
+   transition, so the scene stands still on its own. What it cannot decide is what a stopped
+   animation should look like: the rings and packets are only ever visible mid-flight and would
+   otherwise sit frozen on screen, and the beacons would stay stuck at their dimmest frame. */
+@media (prefers-reduced-motion: reduce) {
+  .tw-ring, .tw-packet, .tw-flare { opacity: 0; }
+  .tw-beacon { opacity: 1; }
+}
 
 /* ---------- automation: session, progress, run console ---------- */
 
@@ -1645,7 +1850,6 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   html { scroll-behavior: auto; }
   .kpi,
   .results.is-entering > * { animation: none; }
-  .sk-box::after { animation: none; }
   *, *::before, *::after {
     transition-duration: .01ms !important;
     animation-duration: .01ms !important;
