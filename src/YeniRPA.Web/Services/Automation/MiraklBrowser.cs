@@ -119,6 +119,43 @@ public sealed class MiraklBrowser : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// An HTTP client carrying the saved login, with no browser behind it.
+    ///
+    /// <para>For reading operator pages in bulk. Driving a real page through Chromium costs a second
+    /// or more each in layout and script it does not need — 188 seller pages is the difference between
+    /// half a minute and ten. Chrome is never launched: Playwright's request context speaks HTTP
+    /// directly and only needs the cookies.</para>
+    ///
+    /// <para>The caller disposes it. It carries operator cookies, so it is created per run rather than
+    /// held: a stale context outliving a cleared session would keep working after the operator thought
+    /// they had signed out.</para>
+    /// </summary>
+    public async Task<IAPIRequestContext> CreateAuthApiContextAsync()
+    {
+        if (!HasSavedSession)
+        {
+            throw new InvalidOperationException(
+                "There is no saved Mirakl session. Open the Create Return panel, sign in there and save the session first.");
+        }
+
+        var playwright = await EnsurePlaywrightAsync();
+        var storageStatePath = await CreateStorageStatePathAsync();
+
+        try
+        {
+            return await playwright.APIRequest.NewContextAsync(new APIRequestNewContextOptions
+            {
+                StorageStatePath = storageStatePath
+            });
+        }
+        finally
+        {
+            if (storageStatePath is not null && File.Exists(storageStatePath))
+                File.Delete(storageStatePath);
+        }
+    }
+
     public async Task<IBrowser> EnsureBrowserAsync()
     {
         if (_browser is { IsConnected: true } ready)
@@ -134,6 +171,25 @@ public sealed class MiraklBrowser : IAsyncDisposable
             _playwright ??= await CreatePlaywrightAsync();
             _browser = await LaunchAsync(_playwright);
             return _browser;
+        }
+        finally
+        {
+            _launchGate.Release();
+        }
+    }
+
+    /// <summary>The driver on its own, without launching a browser. Shares the launch gate so it
+    /// cannot race <see cref="EnsureBrowserAsync"/> into creating two of them.</summary>
+    async Task<IPlaywright> EnsurePlaywrightAsync()
+    {
+        if (_playwright is not null)
+            return _playwright;
+
+        await _launchGate.WaitAsync();
+        try
+        {
+            EnsurePlaywrightRuntimeFilesPresent();
+            return _playwright ??= await CreatePlaywrightAsync();
         }
         finally
         {

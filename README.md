@@ -9,13 +9,17 @@ with tab navigation between them and results rendered in place.
 | **Return SLA Report** | `orders` export + 1–2 return tracking templates (`.xlsx` or `.csv`) | In-page dashboard (6 KPIs, 4 tables) |
 | **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
 | **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per seller (copy to clipboard or export to Excel) |
+| **Seller Offer Warnings** | The seller → e-mail → attachment mapping + a folder of per-seller offer workbooks | One warning mail per seller with that seller's own offer list attached, previewed in full, then sent through Outlook with a live run log |
 | **Data & Methodology** | — | Reference page: source column per metric, calculation rules, known export traps, limits |
 
 The reports are read-only: they never leave the machine and nothing is stored. **Create Return is
 not** — it drives a real browser against the Mirakl back office and writes to the marketplace. See
 [Create Return](#create-return-automation). **Late Order Warnings is not either**, and goes further:
 it posts messages to external parties in WhatsApp groups, and a sent message cannot be recalled. See
-[Late Order Warnings](#late-order-warnings).
+[Late Order Warnings](#late-order-warnings). **Seller Offer Warnings** is the same class of thing
+again, with one extra hazard: every mail carries a commercially sensitive attachment, so the file
+that goes out matters as much as the address. See
+[Seller Offer Warnings](#seller-offer-warnings).
 
 ## Late Order Warnings
 
@@ -69,6 +73,110 @@ aborts the whole run rather than producing forty screenshots of the same QR code
 `Services/Automation/WhatsAppSelectors.cs` is the single place to fix when WhatsApp changes its
 markup — each selector is a candidate list, and the failure message names what was being looked for
 and lists everything tried.
+
+## Seller Offer Warnings
+
+Mails each seller a warning about their offer lead times, attaching **that seller's own offer list**.
+The mapping table — `Seller`, `SellerId`, `Email`, `DosyaAdi`, `LeadTime0`, `LeadTime1` — is the
+input; the attachment folder holds one `.xlsx` per seller, named exactly as `DosyaAdi` says.
+
+### Where the addresses come from
+
+`Fetch e-mails from Mirakl` reads each seller's *Users* tab in the operator back office
+(`/mmp/operator/shop/{sellerId}/user`) and puts every **enabled** user on that seller's row. A seller
+usually has several users and they all belong on **one** mail's To line, not on one mail each — the
+`Email` cell holds a `;`-separated list and one mail goes out per seller.
+
+It runs on the Mirakl session Create Return already owns, driving one browser page from seller to
+seller — roughly 4 s each, so ~190 sellers take about 13 minutes. It is a background run on the
+shared job bus with a live log, and it holds the app-wide automation slot for its duration.
+
+### Why it drives a page instead of calling an API
+
+The Users tab is a React micro-frontend. The server-rendered HTML is an empty shell (14 KB, no table
+in it) and the list arrives from an internal endpoint under `/private/organizations/{org}/users`,
+reached by resolving the shop to an organisation first. That chain is undocumented, unversioned, and
+free to change on any Mirakl release — and it does not fail loudly when it does, it returns nothing,
+which written back into the table would erase every address in it. The public `/api/` operator API
+answers `401` to session cookies; it needs an API key, and it does not expose a shop's users.
+
+Reading the page the operator would have read is slower and true by construction. This runs once a
+month.
+
+Two more things are load-bearing:
+
+- **An expired session answers `200`.** The back office redirects to `/login` and serves the sign-in
+  page, so nothing about the status code looks wrong and a naive parser reads every seller as "no
+  users". So the check is on the *final URL*, and a sign-in page aborts the whole fetch — the table
+  comes back untouched rather than half-cleared.
+- **It does not save.** Like the Excel import it hands back the merged table for review; the operator
+  presses Save. A fetch that rewrote 190 addresses in place would only be recoverable from the `.bak`
+  generation, with nothing to compare against.
+
+The parser deliberately does not know Mirakl's class names. It takes table rows carrying both an
+address and a status word — which survives a CSS refactor on their side, and keeps the operator's own
+address (present in the page chrome on every page) out of the results. `Enabled` is matched as a
+whole word, because `Contains("Enabled")` is also true of `Disabled`.
+
+### Why Outlook and not SMTP
+
+The operator's mailbox is corporate Exchange behind modern authentication. An SMTP path would need
+either an app password the tenant does not issue or a service account whose address is not the one
+sellers already correspond with. Driving the desktop client borrows a session that is already
+authenticated, and every warning lands in the operator's own **Sent Items**, where the audit trail
+belongs. Nothing in this app stores a password.
+
+### The STA trap
+
+ASP.NET Core request threads are MTA. Outlook's object model is an STA apartment-threaded server:
+calls from an MTA thread go through a marshalling proxy that mostly works and intermittently does
+not — `RPC_E_SERVERFAULT` halfway through a batch, with no pattern to it. `OutlookMailSender` owns
+**one long-lived STA thread** and every COM call happens on it; nothing outside that file ever sees a
+COM object. It is late-bound through reflection, so the app builds and runs without Outlook installed
+and is not pinned to an Outlook version.
+
+### The new Outlook has no COM at all
+
+If `Check Outlook` reports `CO_E_SERVER_EXEC_FAILURE` (`0x80080005`), the machine is very likely
+running the **new Outlook for Windows** (`olk.exe`), a store app with no object model. COM then tries
+to cold-start classic Outlook in its place and that is what fails. Start classic Outlook
+(`Office16\OUTLOOK.EXE`) once and check again — the probe attaches to a running instance. The badge
+says as much rather than printing the bare HRESULT, because the raw error sends you looking at DCOM
+permissions for an afternoon. Outlook must also run as the **same Windows user at the same
+elevation** as this app.
+
+### The guards
+
+A mail cannot be recalled, and its attachment is a complete price and stock list, so:
+
+1. **Each mail names a seller, and that seller must resolve to exactly one row** of the saved mapping
+   table (id first, folded name as the fallback). Two candidate rows are refused, never picked
+   between. Keyed by seller rather than by address because neither side is unique on its own: a
+   seller has several users on one mail, and one agency address can be a recipient for several
+   sellers.
+2. **Recipients and attachment are both re-derived server-side** from that row, never taken from the
+   browser. What the browser sent is compared to the table and a difference is refused by name — it
+   never wins.
+3. **The path is resolved inside the attachment folder and nowhere else.** A file name is a *name*:
+   anything containing a separator, a drive letter or an invalid character is refused, so a stray
+   `..\` in a spreadsheet cell cannot mail a seller a file off your disk.
+4. **Nothing is matched approximately, and none may ever be added.** Not "starts with", not "closest
+   file name", not "the only workbook containing the seller's name". An 85 %-similar match attaches
+   one seller's price list to a different seller's mail — a competitor data leak delivered by our own
+   automation, and it would look exactly like a working system until someone complained.
+   `OfferMailBuilderTests.ResolutionIsByNameAloneAndNeverGuessesANeighbour` exists to fail if anyone
+   tries.
+
+Plus: one seller per mail (the same seller twice in a run is refused; the same *address* across
+different sellers is fine and expected — each of those mails carries a different attachment, and the
+panel says how many are affected), the file confirmed on disk again immediately before Outlook is
+called, dry run the default
+(it `Save`s a real draft with the real attachment instead of sending), at most 250 mails per run
+(refused, not truncated) and 2–5 s randomised between them.
+
+**Keep the attachment folder out of `wwwroot`.** Anything under there is served to the browser and
+copied into the build output on every build — 188 × ~1.2 MB of seller price lists in both places. The
+default is `%LOCALAPPDATA%\YeniRPA\Offers`.
 
 The Order Report dashboard has two layers. *Key metrics* down to *Late shipment & cancellation —
 top 5 sellers* is the original port and is covered by the guarantees below. Below that sit the
@@ -137,12 +245,17 @@ src/YeniRPA.Web/
 │   ├── CarrierNames.cs              Free-text shipping company -> canonical carrier
 │   ├── ReturnSlaReportBuilder.cs    BuildData() -> dashboard JSON
 │   ├── ReturnListBuilder.cs         4 exports -> the Create Return input list
+│   ├── SellerMailStore.cs           seller-mails.json: the mapping, templates and folder
+│   ├── OfferMailBuilder.cs          One seller -> subject, body and which file is theirs
 │   ├── TabularFile.cs               xlsx/csv -> table, plus the order-number key, the
 │   │                                day-first template dates and the tracking-code rule
 │   └── Automation/
 │       ├── AutomationJobBus.cs      Single-run lock + SSE progress fan-out
 │       ├── MiraklBrowser.cs         Playwright browser + encrypted saved login
-│       └── CreateReturnRunner.cs    The Create Return flow, one order at a time
+│       ├── CreateReturnRunner.cs    The Create Return flow, one order at a time
+│       ├── MiraklSellerUserScraper.cs  Seller -> its back-office users, one page at a time
+│       ├── OutlookMailSender.cs     Outlook COM on one dedicated STA thread
+│       └── OfferMailRunner.cs       The seller warning batch, one mail at a time
 ├── Models/ReportModels.cs           JSON contract with the dashboard JavaScript
 │                                    (terse row fields; extended ones omitted when default)
 ├── Models/MethodologyViewModel.cs   Reads rules off the builders for the Methodology page
@@ -157,7 +270,8 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
     ├── js/order-report.js           Order dashboard aggregation + charts
     ├── js/return-sla-report.js      Return SLA dashboard
     ├── js/create-return.js          Create Return: session, upload, live run log
-    └── js/late-orders.js            Late Order Warnings: mapping editor, preview, messages
+    ├── js/late-orders.js            Late Order Warnings: mapping editor, preview, messages
+    └── js/offer-warnings.js         Seller Offer Warnings: mapping editor, preview, send
 ```
 
 ## API
@@ -182,6 +296,16 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
 | `POST` | `/api/late-orders/send` | JSON `{ messages, dryRun }` | `{ count, dryRun }`; the run continues in the background |
 | `GET` | `/api/late-orders/status` | — | `{ hasProfile, signedIn, browserReady, isRunning, runningModule, profilePath }` |
 | `POST` | `/api/late-orders/login` \| `check-session` \| `clear-session` | — | `200` |
+| `GET` \| `PUT` | `/api/offer-warnings/mapping` | JSON `{ entries, subjectTemplate, bodyTemplate, attachmentFolder }` | The seller → e-mail → attachment mapping, the templates and the folder |
+| `POST` | `/api/offer-warnings/mapping/import` | `file` | Merged table for review — **does not save** |
+| `POST` | `/api/offer-warnings/mapping/fetch-emails` | JSON `{ entries, onlyMissing }` | `{ started, rows }`; the fetch continues in the background |
+| `GET` | `/api/offer-warnings/mapping/fetch-result` | — | The table the last fetch produced — **does not save** |
+| `POST` | `/api/offer-warnings/mapping/excel` | JSON `{ entries }` | `satici-mail-eslesme.xlsx`, re-importable |
+| `POST` | `/api/offer-warnings/prepare` | JSON `{ subjectTemplate, bodyTemplate }` (both optional) | One rendered mail per row with its resolved attachment, a funnel and warnings |
+| `POST` | `/api/offer-warnings/mails/excel` | JSON `{ mails }` | `.xlsx` (one row per mail, body wrapped) |
+| `POST` | `/api/offer-warnings/send` | JSON `{ mails, dryRun }` | `{ count, dryRun }`; the run continues in the background |
+| `GET` | `/api/offer-warnings/status` | — | `{ outlookAvailable, attachmentFolder, folderExists, filesInFolder, isRunning, runningModule }` |
+| `POST` | `/api/offer-warnings/check-outlook` | — | `{ available, error }` — starts Outlook if it is not running |
 
 Input-validation failures return `400 { "error": "..." }` with the message naming the exact problem,
 e.g. `Required column 'Shipping deadline' was not found in the uploaded file.`

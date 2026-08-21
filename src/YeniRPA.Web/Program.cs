@@ -49,6 +49,28 @@ builder.Services.AddSingleton<SellerGroupStore>();
 builder.Services.AddSingleton<WhatsAppBrowser>();
 builder.Services.AddSingleton<LateOrderWhatsAppRunner>();
 
+// Seller Offer Warnings. The store owns the seller → e-mail → attachment mapping and the mail
+// templates; like the WhatsApp mapping it holds no credentials, so it is not encrypted.
+//
+// OutlookMailSender is a singleton because it owns a long-lived STA thread — Outlook's object model
+// is apartment-threaded and driving it from ASP.NET's MTA request threads fails intermittently, so
+// every COM call is marshalled onto that one thread. A per-request instance would spawn a thread and
+// a COM connection per call.
+//
+// Guarded rather than registered unconditionally: both types are Windows-only, and the guard is what
+// tells the platform analyser so instead of us suppressing it.
+if (OperatingSystem.IsWindows())
+{
+    builder.Services.AddSingleton<SellerMailStore>();
+    builder.Services.AddSingleton<OutlookMailSender>();
+    builder.Services.AddSingleton<OfferMailRunner>();
+}
+
+// Fills the mapping table's address column from the Mirakl back office. Not Windows-only and not an
+// automation runner — it reads operator pages over plain HTTP under the saved Mirakl session, so it
+// launches no browser and holds no run slot.
+builder.Services.AddSingleton<MiraklSellerUserScraper>();
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())

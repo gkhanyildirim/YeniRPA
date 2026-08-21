@@ -57,6 +57,12 @@
                 <span>Late Order Warnings</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-offer-warnings"
+                    aria-controls="panel-offer-warnings" aria-selected="false" data-module="offer-warnings" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Seller Offer Warnings</span>
+            </button>
+
             <div class="nav-label">Reference</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-methodology"
@@ -1340,6 +1346,348 @@
             <footer class="page-foot">Marketplace Reporting &middot; Late Order Warnings</footer>
         </section>
 
+        @* ================= SELLER OFFER WARNINGS ================= *@
+        <section class="panel" id="panel-offer-warnings" role="tabpanel" aria-labelledby="tab-offer-warnings" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1 data-eyebrow="Outlook &middot; Automation">Seller Offer Warnings</h1>
+                    <p class="lede">
+                        Mails each seller a warning about their offer lead times, with
+                        <strong>that seller's own offer list attached</strong>. Which file goes to which address is
+                        decided entirely by the mapping table below &mdash; nothing is ever matched approximately,
+                        because attaching the wrong file means handing one seller a competitor's complete price and
+                        stock list. A sent mail cannot be recalled, so every one of them is shown in full, with the
+                        attachment it resolved to, before it goes anywhere.
+                    </p>
+                </div>
+                <span class="stamp" id="ow-stamp"></span>
+            </header>
+
+            <div class="section-title">Outlook</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="ow-outlook-badge">Not checked yet</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="ow-check-outlook">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Check Outlook</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="alert" id="ow-outlook-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note">
+                    Mails go out through the Outlook already running on this machine, under your own mailbox &mdash;
+                    so they land in your <strong>Sent Items</strong> and sellers see the address they already
+                    correspond with. Nothing here stores a password.
+                    <br /><br />
+                    <strong>Check Outlook</strong> starts the client if it is not running, which is why it is a
+                    button rather than something this page does on its own. Outlook must run as the same Windows
+                    user as this app and at the same elevation &mdash; an Outlook started &ldquo;as
+                    administrator&rdquo; is invisible to a normal app, and vice versa.
+                </p>
+            </div>
+
+            <div class="section-title">Seller &rarr; e-mail &rarr; attachment</div>
+            <div class="card">
+                <h3>Who gets warned, and which file they get</h3>
+                <p class="sub">
+                    Set this up once, then refresh the lead-time counts each month. The file name must match a file
+                    in the attachment folder <strong>exactly</strong>
+                </p>
+
+                <div id="ow-mapping-warnings" hidden></div>
+
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 10%">Seller ID</th>
+                                <th style="width: 22%">Seller</th>
+                                <th style="width: 24%">E-mail</th>
+                                <th style="width: 26%">Attachment file</th>
+                                <th style="width: 7%">Lead 0</th>
+                                <th style="width: 7%">Lead 1</th>
+                                <th style="width: 4%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="ow-mapping-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="ow-map-fetch">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Fetch e-mails from Mirakl</span>
+                    </button>
+                    <label class="check" for="ow-fetch-missing">
+                        <input type="checkbox" id="ow-fetch-missing" checked />
+                        <span>Only rows with no address</span>
+                    </label>
+                    <button type="button" class="btn btn-ghost" id="ow-map-add">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Add row</span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="ow-map-save">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Save mapping</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="ow-map-import">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Import from Excel</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="ow-map-export">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Export to Excel</span>
+                    </button>
+                    <input type="file" id="ow-map-file" accept=".xlsx,.xls,.csv" hidden
+                           aria-label="Seller/e-mail mapping file" />
+                    <span class="filter-summary" id="ow-mapping-count"></span>
+                </div>
+
+                <div class="alert" id="ow-mapping-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <div id="ow-fetch-problems" hidden>
+                    <div class="table-scroll" id="ow-fetch-problems-wrap"></div>
+                </div>
+
+                <p class="note">
+                    <strong>Fetch e-mails from Mirakl</strong> reads each seller's <em>Users</em> tab in the
+                    operator back office and puts every <strong>enabled</strong> user on that seller's row. They all
+                    go on <em>one</em> mail, not one each. It matches rows by <strong>Seller ID</strong>, so a row
+                    without an id is skipped and reported. Like the import, it shows you the result and
+                    <strong>does not save</strong>. It uses the Mirakl session from the Create Return panel &mdash;
+                    if that has expired, the fetch stops and changes nothing rather than clearing addresses.
+                    <br /><br />
+                    The same address can appear on several sellers &mdash; one agency running three storefronts is
+                    normal. Those are not an error: each mail carries a different seller's offer list, so all of
+                    them have to go out. The panel says how many are affected.
+                    <br /><br />
+                    The import accepts your own matching workbook as it is &mdash; the columns
+                    <code>Seller</code>, <code>SellerId</code>, <code>Email</code>, <code>DosyaAdi</code>,
+                    <code>LeadTime0</code> and <code>LeadTime1</code>. It shows you the merged table and
+                    <strong>does not save</strong> until you press Save; a blank cell in the file means &ldquo;not
+                    stated&rdquo; and leaves the existing value alone. A row whose address repeats, or whose file is
+                    already another seller's, is flagged above and refused at send time rather than guessed at.
+                    Saved with the templates and the folder at <code id="ow-mapping-path"></code> &mdash;
+                    <span id="ow-mapping-updated"></span>.
+                </p>
+            </div>
+
+            <div class="section-title">Attachment folder</div>
+            <div class="card">
+                <h3>Where the per-seller offer workbooks live</h3>
+                <p class="sub">
+                    Drop this month's files in here and the table above picks them up by name. Saved with the
+                    mapping
+                </p>
+
+                <div class="filter-bar">
+                    <div class="field" style="flex: 1 1 460px">
+                        <label for="ow-folder">Folder</label>
+                        <input type="text" id="ow-folder" spellcheck="false" />
+                    </div>
+                    <button type="button" class="btn btn-ghost" id="ow-check-folder">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Check folder</span>
+                    </button>
+                    <span class="filter-summary" id="ow-folder-summary"></span>
+                </div>
+
+                <p class="note">
+                    A file name in the table is a <em>name</em>, not a path: anything with a separator in it is
+                    refused, and every attachment is resolved inside this folder and nowhere else. That is what
+                    stops a stray <code>..\</code> in a spreadsheet cell from mailing a seller a file from your
+                    disk. Keep the folder off <code>wwwroot</code> &mdash; anything under there is served to the
+                    browser and copied into the build output.
+                </p>
+            </div>
+
+            <div class="section-title">Mail wording</div>
+            <div class="card">
+                <h3>What every seller is sent</h3>
+                <p class="sub">
+                    Edit freely and press <strong>Build the mails</strong> to see the result &mdash; the preview
+                    uses what is in these boxes, and Save mapping keeps it for next time
+                </p>
+
+                <div class="field">
+                    <label for="ow-subject">Subject</label>
+                    <input type="text" id="ow-subject" spellcheck="false" />
+                </div>
+                <div class="field" style="margin-top: 14px">
+                    <label for="ow-body">Body</label>
+                    <textarea id="ow-body" rows="14" spellcheck="false"></textarea>
+                </div>
+
+                <p class="note">Placeholders: <span id="ow-placeholders"></span></p>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-primary" id="ow-prepare">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Build the mails</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="ow-template-reset">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Reset to default</span>
+                    </button>
+                </div>
+
+                <div class="alert" id="ow-prepare-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+            </div>
+
+            <div class="skeleton" id="ow-prepare-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Automation()" />
+            </div>
+
+            <div class="results" id="ow-prepared" hidden>
+
+                <div class="card accent-amber" id="ow-warnings" hidden>
+                    <h3>Worth knowing before you send</h3>
+                    <ul class="note-list" id="ow-warnings-list"></ul>
+                </div>
+
+                <div id="ow-problems" hidden>
+                    <div class="section-title">
+                        Sellers who cannot be mailed
+                        <partial name="_ExportButton" model='new ExportButton("ow-problems-wrap", "Cannot be mailed", "Offer Warnings")' />
+                    </div>
+                    <div class="card accent-amber">
+                        <h3>These rows are in the table but nothing will go out for them</h3>
+                        <p class="sub">
+                            No mail is composed for them and none is skipped silently &mdash; fix the row above, then
+                            build again
+                        </p>
+                        <div class="table-scroll" id="ow-problems-wrap"></div>
+                        <p class="note" id="ow-problems-summary"></p>
+                    </div>
+                </div>
+
+                <div class="section-title">
+                    Where the rows went
+                    <partial name="_ExportButton" model='new ExportButton("ow-funnel-wrap", "Funnel", "Offer Warnings")' />
+                </div>
+                <div class="card">
+                    <h3>Every row in the mapping table, accounted for</h3>
+                    <p class="sub">The buckets are terminal and add up to the row count</p>
+                    <div class="table-scroll is-full" id="ow-funnel-wrap"></div>
+                </div>
+
+                <div class="section-title">Mails</div>
+                <div class="card accent-green">
+                    <h3>One mail per seller, exactly as it will be sent</h3>
+                    <p class="sub">
+                        Read the address <em>and</em> the attachment name on each card &mdash; that pairing is the
+                        last chance to catch a wrong row
+                    </p>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost btn-sm" id="ow-select-all">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Select all</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="ow-select-none">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Select none</span>
+                        </button>
+                    </div>
+
+                    <div id="ow-mails"></div>
+
+                    <div class="actions">
+                        <label class="check" for="ow-dry-run">
+                            <input type="checkbox" id="ow-dry-run" checked />
+                            <span>Dry run (save to Drafts instead of sending)</span>
+                        </label>
+                        <button type="button" class="btn btn-primary" id="ow-send" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Send mails</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="ow-mails-export" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Download mails (Excel)</span>
+                        </button>
+                        <span class="filter-summary" id="ow-mails-summary"></span>
+                    </div>
+
+                    <div class="alert" id="ow-mails-alert" role="alert">
+                        <strong>Check this</strong>
+                        <span class="msg"></span>
+                    </div>
+
+                    <p class="note">
+                        A dry run composes each mail in Outlook with the real recipient and the real attachment and
+                        leaves it in <strong>Drafts</strong> instead of sending. Open one, check the file that came
+                        with it, then delete the drafts &mdash; that exercises the whole path with no outward
+                        effect, and it is the routine to run before every live send.
+                    </p>
+                </div>
+            </div>
+
+            <div class="results" id="ow-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span id="ow-progress-label">Mails processed</span>
+                        <span class="mono" id="ow-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="ow-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Seller Offer Warnings progress">
+                        <span class="progress-fill" id="ow-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="ow-console"></pre>
+                </div>
+                <p class="note">
+                    A mail that fails is named in the log and the run moves on. The one exception is Outlook itself
+                    being unreachable: the whole run stops, because every remaining mail would fail identically.
+                </p>
+            </div>
+
+            <div class="section-title">What happens when you send</div>
+            <div class="card">
+                <h3>The checks between a mapping row and a seller's inbox</h3>
+                <p class="sub">
+                    A mail cannot be recalled, and the attachment is commercially sensitive &mdash; so neither the
+                    address nor the file is taken from the browser on trust
+                </p>
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead><tr><th>Step</th><th>What it does</th><th>If it fails</th></tr></thead>
+                        <tbody>
+                            <tr><td><strong>Address allow-list</strong></td><td>Every recipient must appear in the saved mapping table</td><td>Refuses the whole run, naming the address</td></tr>
+                            <tr><td><strong>Attachment re-derived</strong></td><td>The file is taken from the table, not from the browser; the approved name must still match</td><td>Refuses the run and tells you to build again</td></tr>
+                            <tr><td><strong>Folder containment</strong></td><td>The path is resolved inside the attachment folder; separators are refused outright</td><td>Refuses the run &mdash; never reads outside the folder</td></tr>
+                            <tr><td>One per seller</td><td>Duplicate addresses in one run are rejected, not merged</td><td>Refuses the run</td></tr>
+                            <tr><td>Exists check</td><td>The file is confirmed on disk again immediately before Outlook is called</td><td>Skips this seller, logs why</td></tr>
+                            <tr><td>Compose</td><td>Plain-text body, one recipient, one attachment</td><td>Skips this seller, logs the Outlook error</td></tr>
+                            <tr><td>Send or save</td><td><code>Send</code> on a live run, <code>Save</code> to Drafts on a dry run</td><td>Skips this seller</td></tr>
+                            <tr><td>Pause</td><td>2&ndash;5 s randomised on a live run; 0.25 s on a dry run, which sends nothing to pace</td><td>&mdash;</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="note">
+                    At most <strong>250 mails per run</strong>; over that the run is refused rather than truncated.
+                    A run holds the app-wide automation slot for its whole duration &mdash; roughly 10&ndash;15
+                    minutes for a full batch &mdash; so Create Return and Late Order Warnings cannot run at the same
+                    time.
+                </p>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Seller Offer Warnings</footer>
+        </section>
+
         @* ================= DATA & METHODOLOGY ================= *@
         <section class="panel" id="panel-methodology" role="tabpanel" aria-labelledby="tab-methodology" hidden>
 
@@ -1795,4 +2143,5 @@
     <script src="~/js/create-return.js" asp-append-version="true"></script>
     <script src="~/js/mark-received.js" asp-append-version="true"></script>
     <script src="~/js/late-orders.js" asp-append-version="true"></script>
+    <script src="~/js/offer-warnings.js" asp-append-version="true"></script>
 }

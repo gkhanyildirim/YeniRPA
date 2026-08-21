@@ -880,6 +880,9 @@ window.RPA = window.RPA || {};
     'mark-received': { tab: 'tab-mark-received', panel: 'panel-mark-received' },
     // Reads an export like the reports do, but its output is messages to external parties.
     'late-orders': { tab: 'tab-late-orders', panel: 'panel-late-orders' },
+    // Also messages external parties, but its input is the mapping table itself rather than an
+    // export, and every mail carries that seller's own offer list as an attachment.
+    'offer-warnings': { tab: 'tab-offer-warnings', panel: 'panel-offer-warnings' },
     // Reference page: static content, no upload and no dashboard of its own.
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' }
   };
