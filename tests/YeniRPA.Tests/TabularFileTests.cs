@@ -1,3 +1,4 @@
+using System.Text;
 using YeniRPA.Web.Services;
 
 namespace YeniRPA.Tests;
@@ -8,6 +9,35 @@ namespace YeniRPA.Tests;
 /// </summary>
 public class TabularFileTests
 {
+    /// <summary>
+    /// A quote only opens a quoted field at the start of one. An inch mark mid-field is a literal
+    /// character — it used to switch quoting on and swallow the rest of the line into that cell,
+    /// which emptied every column after it without any error. A screen size is written exactly that
+    /// way, and Title Cleaner reads screen sizes out of exactly that kind of column.
+    /// </summary>
+    [Fact]
+    public void AnInchMarkMidFieldDoesNotSwallowTheRestOfTheLine()
+    {
+        var csv = "Başlık;Ekran Boyutu;Marka\nAcme Book 15.6\" Notebook;15.6\";Acme\n";
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+        var table = TabularFile.Read(stream, "urunler.csv");
+
+        Assert.Equal(["Acme Book 15.6\" Notebook", "15.6\"", "Acme"], table[1]);
+    }
+
+    /// <summary>A properly quoted field still works, including a doubled quote inside it.</summary>
+    [Fact]
+    public void AQuotedFieldStillCarriesItsDelimiterAndItsEscapedQuotes()
+    {
+        var csv = "A;B\n\"one;two\";\"say \"\"hi\"\"\"\n";
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+        var table = TabularFile.Read(stream, "x.csv");
+
+        Assert.Equal(["one;two", "say \"hi\""], table[1]);
+    }
+
     [Theory]
     [InlineData("01259_321097726-A", "321097726")]
     [InlineData("01259_321097726-B", "321097726")]

@@ -37,6 +37,12 @@
                 <span>Ticket &rarr; Seller</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-title-cleaner"
+                    aria-controls="panel-title-cleaner" aria-selected="false" data-module="title-cleaner" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Title Cleaner</span>
+            </button>
+
             <div class="nav-label">Automation</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-create-return"
@@ -651,6 +657,276 @@
                 </div>
 
                 <footer class="page-foot">Marketplace Reporting &middot; Ticket &rarr; Seller</footer>
+            </div>
+        </section>
+
+        @* ================= TITLE CLEANER ================= *@
+        <section class="panel" id="panel-title-cleaner" role="tabpanel" aria-labelledby="tab-title-cleaner" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1 data-eyebrow="Catalogue &middot; Titles">Title Cleaner</h1>
+                    <p class="lede">
+                        Ürün dosyanızı yükleyin; her başlıktan, <strong>o satırın kendi özellik
+                        kolonlarında</strong> yazan değerler çıkarılır. Geriye model ve hiçbir kuralın
+                        istemediği bilgiler kalır. Sistem tahmin yürütmez: bir değer ancak kolonda da
+                        başlıkta da aynı şeyi söylüyorsa silinir. <strong>Çelişiyorlarsa</strong> başlığa
+                        dokunulmaz, satır incelemeye düşer. Aynı şeyi söylüyor ama hücre eksik yazılmışsa
+                        (hücrede <code>16</code>, başlıkta <code>16GB</code>) hücre tamamlanır.
+                        Her kategori kendi kural setini alır.
+                    </p>
+                </div>
+                <span class="stamp" id="tc-stamp"></span>
+            </header>
+
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="tc-drop">
+                            <span class="drop-step">Input</span>
+                            <span class="drop-title">Ürün dosyası</span>
+                            <span class="drop-hint">Başlık + özellik kolonları &mdash; .xlsx or .csv</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="tc-file" accept=".xlsx,.xls,.csv" aria-label="Ürün dosyası" />
+                        </label>
+                    </div>
+
+                    <div class="filter-bar">
+                        <div class="field">
+                            <label for="tc-ruleset">Kural seti</label>
+                            <select id="tc-ruleset"></select>
+                        </div>
+                        <div class="field">
+                            <label for="tc-set-name">Set adı</label>
+                            <input type="text" id="tc-set-name" placeholder="Laptop" />
+                        </div>
+                        <div class="field">
+                            <label for="tc-title-column">Başlık kolonu</label>
+                            <input type="text" id="tc-title-column" placeholder="Başlık" />
+                        </div>
+                        <div class="field">
+                            <label for="tc-decimal">Ondalık</label>
+                            <select id="tc-decimal">
+                                <option value=".">15.6</option>
+                                <option value=",">15,6</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="tc-suggest">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Dosyadan kural öner</span>
+                        </button>
+                        <button type="button" class="btn btn-primary" id="tc-preview">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Önizle</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="tc-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">Kural seti</div>
+            <div class="card">
+                <h3>Hangi kolon başlıktan çıkarılacak</h3>
+                <p class="sub">
+                    <strong>Çıkar</strong> işaretlenmemiş hiçbir şey silinmez &mdash; kural setinin dışında kalan
+                    her bilgi başlıkta olduğu gibi kalır
+                </p>
+
+                <div id="tc-notes" hidden></div>
+
+                <p class="note">
+                    <strong>Tip</strong>, o kolonun başlıkta nasıl aranacağını belirler.
+                    <code>Ölçü</code> sayı ile birimi birlikte arar &mdash; birim şart, çünkü çıplak
+                    <code>16</code> model adının parçası olabilir.
+                    <code>Eşanlamlı</code> bir değer listesi tutar, o yüzden başlıkta
+                    <em>başka</em> bir değer geçtiğini fark edebilir.
+                    <code>Metin</code> sadece hücrenin kendi yazdığını arar.
+                    Seçtiğiniz tipe göre son iki kutudan yalnızca biri açılır.
+                    <br /><br />
+                    <strong>Çıkar işaretli değilse hiçbir şey silinmez.</strong> Dahası,
+                    <strong>Çıkar kapalı bir kural o metni korur</strong>: eşleştiği yazıyı sahiplenir
+                    ve başka bir kuralın silmesini engeller. Başlıkta
+                    <code>RTX 5070 8GB 8GB</code> gibi aynı değer iki kez geçiyorsa çözüm budur &mdash;
+                    ekran kartı satırına <code>RTX 5070 8GB</code> yazımını ekleyip Çıkar'ı kapatın,
+                    geriye kalan <code>8GB</code>'ı RAM kuralı temizlesin.
+                    <br /><br />
+                    <strong>Satır sırası anlamlıdır.</strong> Aynı yazıyı iki kural isterse uzun
+                    eşleşme kazanır, eşitlikte üstteki satır.
+                </p>
+
+                <details class="note">
+                    <summary><strong>Birimler ve Eşanlamlılar nasıl yazılır?</strong></summary>
+                    <p>
+                        <strong>Birimler</strong> &mdash; <code>GB=gb|gigabayt@@1 ; TB=tb@@1024</code><br />
+                        <code>;</code> birimleri, <code>|</code> aynı birimin yazımlarını ayırır.
+                        <code>=</code> öncesi standart yazımdır, düzeltmede o kullanılır.
+                        <code>@@</code> sonrası birimin büyüklüğüdür: değer verilen birimler
+                        karşılaştırılabilir olur, böylece hücredeki <code>1024 GB</code> ile başlıktaki
+                        <code>1TB</code> çakışma sayılmaz.
+                    </p>
+                    <p>
+                        <strong>Eşanlamlılar</strong> &mdash; <code>W11P|Windows 11 Pro ; W11H|Windows 11 Home</code><br />
+                        <code>;</code> grupları, <code>|</code> aynı şeyin yazımlarını ayırır.
+                        <strong>Her grubun ilk yazımı standarttır</strong> &mdash; hücreye o yazılır.
+                        Hücrenizdeki değeri başa koyun, başlıktaki yazımı arkasına ekleyin.
+                    </p>
+                </details>
+
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 16%" title="Excel dosyanızdaki kolonun adı — birebir aynı yazılmalı">Kolon</th>
+                                <th style="width: 9%" title="Bu kolonun başlıkta nasıl aranacağı">Tip</th>
+                                <th style="width: 6%" title="Bulunca başlıktan silinsin mi. Kapalıysa metin korunur.">Çıkar</th>
+                                <th style="width: 6%" title="Hücredeki yazım standarda çevrilsin mi (16 → 16 GB)">Düzelt</th>
+                                <th style="width: 6%" title="Hücre boşsa değeri başlıktan alıp doldursun mu">Doldur</th>
+                                <th style="width: 8%" title="Son taramada bu kural kaç satırda karşılık buldu">Eşleşme</th>
+                                <th style="width: 22%" title="Yalnızca Tip = Ölçü olan satırlarda kullanılır">Birimler</th>
+                                <th style="width: 22%" title="Yalnızca Tip = Eşanlamlı olan satırlarda kullanılır">Eşanlamlılar</th>
+                                <th style="width: 5%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="tc-rules-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="tc-rule-add">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Satır ekle</span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="tc-rule-save">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Kural setini kaydet</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="tc-rule-import">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Excel'den içe aktar</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="tc-rule-export">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Excel'e aktar</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="tc-rule-delete" disabled
+                            title="Açılır listeden seçili kural setini siler">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Seti sil</span>
+                    </button>
+                    <input type="file" id="tc-rule-file" accept=".xlsx,.xls,.csv" hidden
+                           aria-label="Kural seti dosyası" />
+                    <span class="filter-summary" id="tc-rule-count"></span>
+                </div>
+
+                <div class="alert" id="tc-rule-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+            </div>
+
+            <div class="skeleton" id="tc-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Report()" />
+            </div>
+
+            <div class="results" id="tc-results" hidden>
+
+                <div class="section-title">Overview</div>
+                <div class="kpi-grid" id="tc-kpis"></div>
+                <p class="note" id="tc-overview-note"></p>
+
+                <div class="section-title" id="tc-fixes-title" hidden>Önerilen düzeltmeler</div>
+                <div class="card accent-amber" id="tc-fixes-card" hidden>
+                    <h3>İncelenecek satırlar için çözüm önerileri</h3>
+                    <p class="sub">
+                        İncelenecek satırlar birkaç senaryodan ibaret olur; her senaryo tek bir kural
+                        değişikliğiyle çözülür
+                    </p>
+
+                    <div id="tc-fixes-list"></div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="tc-fixes-apply">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Seçilenleri uygula</span>
+                        </button>
+                        <span class="filter-summary" id="tc-fixes-count"></span>
+                    </div>
+
+                    <p class="note">
+                        Uygulanan düzeltme <strong>kural tablosuna yazılır ve önizleme yenilenir</strong>
+                        &mdash; dosyanıza dokunulmaz. Sonucu beğenirseniz
+                        <strong>Kural setini kaydet</strong> deyin; beğenmezseniz kaydetmeyin, hiçbir şey
+                        değişmemiş olur.
+                        <br /><br />
+                        Yazılacak değer kutusu düzenlenebilir: sistem ifadeyi önerir, doğrusunu siz
+                        bilirsiniz. Yalnızca <strong>tüm dosyaya genellenebilen</strong> düzeltmeler
+                        önerilir; tek bir satırdaki hatalı hücre burada çıkmaz, incelenecek listesinde
+                        kalır.
+                    </p>
+                </div>
+
+                <div class="section-title">
+                    Kolon bazında sonuç
+                    <partial name="_ExportButton" model='new ExportButton("tc-attr-wrap", "Kolon sonuclari", "Title Cleaner")' />
+                </div>
+                <div class="card">
+                    <h3>Her kolon kaç satırda ne yaptı</h3>
+                    <p class="sub">
+                        Kuralları ayarlarken bakılacak tablo &mdash; bir kolonda <strong>Başlıkta yok</strong>
+                        yüksekse ya kural yanlış ya da başlıklar o bilgiyi taşımıyor
+                    </p>
+                    <div class="table-scroll" id="tc-attr-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    İncelenecek satırlar
+                    <partial name="_ExportButton" model='new ExportButton("tc-conflict-wrap", "Incelenecek", "Title Cleaner")' />
+                </div>
+                <div class="card accent-amber">
+                    <h3>Başlık ile özellik çelişiyor</h3>
+                    <p class="sub">
+                        Bu satırlarda <strong>hiçbir şey silinmedi ve hiçbir özellik düzeltilmedi</strong> &mdash;
+                        hangi tarafın doğru olduğunu sistem bilemez
+                    </p>
+                    <div class="table-scroll" id="tc-conflict-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    Tüm satırlar
+                    <partial name="_ExportButton" model='new ExportButton("tc-rows-wrap", "Tum satirlar", "Title Cleaner")' />
+                </div>
+                <div class="card">
+                    <h3>Önizleme</h3>
+                    <p class="sub">Orijinal başlık, temizlenmiş hâli ve satırın durumu</p>
+                    <div class="table-scroll" id="tc-rows-wrap"></div>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-primary" id="tc-excel">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Excel indir</span>
+                    </button>
+                </div>
+
+                <p class="note">
+                    İndirilen dosyada üç sayfa var. <strong>Temizlenmiş</strong>: kolon düzeni aynen
+                    korunur, özellik kolonları düzeltilmiş değerleri taşır &mdash; doğrudan pazaryerine
+                    yükleyebilirsiniz. <strong>Orijinal</strong>: dosyanızın dokunulmamış kopyası.
+                    <strong>Kural Seti</strong>: bu çalıştırmada neyin uygulandığı.
+                    <br /><br />
+                    <strong>Orijinal sayfasını saklayın.</strong> Temizlenen bir başlık sonuçtan geri
+                    üretilemez; geri dönüşün tek yolu o sayfadır.
+                </p>
+
+                <footer class="page-foot">Marketplace Reporting &middot; Title Cleaner</footer>
             </div>
         </section>
 
@@ -2140,6 +2416,7 @@
     <script src="~/js/order-report.js" asp-append-version="true"></script>
     <script src="~/js/return-sla-report.js" asp-append-version="true"></script>
     <script src="~/js/ticket-seller.js" asp-append-version="true"></script>
+    <script src="~/js/title-cleaner.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>
     <script src="~/js/mark-received.js" asp-append-version="true"></script>
     <script src="~/js/late-orders.js" asp-append-version="true"></script>

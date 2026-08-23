@@ -10,6 +10,7 @@ with tab navigation between them and results rendered in place.
 | **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
 | **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per seller (copy to clipboard or export to Excel) |
 | **Seller Offer Warnings** | The seller → e-mail → attachment mapping + a folder of per-seller offer workbooks | One warning mail per seller with that seller's own offer list attached, previewed in full, then sent through Outlook with a live run log |
+| **Title Cleaner** | A product export (`.xlsx` or `.csv`) with a title column and attribute columns | Each title stripped of what that row's own attributes name, the cells that disagreed with their title, and the cells completed from it — previewed in full, then a 3-sheet workbook |
 | **Data & Methodology** | — | Reference page: source column per metric, calculation rules, known export traps, limits |
 
 The reports are read-only: they never leave the machine and nothing is stored. **Create Return is
@@ -185,6 +186,247 @@ analysis, category performance and data quality. They read **optional** columns,
 without them still renders; each affected section shows an empty state naming the missing column,
 and a banner above *Key metrics* lists them all.
 
+## Title Cleaner
+
+Product titles have to follow a per-category naming standard. The cleaner reads **each row's own
+attribute cells** and cuts those values out of that row's title, leaving the model and anything no
+column claims:
+
+```
+Başlık : Dell Pro Max 16 MC16250_3 Ultra 7 265H 32GB 1TBSSD RTXPRO2000 16" FullHD+ W11P Dizüstü İş İstasyonu
+Sonuç  : Pro Max 16 MC16250_3 RTXPRO2000
+```
+
+**Removal is a whitelist.** A value goes only when a rule names its column, the row's cell carries
+it, and the title is confirmed to spell the same thing. `RTXPRO2000` survives because no rule claims
+it — the cleaner does not need to recognise it, only to be told nothing about it. That is the only
+safe default for something that deletes catalogue data.
+
+### Why "16" is the whole problem
+
+That title carries `16` three times — in the model name (`Pro Max 16`), inside the model code
+(`MC16250_3`) and as the screen size (`16"`). Only the last may go; a plain replace of the attribute
+value leaves `Pro Max MC250_3`, a model that does not exist, written back to the marketplace. Two
+rules together settle it, and neither works alone:
+
+- **A measured value is only ever recognised together with its unit.** A bare number is never a
+  candidate. Loosen this and model names start disappearing.
+- **A span may begin or end inside a word only where another accepted span picks up exactly where it
+  leaves off.** This is what lets `1TBSSD` — a disk capacity and a disk type with no separator
+  between them — come apart into two matches while `MC16250_3` stays whole. A boundary rule strict
+  enough to reject the one would reject the other, so the two cases cannot be told apart one span at
+  a time: `TitleCleanBuilder` collects candidates first, then resolves overlaps and validates
+  boundaries against the neighbours, to a fixed point.
+
+`FoldedTitle` exists because neither fold already in the app can be used here. `SellerGroupMap.FoldName`
+collapses whitespace and `CarrierNames.Fold` turns punctuation into spaces — both right for comparing
+two whole names, both fatal for a module that cuts spans out of a string rather than comparing them.
+It takes their *rules* (the Turkish i-family, the accent map) and keeps a 1:1 map back to the original
+character positions.
+
+**There is no fuzzy matching and none may ever be added** — the same rule as `CarrierNames` and
+`SellerGroupMap`, for a sharper version of the same reason. Those would misroute a message; this one
+silently deletes the wrong characters out of a product title and writes the result back, with the
+original gone. `TitleCleanerTests.AValueIsNeverFoundInsideALongerWord` exists to fail if anyone
+widens it.
+
+### What happens when the title and the cell disagree
+
+| Verdict | When | The title | The cell |
+|---|---|---|---|
+| `OK` | Found, already canonical | Cut | — |
+| `DÜZELTİLDİ` | Same value, different spelling (`16` ↔ `16GB`, `15,6"` ↔ `15.6"`) | Cut | Rewritten canonically |
+| `ÇAKIŞMA` | Title says one value, cell says another | **Untouched** | **Untouched** |
+| `BELİRSİZ` | Cell holds a bare number the title offers two units for | **Untouched** | **Untouched** |
+| `BAŞLIKTA YOK` | Cell has a value the title never mentions | — | — |
+| `ÖZELLİK BOŞ` | Empty cell (`FillFromTitle` is off by default) | — | — |
+
+A disagreement is reported, never acted on: which side is right is not something this tool can know,
+and one attribute disagreeing does not stop the other seven on that row being cleaned. What each kind
+can *detect* differs — `Measure` and `Alias` scan the title independently of the cell, so they can see
+it naming a different value; `Text` only ever searches for the cell's own value, so it reports found
+or not found and never a conflict.
+
+Two units that both carry a `Factor` are compared in the base unit, so a cell reading `1024 GB` is not
+reported as a conflict against a title reading `1TB`. Without a factor the unit must match exactly —
+no conversion is ever invented.
+
+### Rule sets
+
+One per category, stored in `%LOCALAPPDATA%\YeniRPA\TitleCleaner\title-rules.json` by `TitleRuleStore`
+— atomic write, one `.bak` generation, and a file that will not parse is an error rather than a silent
+fresh start. Same treatment, and the same reason, as `SellerGroupStore`: rule sets are what the
+category team decided, they are not derived from any export, and nothing can rebuild them.
+
+**Attribute order is load-bearing.** Where two attributes could claim one stretch of title the longer
+match wins and ties fall to whichever comes first, so `Dizüstü İş İstasyonu` has to be evaluated
+before `İş İstasyonu`.
+
+`TitleRuleSuggester` proposes a starting set by reading the uploaded file — it is what makes "every
+category gets its own rule set" affordable. The proposal is a **draft** for the editor and is never
+applied on its own. Two things about it are deliberate:
+
+- **It measures `Remove` rather than guessing it**, by running the real engine over the sample. A GPU
+  column whose values never appear in the titles arrives switched off.
+- **It probes every column at once, not one at a time.** Boundary validity depends on which *other*
+  attributes claimed the characters next to a span, so `1TBSSD` only comes apart while both the
+  capacity rule and the disk-type rule are present. Measured alone, both halves of every glued token
+  match nothing — and glued tokens are exactly how these titles are written.
+
+A column of bare numbers is never proposed for removal unless its own name says what the unit is
+(`RAM`, `Ekran Boyutu`, `Kapasite`). `16` is a screen size, a model name and a fragment of a model
+code at once, and this guard covers every kind except `Measure` — a column of `16`/`12` is short and
+closed enough to be read as a catalogue, and a catalogue of bare numbers searches titles just as
+literally as free text does.
+
+### What a real export changed
+
+The module was built against the reference title above and then run over a 100-product laptop export
+(298 columns). Four things only that file could have taught it, all of them now covered by tests:
+
+- **The row under the header is not a product.** A marketplace import template carries the technical
+  field codes there — `TITLE__TR_TR`, `BRAND`, `PROD_FEAT_16858`. Read as data it seeds every alias
+  catalogue with a field code and makes a column that is genuinely empty look like it holds one
+  value, which is how a 40-column file proposed 300 rules. `IsFieldCodeRow` keeps it out of the
+  cleaning and out of the statistics but **leaves it in the output**, because the marketplace's own
+  importer needs it back. The proposal went from 298 rules to 47.
+- **Titles repeat a measurement constantly, and a repeat is not a typo.** `RTX 5070 8GB 8GB 512GB
+  SSD` is a graphics card's own memory beside the system RAM. Removing every match — which is what
+  it used to do — deleted the card's memory out of the title, and only on the rows where the two
+  sizes happened to be equal, so it was invisible on the rows either side. More than one match is
+  now reported and nothing is removed; giving the other column its own rule resolves it, and the
+  message says so. `Greedy` also hands out one span per attribute before any second one, so two
+  rules wanting the same repeated value get one apiece instead of the first taking both.
+- **A measured column gets only the units it actually uses**, not its whole family. A cache column
+  is always written in MB; handed GB/TB/MB it treated every `8GB` in a title as its own and reported
+  a conflict against its 40 MB on **78 rows out of 100**. The mirror case — a disk column whose
+  sample is all GB not recognising a later `1TB` — announces itself under *Başlıkta yok* with the
+  value still in the title. A false conflict announces nothing.
+- **A unit the catalogue has never heard of is still a unit.** `Ekran Yenileme Hızı` holds `165 Hz`
+  and was being read as a catalogue of values, because `GHz` and `MHz` were known and plain `Hz` was
+  not — see [Any category, no code change](#any-category-no-code-change).
+- **A bare number is refused per row, not per column.** A `Text` or `Alias` cell holding nothing but
+  a number is asking to delete an unqualified number from a title, which is the deletion the
+  `Measure` rules exist to refuse; it is refused there too. Doing it per column instead — the first
+  attempt — let one numeric value among a hundred processor models switch removal off for the other
+  ninety-nine.
+
+Review rows on that export went from 92 of 100 to 18, and the 18 are real: four rows where the RAM
+and the graphics memory are the same size, and fourteen where the processor cell and the title spell
+the model differently.
+
+### Any category, no code change
+
+Nothing in the engine knows what a laptop is. `TitleCleanBuilder`, `AttributeMatcher`, `TitleFold`
+and `TitleRuleStore` deal in columns, values and spans; the naming standard lives entirely in the
+rule set, which is data. A washing-machine file cleans the same way a laptop file does, and
+`TitleRuleSuggesterTests.AWhiteGoodsFileWorksWithNoCodeThatKnowsAboutWhiteGoods` is there to prove
+it stays that way.
+
+The one place category knowledge used to leak in was the **suggester's unit catalogue**. It was a
+gate: a column whose unit was not in the list could not be a measured attribute at all. That is
+untenable for a marketplace — `dB`, `bar`, `devir`, `kWh`, `MP`, `ay` would each be a code change,
+a standing tax on every new category, and the miss is silent (the column quietly becomes a catalogue
+of values instead). So the catalogue is now an **enrichment, not a gate**:
+
+| The column writes | What it gets |
+|---|---|
+| A unit the catalogue knows (`512 GB`, `15,6 inç`) | The family's observed units, with their spelling variants and conversion factors — `inç`/`inch`/`"` as one thing, `GB`↔`TB` comparable |
+| Anything else, used consistently (`165 Hz`, `52 dB`, `1400 devir`) | That token, spelled the way the column spells it |
+| Bare numbers (`16`, `8`) | The unit read off the **titles** — what follows that number on the same row |
+
+Two guards keep the open-ended path safe, and both already existed. A measured value is only ever
+matched **with its unit**, so no bare number becomes a candidate; and a span may not cut into a word,
+so a unit that happens to read like a common word (`ay` inside `ayarlı`) is rejected on the boundary
+check rather than on a list of words this class would otherwise have to maintain.
+
+An undeclared unit is proposed with **`Düzelt` off**: the canonical spelling of a unit nobody
+declared is not knowable, and "correcting" a processor model of `8745HX` into `8745 HX` would damage
+the cell. The value still matches and still leaves the title; only the rewrite stops, and the editor
+is told why.
+
+Reading the unit off the titles replaced a list of column-name hints (`ram`, `bellek`, `ekran`,
+`disk` → GB/inch). That list only ever knew about laptops and could not be extended to a
+marketplace's category list; the titles are where the unit is actually written, whatever the column
+is called.
+
+### Suggested fixes
+
+The review table reports problems; it does not resolve them. Working through it meant reading a row,
+working out which rule was wrong, finding that rule among forty and editing the right cell — then
+doing it again for the next row saying exactly the same thing.
+
+`TitleFixSuggester` groups the review rows into **scenarios** and proposes one rule change each. On
+the laptop export the eighteen review rows were three scenarios (11 rows, 4 rows, 3 rows), and
+applying all three took the review count to **zero** in one request. Three kinds are offered:
+
+| The row says | The fix |
+|---|---|
+| Title and cell spell one thing two ways | Fold the title's spelling into the cell value's alias group |
+| The value appears twice | Give the longer phrase around the other occurrence to the column that owns it, and bar that column from removing anything |
+| The cell holds a bare number | Adopt the title's full phrase as that value's spelling |
+
+Four things about it are deliberate:
+
+- **Only changes that generalise are suggested.** A fix is written into the rule set and therefore
+  acts on the whole file, so "the cell on this row is wrong" — a data error in one product — is never
+  offered. Those stay in the review list and go out with the workbook.
+- **The card's before/after is produced by the real engine**, by cleaning a sample row under the
+  changed rule set. What the operator is shown is what they get.
+- **The cell's own spelling stays at the head of a merged group.** It is what a cell gets rewritten
+  to, so putting the title's spelling first would overwrite the catalogue with title text.
+- **Nothing is saved.** Applying updates the editor and re-runs the preview; the rule set is written
+  when the operator presses Save, like everywhere else here.
+
+The apply endpoint **recomputes the suggestions server-side** and takes only ids from the browser, so
+a page cannot hand over a rule edit of its own. Fix ids are derived from the scenario rather than its
+position in a list, which is what lets them mean the same thing on that second pass.
+
+Two smaller things the engine needed for this. The bare-number guard now tests **the text that would
+be cut** rather than what the cell holds — deleting an unqualified number from a title is the
+dangerous act, and a cell reading `465` whose catalogue maps it onto the title's `Ultra 5 465` is
+asking to delete a phrase, which is safe. And `TitleAttributeResult` carries a `Reason`, because
+`Ambiguous` has three causes needing three different fixes and two of them are otherwise
+indistinguishable — recovering the cause by parsing the Turkish message would break on the next
+rewording.
+
+### The output
+
+Three sheets. `Temizlenmiş` keeps the uploaded column layout, with **the title column holding the
+cleaned title** and the attribute cells their corrected values, so it goes straight back to the
+marketplace; the added columns — the old title, the row's verdict, the per-attribute statuses — go on
+the end for the same reason `Carrier (Normalized)` does. `Orijinal` is a verbatim copy — **it is the
+only record of what the titles used to say**, and what makes this safe to run at all. `Kural Seti`
+records what ran.
+
+Writing the clean title into the title column rather than beside it is not cosmetic. The marketplace
+reads that column: this sheet used to leave the old title there and put the clean one in an appended
+column, which meant uploading it corrected every attribute and changed no title at all. On a
+298-column export nobody could see the difference either, because the appended column sat past
+everything anyone scrolls to.
+
+Re-uploading the output and cleaning it again changes nothing further
+(`TitleCleanWorkbookTests.ReUploadingTheOutputChangesNothingFurther`). A second pass that kept eating
+characters would corrupt a catalogue one re-run at a time, and every individual run would look like it
+had worked.
+
+The Excel download **re-derives everything server-side from the uploaded file** rather than taking
+rows back from the browser — the same rule as Seller Offer Warnings. The engine is deterministic, so
+the download is what the preview showed.
+
+Units and alias groups reach the browser **already flattened** into one string each
+(`GB=gb|gigabayt@1 ; TB=tb|terabayt@1024`). The encoding lives in `TitleRuleStore` and nowhere else:
+a second implementation of it in JavaScript would be free to drift from the one the Excel round trip
+uses, and the drift would surface as a rule that quietly stopped matching.
+
+### One shared fix this module needed
+
+`TabularFile.ParseCsvLine` treated a `"` anywhere in a field as opening a quoted field. A screen size
+of `16"` therefore switched quoting on mid-cell and swallowed the rest of the line into it, silently
+emptying every column after it. A quote now only opens a quoted field at the **start** of one, which
+is what RFC 4180 says and the only behaviour under which the affected rows were not already corrupt.
+Covered by `TabularFileTests.AnInchMarkMidFieldDoesNotSwallowTheRestOfTheLine`.
+
 ## Run
 
 ```bash
@@ -199,7 +441,11 @@ dotnet test
 
 `tests/YeniRPA.Tests` covers the rules that decide what an operator acts on: the order-number join
 and the SLA verdict behind the Return SLA report, the day-first template dates, what counts as a
-tracking code, and carrier canonicalisation. They run on CSV built in memory and go through the same
+tracking code, carrier canonicalisation, and — at greater length than any of them — which characters
+Title Cleaner is allowed to delete out of a product title. That last group is where the risk in this
+repo is concentrated: every other result can be checked by looking at it, while a title that lost
+four characters too many looks perfectly reasonable and is noticed weeks later with the original
+gone. They run on CSV built in memory and go through the same
 readers the app does. The test packages are a **build-time** dependency only — the app itself still
 ships with no external runtime dependencies.
 
@@ -249,6 +495,14 @@ src/YeniRPA.Web/
 │   ├── OfferMailBuilder.cs          One seller -> subject, body and which file is theirs
 │   ├── TabularFile.cs               xlsx/csv -> table, plus the order-number key, the
 │   │                                day-first template dates and the tracking-code rule
+│   ├── TitleCleaner/
+│   │   ├── TitleFold.cs             Position-preserving fold: spans map back to the original
+│   │   ├── AttributeMatcher.cs      Every place a title expresses one attribute's kind of value
+│   │   ├── TitleCleanBuilder.cs     Overlap resolution, boundary validation, removal, verdicts
+│   │   ├── TitleRuleStore.cs        title-rules.json + the Excel and editor round trips
+│   │   ├── TitleRuleSuggester.cs    A file -> a draft rule set, with Remove measured not guessed
+│   │   ├── TitleFixSuggester.cs     The review list -> a handful of scenarios and their rule fixes
+│   │   └── TitleCleanWorkbook.cs    Cleaned / Orijinal / Kural Seti
 │   └── Automation/
 │       ├── AutomationJobBus.cs      Single-run lock + SSE progress fan-out
 │       ├── MiraklBrowser.cs         Playwright browser + encrypted saved login
@@ -271,7 +525,8 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
     ├── js/return-sla-report.js      Return SLA dashboard
     ├── js/create-return.js          Create Return: session, upload, live run log
     ├── js/late-orders.js            Late Order Warnings: mapping editor, preview, messages
-    └── js/offer-warnings.js         Seller Offer Warnings: mapping editor, preview, send
+    ├── js/offer-warnings.js         Seller Offer Warnings: mapping editor, preview, send
+    └── js/title-cleaner.js          Title Cleaner: rule editor, preview, download
 ```
 
 ## API
@@ -306,6 +561,14 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
 | `POST` | `/api/offer-warnings/send` | JSON `{ mails, dryRun }` | `{ count, dryRun }`; the run continues in the background |
 | `GET` | `/api/offer-warnings/status` | — | `{ outlookAvailable, attachmentFolder, folderExists, filesInFolder, isRunning, runningModule }` |
 | `POST` | `/api/offer-warnings/check-outlook` | — | `{ available, error }` — starts Outlook if it is not running |
+| `POST` | `/api/title-cleaner/suggest` | `file`, `name` | A draft rule set plus what the scan saw in each column — **saves nothing** |
+| `GET` \| `PUT` | `/api/title-cleaner/rules` | JSON `{ sets }` | The saved rule sets, in the editor's flattened shape |
+| `DELETE` | `/api/title-cleaner/rules/{name}` | — | The sets that remain. Confirmed in the browser first — a rule set cannot be regenerated |
+| `POST` | `/api/title-cleaner/rules/excel` | JSON `{ sets }` | `baslik-kural-setleri.xlsx`, re-importable |
+| `POST` | `/api/title-cleaner/rules/import` | `file` | The sets in that file — **does not save** |
+| `POST` | `/api/title-cleaner/preview` | `file`, `ruleSet` \| `ruleSetName` | Dashboard JSON: KPIs, per-column verdicts, the rows needing review, the suggested fixes |
+| `POST` | `/api/title-cleaner/fixes/apply` | `file`, `ruleSet`, `fixIds`, `targetColumns` | The rule set with those fixes applied — **does not save** |
+| `POST` | `/api/title-cleaner/excel` | `file`, `ruleSet` \| `ruleSetName` | 3-sheet `.xlsx` (cleaned, original, rule set) |
 
 Input-validation failures return `400 { "error": "..." }` with the message naming the exact problem,
 e.g. `Required column 'Shipping deadline' was not found in the uploaded file.`

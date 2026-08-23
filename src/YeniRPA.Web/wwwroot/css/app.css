@@ -851,6 +851,102 @@ input[type="number"]:focus,
 input[type="search"]:focus,
 textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 
+/* An example inside a box has to be legible as an example. Left at the browser default it renders
+   in the same weight and colour as a real value, and in a table of forty rows that reads as forty
+   rows of data — which is exactly how the Title Cleaner rule editor became unreadable. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-3);
+  font-style: italic;
+  opacity: 1;
+}
+
+/* A box the current row does not use. Kept readable rather than hidden: the value typed into it
+   survives a change of mind about the row's type. */
+input:disabled,
+textarea:disabled {
+  background: var(--surface-2);
+  color: var(--ink-3);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+td.is-locked { opacity: .5; }
+
+/* ---------------------------------------------------------------------------
+   Title Cleaner — suggested fixes
+
+   One card per scenario out of the review list. The row count is the reason to act, so it leads;
+   the before/after is what makes the choice a decision rather than a guess.
+   --------------------------------------------------------------------------- */
+
+.tc-fix {
+  display: flex;
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.tc-fix:first-child { border-top: 0; }
+
+.tc-fix-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  cursor: pointer;
+}
+
+.tc-fix-body { flex: 1; min-width: 0; }
+
+.tc-fix-problem {
+  font-family: var(--font-mono);
+  font-size: .76rem;
+  color: var(--ink-2);
+  margin-bottom: 4px;
+}
+
+.tc-fix-action { font-weight: 600; margin-bottom: 10px; }
+
+.tc-fix-fields { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+
+.tc-fix-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: .7rem;
+  color: var(--ink-3);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  flex: 1 1 260px;
+}
+
+.tc-fix-diff {
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  line-height: 1.7;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+
+.tc-fix-tag {
+  display: inline-block;
+  min-width: 46px;
+  font-size: .62rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tc-fix-tag.is-after { color: var(--green); }
+
+.tc-fix-warn {
+  margin-top: 8px;
+  font-size: .74rem;
+  color: var(--amber);
+}
+
 /* Same shape again for the dropdowns the Ticket → Seller filters introduced. Unlike the text inputs
    these size to their content: the options are seller and queue names of wildly different lengths,
    and a full-width box would push the rest of the filter bar off screen. */

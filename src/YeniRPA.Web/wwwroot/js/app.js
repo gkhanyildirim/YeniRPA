@@ -883,6 +883,9 @@ window.RPA = window.RPA || {};
     // Also messages external parties, but its input is the mapping table itself rather than an
     // export, and every mail carries that seller's own offer list as an attachment.
     'offer-warnings': { tab: 'tab-offer-warnings', panel: 'panel-offer-warnings' },
+    // Rewrites a column of the uploaded file rather than reporting on it. Which column, and what
+    // comes out of it, is decided by a per-category rule set rather than by anything in here.
+    'title-cleaner': { tab: 'tab-title-cleaner', panel: 'panel-title-cleaner' },
     // Reference page: static content, no upload and no dashboard of its own.
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' }
   };
@@ -914,6 +917,17 @@ window.RPA = window.RPA || {};
 
   function initNav() {
     const tabs = Array.from(document.querySelectorAll('.nav-item[role="tab"]'));
+
+    // A tab whose module is missing from MODULES falls through the guard in showModule and quietly
+    // lands on the order report — the tab looks wired, clicks, and opens somebody else's panel.
+    // Title Cleaner shipped that way. The registry is what the whole nav runs on, so a tab it does
+    // not know about is a wiring bug, and it says so instead of degrading.
+    const unregistered = tabs.map(t => t.dataset.module).filter(name => !MODULES[name]);
+    if (unregistered.length) {
+      console.error(
+        'Nav: these tabs have no MODULES entry and will open the default panel instead: ' +
+        unregistered.join(', '));
+    }
 
     tabs.forEach(tab => {
       tab.addEventListener('click', () => showModule(tab.dataset.module));

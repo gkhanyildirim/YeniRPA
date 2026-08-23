@@ -1,8 +1,10 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using YeniRPA.Web.Infrastructure;
 using YeniRPA.Web.Services;
 using YeniRPA.Web.Services.Automation;
+using YeniRPA.Web.Services.TitleCleaner;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,6 +14,14 @@ builder.Services.AddControllersWithViews(options =>
     // meant for the operator ("Required column 'Shipping deadline' was not found..."). Surface those
     // as 400 { error } instead of a 500 page.
     options.Filters.Add<ReportExceptionFilter>();
+})
+.AddJsonOptions(options =>
+{
+    // Title Cleaner's rule sets travel as JSON in both directions and are meant to be readable —
+    // "Measure" and "ÇAKIŞMA" say what they are where a bare 2 does not, and a rule set saved from
+    // the browser has to mean the same thing as one typed into title-rules.json by hand. These are
+    // the only enums this app puts on the wire.
+    options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
 // A single orders export can be ~13 MB and the return report uploads three files at once, so the
@@ -65,6 +75,12 @@ if (OperatingSystem.IsWindows())
     builder.Services.AddSingleton<OutlookMailSender>();
     builder.Services.AddSingleton<OfferMailRunner>();
 }
+
+// Title Cleaner. The store owns the per-category naming standards; like the two mapping stores it
+// holds no credentials, so it is not encrypted. A singleton because its load and save must not
+// interleave across the several controller actions that reach it — the rule sets are hand-built and
+// exist nowhere else, so a torn write has nothing to be rebuilt from.
+builder.Services.AddSingleton<TitleRuleStore>();
 
 // Fills the mapping table's address column from the Mirakl back office. Not Windows-only and not an
 // automation runner — it reads operator pages over plain HTTP under the saved Mirakl session, so it

@@ -271,7 +271,12 @@ internal static class TabularFile
             }
             else
             {
-                if (ch == '"')
+                // A quote only opens a quoted field at the *start* of one (RFC 4180). Anywhere else
+                // it is a literal character — which is what an inch mark is: a screen size of 16"
+                // used to switch quoting on mid-field and swallow the rest of the line into that
+                // cell, silently emptying every column after it. Title Cleaner reads screen sizes
+                // out of exactly that kind of column.
+                if (ch == '"' && field.Length == 0)
                     inQuotes = true;
                 else if (ch == delimiter)
                 {
