@@ -64,6 +64,16 @@
    */
   let HINTS = {};
 
+  /**
+   * Whether the editor holds anything the server has not been told about.
+   *
+   * Importing a workbook and suggesting from a file both fill the table without saving — the same
+   * review-then-save flow as the other mapping imports in this app. Nothing said so, and a rule set
+   * that was only ever loaded into the table looks exactly like one that was saved: the preview
+   * honours it, the page reload does not. Saying it out loud is cheaper than changing the flow.
+   */
+  let DIRTY = false;
+
   const KINDS = [
     ['Text', 'Metin'],
     ['Measure', 'Ölçü'],
@@ -138,11 +148,14 @@
 
     return '<tr>' +
       '<td><input type="text" class="tc-col" value="' + RPA.escapeHtml(r.column || '') +
-        '" aria-label="Kolon" /></td>' +
+        '" aria-label="Kolon" />' +
+        // Not shown in the table: every attribute column a marketplace export carries is already
+        // filled, so the box only ever sat there unticked. The value rides along hidden so that
+        // saving a set from this editor does not drop what an imported workbook turned on.
+        '<input type="hidden" class="tc-fill" value="' + (r.fillFromTitle === true) + '" /></td>' +
       '<td><select class="tc-kind" aria-label="Tip">' + options + '</select></td>' +
       checkbox('tc-remove', r.remove !== false, 'Çıkar') +
       checkbox('tc-correct', r.correct !== false, 'Düzelt') +
-      checkbox('tc-fill', r.fillFromTitle === true, 'Başlıktan doldur') +
       matchCell(r.column) +
       '<td><input type="text" class="tc-units" value="' + RPA.escapeHtml(r.units || '') +
         '" aria-label="Birimler" /></td>' +
@@ -153,7 +166,8 @@
       '</tr>';
   }
 
-  function renderRuleSet(set) {
+  /** @param dirty true when the set came from a scan or an import — filled in, but not saved. */
+  function renderRuleSet(set, dirty) {
     const s = set || { name: '', titleColumn: '', decimalSeparator: '.', attributes: [] };
 
     el('tc-set-name').value = s.name || '';
@@ -162,6 +176,7 @@
     el('tc-rules-body').innerHTML = (s.attributes || []).map(ruleRowHtml).join('');
 
     Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(applyKindLock);
+    DIRTY = dirty === true;
     updateRuleCount();
   }
 
@@ -173,7 +188,7 @@
       kind: row.querySelector('.tc-kind').value,
       remove: row.querySelector('.tc-remove').checked,
       correct: row.querySelector('.tc-correct').checked,
-      fillFromTitle: row.querySelector('.tc-fill').checked,
+      fillFromTitle: row.querySelector('.tc-fill').value === 'true',
       units: row.querySelector('.tc-units').value.trim(),
       aliases: row.querySelector('.tc-aliases').value.trim()
     })).filter(a => a.column);
@@ -190,9 +205,22 @@
     const set = collectRuleSet();
     const removed = set.attributes.filter(a => a.remove).length;
 
-    el('tc-rule-count').textContent = set.attributes.length
-      ? set.attributes.length + ' kolon · ' + removed + ' tanesi başlıktan çıkarılacak'
-      : 'Henüz kural yok — dosya yükleyip "Dosyadan kural öner" deyin';
+    if (!set.attributes.length) {
+      el('tc-rule-count').textContent =
+        'Henüz kural yok — dosya yükleyip "Dosyadan kural öner" deyin';
+      return;
+    }
+
+    // Static text and counts only, so innerHTML carries no value the operator typed.
+    el('tc-rule-count').innerHTML =
+      set.attributes.length + ' kolon · ' + removed + ' tanesi başlıktan çıkarılacak' +
+      (DIRTY ? ' <span class="badge amber">kaydedilmedi</span>' : '');
+  }
+
+  /** An edit the server has not seen. Redraws the summary so the badge appears with the change. */
+  function markDirty() {
+    DIRTY = true;
+    updateRuleCount();
   }
 
   function renderNotes(notes) {
@@ -436,7 +464,7 @@
     try {
       // The server decides what the rule set becomes; the browser only says which scenarios.
       HINTS = {};
-      renderRuleSet(await RPA.postJson('/api/title-cleaner/fixes/apply', form));
+      renderRuleSet(await RPA.postJson('/api/title-cleaner/fixes/apply', form), true);
 
       // Straight back into a preview, so the effect of the choice is on screen immediately.
       render(await RPA.postJson('/api/title-cleaner/preview', runForm(file)));
@@ -458,8 +486,7 @@
       ['Başlığı temizlenen', RPA.fmtInt(data.changed), 'green'],
       ['Dokunulmayan', RPA.fmtInt(data.untouched), ''],
       ['İncelenecek satır', RPA.fmtInt(data.conflictRows), data.conflictRows ? 'red' : 'green'],
-      ['Düzeltilen özellik', RPA.fmtInt(data.correctedValues), 'green'],
-      ['Başlıktan doldurulan', RPA.fmtInt(data.filledValues), '']
+      ['Düzeltilen özellik', RPA.fmtInt(data.correctedValues), 'green']
     ]);
 
     const truncated = data.rows > data.previewLimit
@@ -526,7 +553,7 @@
       HINTS = {};
       (suggestion.columns || []).forEach(c => { HINTS[c.column] = c; });
 
-      renderRuleSet(suggestion.ruleSet);
+      renderRuleSet(suggestion.ruleSet, true);
       renderNotes(suggestion.notes);
       el('tc-ruleset').value = '';
     } catch (err) {
@@ -607,6 +634,9 @@
       SETS = saved.sets || [];
       fillSetSelect(set.name);
       syncDeleteButton();
+
+      DIRTY = false;
+      updateRuleCount();
     } catch (err) {
       RPA.showError('tc-rule-alert', err.message);
     } finally {
@@ -638,7 +668,7 @@
       HINTS = {};
       SETS = sets;
       fillSetSelect(sets[0].name);
-      renderRuleSet(sets[0]);
+      renderRuleSet(sets[0], true);
 
       renderNotes([
         sets.length === 1
@@ -696,24 +726,29 @@
       body.insertAdjacentHTML('beforeend', ruleRowHtml(null));
       applyKindLock(body.lastElementChild);
       body.lastElementChild.querySelector('.tc-col').focus();
-      updateRuleCount();
+      markDirty();
     });
 
     el('tc-rules-body').addEventListener('click', function (event) {
       if (!event.target.classList.contains('tc-rule-remove')) return;
       event.target.closest('tr').remove();
-      updateRuleCount();
+      markDirty();
     });
 
-    el('tc-rules-body').addEventListener('input', updateRuleCount);
+    el('tc-rules-body').addEventListener('input', markDirty);
 
     el('tc-rules-body').addEventListener('change', function (event) {
       // Changing the type changes which box that row uses, so the locks follow immediately.
       if (event.target.classList.contains('tc-kind'))
         applyKindLock(event.target.closest('tr'));
 
-      updateRuleCount();
+      markDirty();
     });
+
+    // The three fields outside the table are part of the rule set too — a renamed set or a changed
+    // title column is just as unsaved as an edited row.
+    ['tc-set-name', 'tc-title-column'].forEach(id => el(id).addEventListener('input', markDirty));
+    el('tc-decimal').addEventListener('change', markDirty);
 
     el('tc-rule-import').addEventListener('click', () => el('tc-rule-file').click());
     el('tc-rule-file').addEventListener('change', function () {

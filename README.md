@@ -241,6 +241,11 @@ widens it.
 | `BAŞLIKTA YOK` | Cell has a value the title never mentions | — | — |
 | `ÖZELLİK BOŞ` | Empty cell (`FillFromTitle` is off by default) | — | — |
 
+`FillFromTitle` has no checkbox in the rule editor. Every attribute column a marketplace export
+carries is already filled, so the box only ever sat there unticked; the browser carries the stored
+value through untouched. The one way to turn it on is the `Başlıktan Doldur` column of an imported
+rule-set workbook.
+
 A disagreement is reported, never acted on: which side is right is not something this tool can know,
 and one attribute disagreeing does not stop the other seven on that row being cleaned. What each kind
 can *detect* differs — `Measure` and `Alias` scan the title independently of the cell, so they can see
@@ -392,12 +397,21 @@ rewording.
 
 ### The output
 
-Three sheets. `Temizlenmiş` keeps the uploaded column layout, with **the title column holding the
-cleaned title** and the attribute cells their corrected values, so it goes straight back to the
-marketplace; the added columns — the old title, the row's verdict, the per-attribute statuses — go on
-the end for the same reason `Carrier (Normalized)` does. `Orijinal` is a verbatim copy — **it is the
-only record of what the titles used to say**, and what makes this safe to run at all. `Kural Seti`
-records what ran.
+One sheet, and the uploaded file's own column layout — **the title column holds the cleaned title**
+and the attribute cells their corrected values, so it goes straight back to the marketplace. Nothing
+is appended and no second sheet is written.
+
+It used to carry three sheets and twelve extra columns: the old title, the row's verdict, an error
+list, and a verdict column per rule, beside an `Orijinal` copy and a `Kural Seti` record. All of it
+was something the category team had to strip before the file could be uploaded, and the same
+information is on screen after a run — the review table, the per-column table, and their own export
+buttons. **The consequence is real and was accepted deliberately:** a cleaned title cannot be
+reconstructed from the result and this file no longer carries a copy of the input, so the uploaded
+file is the only way back and has to be kept.
+
+The output is not a byte-for-byte copy of a marketplace template either: validation dropdowns,
+reference sheets and cell formatting are not reproduced. What is preserved is the column layout and
+every row, including the technical code row a template carries under its header.
 
 Writing the clean title into the title column rather than beside it is not cosmetic. The marketplace
 reads that column: this sheet used to leave the old title there and put the clean one in an appended
@@ -502,7 +516,7 @@ src/YeniRPA.Web/
 │   │   ├── TitleRuleStore.cs        title-rules.json + the Excel and editor round trips
 │   │   ├── TitleRuleSuggester.cs    A file -> a draft rule set, with Remove measured not guessed
 │   │   ├── TitleFixSuggester.cs     The review list -> a handful of scenarios and their rule fixes
-│   │   └── TitleCleanWorkbook.cs    Cleaned / Orijinal / Kural Seti
+│   │   └── TitleCleanWorkbook.cs    One sheet: the upload's layout, cleaned in place
 │   └── Automation/
 │       ├── AutomationJobBus.cs      Single-run lock + SSE progress fan-out
 │       ├── MiraklBrowser.cs         Playwright browser + encrypted saved login
