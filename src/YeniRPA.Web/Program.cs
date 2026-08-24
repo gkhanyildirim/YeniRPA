@@ -69,11 +69,20 @@ builder.Services.AddSingleton<LateOrderWhatsAppRunner>();
 //
 // Guarded rather than registered unconditionally: both types are Windows-only, and the guard is what
 // tells the platform analyser so instead of us suppressing it.
+//
+// Seller VAT Warnings shares the sender and the runner. Its own two singletons are the settings file
+// (templates plus the addresses entered by hand for sellers the uploaded list does not cover) and the
+// prepared batch — the latter is a singleton because it is the server's copy of which address and
+// which file belong to which seller, and the send endpoint reads it instead of trusting the browser.
+// Both sit inside this guard because the module cannot work without Outlook anyway.
 if (OperatingSystem.IsWindows())
 {
     builder.Services.AddSingleton<SellerMailStore>();
     builder.Services.AddSingleton<OutlookMailSender>();
     builder.Services.AddSingleton<OfferMailRunner>();
+
+    builder.Services.AddSingleton<VatMailStore>();
+    builder.Services.AddSingleton<VatBatchStore>();
 }
 
 // Title Cleaner. The store owns the per-category naming standards; like the two mapping stores it

@@ -101,4 +101,77 @@ public class TabularFileTests
     {
         Assert.Equal(expected, TabularFile.NormalizeSellerId(raw));
     }
+
+    /// <summary>
+    /// The onboarding workbook keeps its addresses on the fifth sheet, behind a funnel summary that
+    /// has no address column at all. Reading the first sheet there finds nothing, so the sheet has to
+    /// be nameable.
+    /// </summary>
+    [Fact]
+    public void ANamedSheetIsReadInsteadOfTheFirstOne()
+    {
+        using var stream = TwoSheetWorkbook();
+        var table = TabularFile.Read(stream, "onboarding.xlsx", "Data");
+
+        Assert.Equal(["Satıcı", "Mail"], table[0]);
+        Assert.Equal(["Prodesk", "info@prodesk.com"], table[1]);
+    }
+
+    /// <summary>Naming nothing keeps the old behaviour, which every earlier caller relies on.</summary>
+    [Fact]
+    public void NoSheetNameStillReadsTheFirstSheet()
+    {
+        using var stream = TwoSheetWorkbook();
+        Assert.Equal(["Convert Tarihi"], TabularFile.Read(stream, "onboarding.xlsx", null)[0]);
+    }
+
+    /// <summary>
+    /// A name that matches nothing says what the workbook actually holds. Quietly falling back to
+    /// sheet one would turn "you uploaded last month's file" into "the Mail column was not found",
+    /// which sends the operator looking at the wrong problem.
+    /// </summary>
+    [Fact]
+    public void ASheetNameThatMatchesNothingListsWhatTheWorkbookHolds()
+    {
+        using var stream = TwoSheetWorkbook();
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => TabularFile.Read(stream, "onboarding.xlsx", "Adresler"));
+
+        Assert.Contains("Adresler", error.Message);
+        Assert.Contains("Onboarding Funnel", error.Message);
+        Assert.Contains("Data", error.Message);
+    }
+
+    /// <summary>A tab renamed by hand often carries a trailing space, and it is invisible in Excel.</summary>
+    [Fact]
+    public void ATrailingSpaceOnTheSheetTabDoesNotHideIt()
+    {
+        using var workbook = new ClosedXML.Excel.XLWorkbook();
+        workbook.AddWorksheet("Data ").Cell(1, 1).Value = "Mail";
+
+        using var buffer = new MemoryStream();
+        workbook.SaveAs(buffer);
+        buffer.Position = 0;
+
+        Assert.Equal(["Mail"], TabularFile.Read(buffer, "x.xlsx", "Data")[0]);
+    }
+
+    static MemoryStream TwoSheetWorkbook()
+    {
+        using var workbook = new ClosedXML.Excel.XLWorkbook();
+
+        workbook.AddWorksheet("Onboarding Funnel").Cell(1, 1).Value = "Convert Tarihi";
+
+        var data = workbook.AddWorksheet("Data");
+        data.Cell(1, 1).Value = "Satıcı";
+        data.Cell(1, 2).Value = "Mail";
+        data.Cell(2, 1).Value = "Prodesk";
+        data.Cell(2, 2).Value = "info@prodesk.com";
+
+        var buffer = new MemoryStream();
+        workbook.SaveAs(buffer);
+        buffer.Position = 0;
+        return buffer;
+    }
 }

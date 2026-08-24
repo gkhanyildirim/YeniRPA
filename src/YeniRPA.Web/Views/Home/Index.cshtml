@@ -69,6 +69,12 @@
                 <span>Seller Offer Warnings</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-vat-warnings"
+                    aria-controls="panel-vat-warnings" aria-selected="false" data-module="vat-warnings" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Seller VAT Warnings</span>
+            </button>
+
             <div class="nav-label">Reference</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-methodology"
@@ -1878,6 +1884,363 @@
             <footer class="page-foot">Marketplace Reporting &middot; Seller Offer Warnings</footer>
         </section>
 
+        @* ================= SELLER VAT WARNINGS ================= *@
+        <section class="panel" id="panel-vat-warnings" role="tabpanel" aria-labelledby="tab-vat-warnings" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1 data-eyebrow="Outlook &middot; Automation">Seller VAT Warnings</h1>
+                    <p class="lede">
+                        Splits the &ldquo;offers with no VAT rate&rdquo; export into <strong>one workbook per
+                        seller</strong>, finds each seller's address in the list you upload beside it, and mails
+                        every seller their own file. Nothing is matched approximately: a seller the address list
+                        does not name is reported for you to answer, never guessed at, because attaching the wrong
+                        file means handing one seller a competitor's complete price and stock list.
+                    </p>
+                </div>
+                <span class="stamp" id="vw-stamp"></span>
+            </header>
+
+            <div class="section-title">Outlook</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="vw-outlook-badge">Not checked yet</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="vw-check-outlook">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Check Outlook</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="alert" id="vw-outlook-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note">
+                    Mails go out through the Outlook already running on this machine, under your own mailbox &mdash;
+                    so they land in your <strong>Sent Items</strong> and sellers see the address they already
+                    correspond with. Nothing here stores a password. Outlook must run as the same Windows user as
+                    this app and at the same elevation.
+                </p>
+            </div>
+
+            <div class="section-title">The two files</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="vw-offers-drop">
+                            <span class="drop-step">Input 1</span>
+                            <span class="drop-title">Offer export</span>
+                            <span class="drop-hint">Offers with no VAT rate (.xlsx or .csv)</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="vw-offers-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Offer export" />
+                        </label>
+
+                        <label class="drop" id="vw-directory-drop">
+                            <span class="drop-step">Input 2</span>
+                            <span class="drop-title">Seller address list</span>
+                            <span class="drop-hint">Seller names and e-mails (.xlsx or .csv)</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="vw-directory-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Seller address list" />
+                        </label>
+                    </div>
+
+                    <div class="filter-bar">
+                        <div class="field" style="flex: 0 1 260px">
+                            <label for="vw-sheet">Address list sheet</label>
+                            <input type="text" id="vw-sheet" spellcheck="false" />
+                        </div>
+                        <span class="filter-summary">
+                            Leave the default unless your address list keeps them on another sheet
+                        </span>
+                    </div>
+
+                    <div class="alert" id="vw-prepare-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+
+                <p class="note">
+                    The offer export is read for <code>Seller id</code>, <code>Seller</code>, <code>Offer id</code>
+                    and <code>Product Title</code>; the rest of the columns are optional and the internal ones
+                    (<code>Partner Manager</code>, <code>Seller Rating</code>) are never carried into a seller's
+                    file. The address list needs a <code>Mail</code> column and either <code>Satıcı</code> or
+                    <code>Seller id</code> &mdash; a workbook with several sheets needs the sheet named above,
+                    because its first sheet usually holds no addresses at all.
+                </p>
+            </div>
+
+            <div class="section-title">Where the files are written</div>
+            <div class="card">
+                <h3>The folder the per-seller workbooks go into</h3>
+                <p class="sub">Each run gets its own dated sub-folder inside it. Saved with the wording below</p>
+
+                <div class="filter-bar">
+                    <div class="field" style="flex: 1 1 460px">
+                        <label for="vw-folder">Folder</label>
+                        <input type="text" id="vw-folder" spellcheck="false" />
+                    </div>
+                    <span class="filter-summary" id="vw-output-summary"></span>
+                </div>
+
+                <p class="note">
+                    A run writes into <code>&lt;folder&gt;\yyyy-MM-dd-HHmm\</code>, so last month's files can never
+                    be picked up by this month's send and two runs can be compared side by side. Old folders are
+                    left alone &mdash; delete them yourself when you no longer want them.
+                    <br /><br />
+                    Keep this off <code>wwwroot</code>. Anything under there is served to the browser and copied
+                    into the build output, which would put every seller's price and stock list one URL away.
+                </p>
+            </div>
+
+            <div class="section-title">Hand-entered addresses</div>
+            <div class="card">
+                <h3>Sellers the address list does not cover</h3>
+                <p class="sub">
+                    Entered once and remembered. These win over the uploaded list, so a seller answered here stays
+                    answered next month
+                </p>
+
+                <div id="vw-settings-warnings" hidden></div>
+
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 14%">Seller ID</th>
+                                <th style="width: 34%">Seller</th>
+                                <th style="width: 46%">E-mail</th>
+                                <th style="width: 6%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="vw-overrides-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="vw-override-add">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Add row</span>
+                    </button>
+                    <span class="filter-summary" id="vw-overrides-count"></span>
+                </div>
+            </div>
+
+            <div class="section-title">Mail wording</div>
+            <div class="card">
+                <h3>What every seller is sent</h3>
+                <p class="sub">
+                    Edit freely and press <strong>Split and build the mails</strong> to see the result &mdash; the
+                    preview uses what is in these boxes, and Save keeps it for next time
+                </p>
+
+                <div class="field">
+                    <label for="vw-subject">Subject</label>
+                    <input type="text" id="vw-subject" spellcheck="false" />
+                </div>
+                <div class="field" style="margin-top: 14px">
+                    <label for="vw-body">Body</label>
+                    <textarea id="vw-body" rows="14" spellcheck="false"></textarea>
+                </div>
+
+                <p class="note">Placeholders: <span id="vw-placeholders"></span></p>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-primary" id="vw-prepare">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Split and build the mails</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="vw-save-settings">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Save settings</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="vw-template-reset">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Reset wording to default</span>
+                    </button>
+                </div>
+
+                <div class="alert" id="vw-settings-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note">
+                    Saved with the folder and the hand-entered addresses at <code id="vw-settings-path"></code>
+                    &mdash; <span id="vw-settings-updated"></span>.
+                </p>
+            </div>
+
+            <div class="skeleton" id="vw-prepare-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Automation()" />
+            </div>
+
+            <div class="results" id="vw-prepared" hidden>
+
+                <div class="card accent-amber" id="vw-warnings" hidden>
+                    <h3>Worth knowing before you send</h3>
+                    <ul class="note-list" id="vw-warnings-list"></ul>
+                </div>
+
+                <div id="vw-unmatched" hidden>
+                    <div class="section-title">Sellers with no address</div>
+                    <div class="card accent-amber">
+                        <h3>Their file is written and waiting &mdash; only the address is missing</h3>
+                        <p class="sub">
+                            Fill one in and press Save; it is remembered, and the next run matches them on its own.
+                            Nothing is sent to these sellers until then
+                        </p>
+
+                        <div class="table-scroll is-full">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th style="width: 12%">Seller ID</th>
+                                        <th style="width: 26%">Seller</th>
+                                        <th style="width: 10%">Offers</th>
+                                        <th style="width: 30%">E-mail</th>
+                                        <th style="width: 22%">Why</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="vw-unmatched-body"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="actions">
+                            <button type="button" class="btn btn-primary" id="vw-unmatched-save">
+                                <span class="spinner" aria-hidden="true"></span>
+                                <span class="btn-text">Save these addresses</span>
+                            </button>
+                            <span class="filter-summary" id="vw-unmatched-summary"></span>
+                        </div>
+
+                        <div class="alert" id="vw-unmatched-alert" role="alert">
+                            <strong>Error</strong>
+                            <span class="msg"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-title">
+                    Where the sellers went
+                    <partial name="_ExportButton" model='new ExportButton("vw-funnel-wrap", "Funnel", "VAT Warnings")' />
+                </div>
+                <div class="card">
+                    <h3>Every seller in the export, accounted for</h3>
+                    <p class="sub">The buckets are terminal and add up to the seller count</p>
+                    <div class="table-scroll is-full" id="vw-funnel-wrap"></div>
+                </div>
+
+                <div class="section-title">Mails</div>
+                <div class="card accent-green">
+                    <h3>One mail per seller, exactly as it will be sent</h3>
+                    <p class="sub">
+                        Read the address <em>and</em> the attachment name on each card &mdash; that pairing is the
+                        last chance to catch a wrong row
+                    </p>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost btn-sm" id="vw-select-all">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Select all</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="vw-select-none">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Select none</span>
+                        </button>
+                    </div>
+
+                    <div id="vw-mails"></div>
+
+                    <div class="actions">
+                        <label class="check" for="vw-dry-run">
+                            <input type="checkbox" id="vw-dry-run" checked />
+                            <span>Dry run (save to Drafts instead of sending)</span>
+                        </label>
+                        <button type="button" class="btn btn-primary" id="vw-send" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Send mails</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="vw-mails-export" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Download mails (Excel)</span>
+                        </button>
+                        <span class="filter-summary" id="vw-mails-summary"></span>
+                    </div>
+
+                    <div class="alert" id="vw-mails-alert" role="alert">
+                        <strong>Check this</strong>
+                        <span class="msg"></span>
+                    </div>
+
+                    <p class="note">
+                        A dry run composes each mail in Outlook with the real recipient and the real attachment and
+                        leaves it in <strong>Drafts</strong> instead of sending. Open one, check that the workbook
+                        that came with it is headed with <em>that seller's</em> name, then delete the drafts &mdash;
+                        that exercises the whole path with no outward effect, and it is the routine to run before
+                        every live send.
+                    </p>
+                </div>
+            </div>
+
+            <div class="results" id="vw-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span id="vw-progress-label">Mails processed</span>
+                        <span class="mono" id="vw-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="vw-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Seller VAT Warnings progress">
+                        <span class="progress-fill" id="vw-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="vw-console"></pre>
+                </div>
+                <p class="note">
+                    A mail that fails is named in the log and the run moves on. The one exception is Outlook itself
+                    being unreachable: the whole run stops, because every remaining mail would fail identically.
+                </p>
+            </div>
+
+            <div class="section-title">What happens when you send</div>
+            <div class="card">
+                <h3>The checks between an uploaded row and a seller's inbox</h3>
+                <p class="sub">
+                    A mail cannot be recalled, and the attachment is commercially sensitive &mdash; so neither the
+                    address nor the file is taken from the browser on trust
+                </p>
+                <div class="table-scroll is-full">
+                    <table>
+                        <thead><tr><th>Step</th><th>What it does</th><th>If it fails</th></tr></thead>
+                        <tbody>
+                            <tr><td><strong>Exact match only</strong></td><td>A seller is matched by id, or by name folded for case and the Turkish i &mdash; never by similarity</td><td>Reported as &ldquo;no address&rdquo; for you to answer</td></tr>
+                            <tr><td><strong>One file name per seller</strong></td><td>Two sellers whose file names collide are both refused</td><td>Neither is mailed &mdash; one would have received the other's list</td></tr>
+                            <tr><td><strong>Batch is the source</strong></td><td>Recipients and attachment come from the batch this server prepared, not from the browser</td><td>A posted difference refuses the run, naming the seller</td></tr>
+                            <tr><td><strong>Folder containment</strong></td><td>The path is resolved inside this run's folder; separators are refused outright</td><td>Refuses the run &mdash; never reads outside the folder</td></tr>
+                            <tr><td>One per seller</td><td>A seller repeated in one run is rejected, not merged</td><td>Refuses the run</td></tr>
+                            <tr><td>Exists check</td><td>The file is confirmed on disk again immediately before Outlook is called</td><td>Skips this seller, logs why</td></tr>
+                            <tr><td>Compose</td><td>Plain-text body, one mail per seller, one attachment</td><td>Skips this seller, logs the Outlook error</td></tr>
+                            <tr><td>Send or save</td><td><code>Send</code> on a live run, <code>Save</code> to Drafts on a dry run</td><td>Skips this seller</td></tr>
+                            <tr><td>Pause</td><td>2&ndash;5 s randomised on a live run; 0.25 s on a dry run, which sends nothing to pace</td><td>&mdash;</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="note">
+                    At most <strong>250 mails per run</strong>; over that the run is refused rather than truncated.
+                    A run holds the app-wide automation slot for its whole duration, so Create Return, Late Order
+                    Warnings and Seller Offer Warnings cannot run at the same time.
+                </p>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Seller VAT Warnings</footer>
+        </section>
+
         @* ================= DATA & METHODOLOGY ================= *@
         <section class="panel" id="panel-methodology" role="tabpanel" aria-labelledby="tab-methodology" hidden>
 
@@ -2335,4 +2698,5 @@
     <script src="~/js/mark-received.js" asp-append-version="true"></script>
     <script src="~/js/late-orders.js" asp-append-version="true"></script>
     <script src="~/js/offer-warnings.js" asp-append-version="true"></script>
+    <script src="~/js/vat-warnings.js" asp-append-version="true"></script>
 }

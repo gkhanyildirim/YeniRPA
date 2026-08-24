@@ -57,13 +57,21 @@ public sealed class OfferMailRunner
         _logger = logger;
     }
 
-    /// <summary>Claims the app-wide run slot and starts the batch in the background. False when
-    /// another automation run already holds it.</summary>
-    public bool TryStart(IReadOnlyList<OutgoingMail> mails, bool dryRun)
+    /// <summary>
+    /// Claims the app-wide run slot and starts the batch in the background. False when another
+    /// automation run already holds it.
+    ///
+    /// <para><paramref name="moduleName"/> is what the run reports itself as on the shared bus, so the
+    /// panel that started it can tell its own log lines from another module's. It is a parameter rather
+    /// than a second copy of this class because both callers want exactly the same behaviour — hand the
+    /// approved batch to Outlook, pace it, account for every row — and a change to the pacing or the
+    /// failure handling should reach both. Only the label differs.</para>
+    /// </summary>
+    public bool TryStart(IReadOnlyList<OutgoingMail> mails, bool dryRun, string moduleName = ModuleName)
     {
         ArgumentNullException.ThrowIfNull(mails);
 
-        if (!_bus.TryBeginRun(ModuleName))
+        if (!_bus.TryBeginRun(moduleName))
             return false;
 
         // Deliberately not awaited: the POST returns as soon as the batch is accepted, and progress
@@ -72,7 +80,7 @@ public sealed class OfferMailRunner
         {
             try
             {
-                await RunAsync(mails, dryRun);
+                await RunAsync(mails, dryRun, moduleName);
             }
             catch (Exception ex)
             {
@@ -89,9 +97,9 @@ public sealed class OfferMailRunner
         return true;
     }
 
-    async Task RunAsync(IReadOnlyList<OutgoingMail> mails, bool dryRun)
+    async Task RunAsync(IReadOnlyList<OutgoingMail> mails, bool dryRun, string moduleName)
     {
-        _bus.Started(ModuleName, mails.Count);
+        _bus.Started(moduleName, mails.Count);
         _bus.Log(dryRun
             ? $"DRY RUN — composing {mails.Count} mail(s) into Outlook's Drafts folder. Nothing will be sent."
             : $"LIVE — sending {mails.Count} mail(s). A sent mail cannot be recalled.");

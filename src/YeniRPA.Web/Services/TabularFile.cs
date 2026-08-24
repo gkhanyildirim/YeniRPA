@@ -17,12 +17,26 @@ internal static class TabularFile
     /// <summary>
     /// The file name is load-bearing: the XLSX or the CSV path is picked purely from the extension.
     /// </summary>
-    public static List<List<string>> Read(Stream stream, string fileName)
+    public static List<List<string>> Read(Stream stream, string fileName) => Read(stream, fileName, null);
+
+    /// <summary>
+    /// Reads a named sheet instead of the first one.
+    ///
+    /// <para>Every caller before this one uploaded a single-sheet export, where "the first sheet" and
+    /// "the sheet" are the same thing. The onboarding workbook is not that: it carries eight sheets and
+    /// the addresses are on the fifth (<c>Data</c>), behind a pivot summary. Reading the first sheet
+    /// there finds no <c>Mail</c> column at all — so the sheet has to be named, and a name that does not
+    /// match has to say so rather than silently falling back to sheet one and reporting the workbook as
+    /// the wrong shape.</para>
+    ///
+    /// <para><paramref name="sheetName"/> is ignored for CSV, which has exactly one table.</para>
+    /// </summary>
+    public static List<List<string>> Read(Stream stream, string fileName, string? sheetName)
     {
         var isXlsx = fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ||
                      fileName.EndsWith(".xls", StringComparison.OrdinalIgnoreCase);
 
-        return isXlsx ? ReadXlsx(stream) : ReadCsv(stream);
+        return isXlsx ? ReadXlsx(stream, sheetName) : ReadCsv(stream);
     }
 
     /// <summary>Maps header text to column index, first occurrence wins, case-insensitive.</summary>
@@ -172,10 +186,37 @@ internal static class TabularFile
 
     // ---------------------------------------------------------------------
 
-    static List<List<string>> ReadXlsx(Stream stream)
+    /// <summary>
+    /// The sheet to read: the named one when a name is given, the first otherwise.
+    ///
+    /// <para>A name that matches nothing throws and lists what the workbook actually holds. The
+    /// alternative — quietly reading sheet one — turns "you uploaded last month's file, which has no
+    /// Data sheet" into "the Mail column was not found", which sends the operator looking at the wrong
+    /// problem.</para>
+    /// </summary>
+    static IXLWorksheet FindSheet(XLWorkbook workbook, string? sheetName)
+    {
+        var wanted = (sheetName ?? "").Trim();
+        if (wanted.Length == 0)
+            return workbook.Worksheets.First();
+
+        // Trimmed on both sides: a sheet tab renamed by hand often carries a trailing space, and it is
+        // invisible in Excel.
+        foreach (var sheet in workbook.Worksheets)
+        {
+            if (string.Equals(sheet.Name.Trim(), wanted, StringComparison.OrdinalIgnoreCase))
+                return sheet;
+        }
+
+        var available = string.Join(", ", workbook.Worksheets.Select(s => $"'{s.Name}'"));
+        throw new InvalidOperationException(
+            $"The uploaded workbook has no sheet named '{wanted}'. It holds: {available}.");
+    }
+
+    static List<List<string>> ReadXlsx(Stream stream, string? sheetName)
     {
         using var workbook = new XLWorkbook(stream);
-        var sheet = workbook.Worksheets.First();
+        var sheet = FindSheet(workbook, sheetName);
         var lastRow = sheet.LastRowUsed()?.RowNumber() ?? 0;
         var lastCol = sheet.LastColumnUsed()?.ColumnNumber() ?? 0;
 

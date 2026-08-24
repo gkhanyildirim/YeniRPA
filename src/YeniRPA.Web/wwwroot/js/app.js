@@ -883,6 +883,9 @@ window.RPA = window.RPA || {};
     // Also messages external parties, but its input is the mapping table itself rather than an
     // export, and every mail carries that seller's own offer list as an attachment.
     'offer-warnings': { tab: 'tab-offer-warnings', panel: 'panel-offer-warnings' },
+    // The only module that both reads an export and produces the attachments it mails: it splits the
+    // upload into one workbook per seller, so the seller/file pairing is computed rather than typed.
+    'vat-warnings': { tab: 'tab-vat-warnings', panel: 'panel-vat-warnings' },
     // Rewrites a column of the uploaded file rather than reporting on it. Which column, and what
     // comes out of it, is decided by a per-category rule set rather than by anything in here.
     'title-cleaner': { tab: 'tab-title-cleaner', panel: 'panel-title-cleaner' },
