@@ -23,23 +23,29 @@ public static partial class VatMailBuilder
     /// operator owns this wording.
     /// </summary>
     public const string DefaultSubjectTemplate =
-        "{seller} — KDV oranı tanımlı olmayan {offerCount} teklifiniz hakkında";
+        "{seller} — KDV oranı tanımlı olmayan {offerCount} ürününüz hakkında";
 
     public const string DefaultBodyTemplate =
         """
         Sayın {seller} yetkilisi,
 
-        Marketplace üzerindeki tekliflerinizi incelediğimizde, {offerCount} teklifinizde KDV oranının tanımlı olmadığını tespit ettik. KDV oranı girilmemiş teklifler sitede satışa kapalı kalıyor; müşteriler bu ürünleri listelerde göremiyor ve satın alamıyor.
+        Marketplace üzerindeki tekliflerinizi incelediğimizde, {offerCount} ürününüzde KDV oranının tanımlı olmadığını tespit ettik. KDV oranı girilmemiş teklifler sitede satışa kapalı kalıyor; müşteriler bu ürünleri listelerde göremiyor ve satın alamıyor.
 
-        Etkilenen tekliflerin tamamı ekteki listede yer alıyor ({fileName}). Listede her teklifin numarası, barkodu, ürün adı, markası, güncel fiyatı ve stok adedi bulunuyor.
+        Etkilenen ürünlerin tamamı ekteki listede yer alıyor ({fileName}). Listede her ürünün GTIN numarası bulunuyor.
 
-        Yapmanız gereken: Satıcı panelinizden bu tekliflerin KDV oranını tanımlamak. Oran girildikten sonra teklifleriniz kısa süre içinde yeniden satışa açılacaktır.
+        Yapmanız gereken: Satıcı panelinizden bu ürünlerin KDV oranını tanımlamak. Oran girildikten sonra teklifleriniz kısa süre içinde yeniden satışa açılacaktır.
 
         Konuyla ilgili sorularınız için bu maili yanıtlamanız yeterli.
 
         Bilginize sunar, iyi çalışmalar dileriz.
         """;
 
+    /// <summary>
+    /// <c>{offerCount}</c> is the number of distinct products in the attachment, not the number of
+    /// offer rows the export held — the two differ when a seller lists one product twice. The name is
+    /// kept because operators have it typed into templates already saved in <c>vat-mails.json</c>, and
+    /// renaming it would blank the count in every one of them.
+    /// </summary>
     public static readonly string[] Placeholders =
     [
         "{seller}", "{sellerId}", "{email}", "{recipientCount}", "{fileName}",

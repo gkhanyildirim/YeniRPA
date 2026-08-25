@@ -14,7 +14,15 @@ public sealed record OutgoingMail(
     string Subject,
     string Body,
     string AttachmentPath,
-    string AttachmentName);
+    string AttachmentName,
+
+    /// <summary>Who is copied, visibly, or <c>null</c> for nobody. Optional and last so a module that
+    /// copies no one — Seller Offer Warnings — carries on constructing this record unchanged.</summary>
+    string? Cc = null,
+
+    /// <summary>Whether to put the operator's own Outlook signature under the body, which also makes
+    /// the mail HTML rather than plain text. Optional and off by default for the same reason.</summary>
+    bool IncludeSignature = false);
 
 /// <summary>
 /// Sends the approved batch of seller warnings through <see cref="OutlookMailSender"/>, reporting on
@@ -131,10 +139,15 @@ public sealed class OfferMailRunner
                 if (!File.Exists(mail.AttachmentPath))
                     throw new FileNotFoundException($"The attachment is no longer at {mail.AttachmentPath}.");
 
-                await _sender.SendAsync(mail.To, mail.Subject, mail.Body, mail.AttachmentPath, dryRun);
+                await _sender.SendAsync(
+                    mail.To, mail.Cc, mail.Subject, mail.Body, mail.AttachmentPath, dryRun, mail.IncludeSignature);
 
                 processed++;
-                _bus.Log($"{(dryRun ? "Drafted" : "Sent")} → {mail.SellerName} · {mail.To} · {mail.AttachmentName}");
+
+                // The CC is named in the log, not counted: the run record has to say who else received
+                // a copy of a seller's list, the same way it names the seller and the file.
+                var copiedTo = string.IsNullOrWhiteSpace(mail.Cc) ? "" : $" · cc {mail.Cc}";
+                _bus.Log($"{(dryRun ? "Drafted" : "Sent")} → {mail.SellerName} · {mail.To}{copiedTo} · {mail.AttachmentName}");
             }
             catch (Exception ex)
             {

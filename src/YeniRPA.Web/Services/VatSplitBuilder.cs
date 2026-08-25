@@ -1,4 +1,3 @@
-using System.Globalization;
 using YeniRPA.Web.Models;
 
 namespace YeniRPA.Web.Services;
@@ -10,7 +9,7 @@ namespace YeniRPA.Web.Services;
 /// and never touches the output folder. <see cref="VatSellerWorkbook"/> does the writing. That keeps
 /// the rule deciding <em>which offer belongs to which seller</em> testable without a folder full of
 /// workbooks, which matters because that rule is the one that, if wrong, hands a seller a
-/// competitor's price and stock list.</para>
+/// competitor's product list.</para>
 /// </summary>
 public static class VatSplitBuilder
 {
@@ -22,13 +21,12 @@ public static class VatSplitBuilder
     static readonly string[] SellerNameHeaders = ["Seller", "Seller name", "Satıcı", "Satıcı Adı"];
     static readonly string[] OfferIdHeaders = ["Offer id", "Offer ID", "OfferId", "Teklif No"];
     static readonly string[] TitleHeaders = ["Product Title", "Product title", "Ürün Adı"];
-    static readonly string[] EanHeaders = ["EAN", "Barkod"];
+    static readonly string[] GtinHeaders = ["gtin", "GTIN", "EAN", "Barkod"];
     static readonly string[] BrandHeaders = ["Product Brand", "Brand", "Marka"];
-    static readonly string[] CategoryHeaders = ["Category Label", "Category", "Kategori"];
-    static readonly string[] ConditionHeaders = ["Offer Condition", "Condition", "Durum"];
-    static readonly string[] PriceHeaders = ["Offer Total Price", "Price", "Fiyat"];
-    static readonly string[] StockHeaders = ["Stock Qty", "Stock", "Stok"];
-    static readonly string[] StateReasonHeaders = ["State Reasons", "State reasons", "Sorun"];
+
+    /// <summary>The number of digits a GTIN-13 has, and what a shorter one is padded out to. See
+    /// <see cref="NormalizeGtin"/>.</summary>
+    const int GtinLength = 13;
 
     /// <summary>
     /// An upper bound on the export, so a wrong file cannot turn into an unbounded allocation and a
@@ -69,13 +67,15 @@ public static class VatSplitBuilder
                 $"Required column '{TitleHeaders[0]}' was not found in the offer export. " +
                 "A list a seller cannot read the product names off is not worth sending.");
 
-        var cEan = FindColumn(header, EanHeaders);
+        // Required, unlike the other product columns: the GTIN is how a seller finds the product in
+        // their own panel, and a list of titles with no barcodes is what this module used to send
+        // when the export renamed this column and nothing noticed.
+        var cGtin = FindColumn(header, GtinHeaders)
+            ?? throw new InvalidOperationException(
+                $"Required column '{GtinHeaders[0]}' was not found in the offer export. " +
+                "Without it the seller has no way to look the products up.");
+
         var cBrand = FindColumn(header, BrandHeaders);
-        var cCategory = FindColumn(header, CategoryHeaders);
-        var cCondition = FindColumn(header, ConditionHeaders);
-        var cPrice = FindColumn(header, PriceHeaders);
-        var cStock = FindColumn(header, StockHeaders);
-        var cReasons = FindColumn(header, StateReasonHeaders);
 
         var dataRows = table.Count - 1;
         if (dataRows > MaxOfferRows)
@@ -125,16 +125,10 @@ public static class VatSplitBuilder
                 order.Add(key);
             }
 
-            builder.Offers.Add(new VatOfferRow(
-                OfferId: offerId,
-                Ean: TabularFile.GetCell(row, cEan).Trim(),
+            builder.Add(new VatOfferRow(
+                Gtin: NormalizeGtin(TabularFile.GetCell(row, cGtin)),
                 ProductTitle: title,
-                Brand: TabularFile.GetCell(row, cBrand).Trim(),
-                Category: TabularFile.GetCell(row, cCategory).Trim(),
-                Condition: TabularFile.GetCell(row, cCondition).Trim(),
-                Price: TabularFile.GetCell(row, cPrice).Trim(),
-                Stock: ReadStock(TabularFile.GetCell(row, cStock)),
-                StateReasons: TabularFile.GetCell(row, cReasons).Trim()));
+                Brand: TabularFile.GetCell(row, cBrand).Trim()));
 
             builder.SeeName(name);
         }
@@ -217,8 +211,8 @@ public static class VatSplitBuilder
     /// <c>Prodesk.xlsx</c> and <c>PRODESK.xlsx</c> are one file.
     ///
     /// <para>Both sides of a collision are returned, not just the second. Mailing either one means the
-    /// second write overwrote the first, so one of the two sellers receives the other's complete price
-    /// and stock list — the exact leak this module is built to make impossible. Neither is sent.</para>
+    /// second write overwrote the first, so one of the two sellers receives the other's complete
+    /// product list — the exact leak this module is built to make impossible. Neither is sent.</para>
     /// </summary>
     public static HashSet<string> FindFileNameClashes(IEnumerable<VatSellerGroup> sellers)
     {
@@ -240,17 +234,35 @@ public static class VatSplitBuilder
         return id.Length > 0 ? "id:" + id : "name:" + SellerGroupMap.FoldName(sellerName ?? "");
     }
 
-    /// <summary>A stock cell. <c>null</c> rather than 0 when it cannot be read — "we do not know" and
-    /// "none in stock" are different claims and a seller acts on them differently.</summary>
-    static double? ReadStock(string raw)
+    /// <summary>
+    /// A GTIN as it should be read, not as the export writes it.
+    ///
+    /// <para>The export stores this column as a number, so <c>0858445004684</c> arrives as
+    /// <c>858445004684</c> — the leading zero is already gone by the time the file reaches us, and a
+    /// 12-digit barcode identifies nothing. Anything shorter than 13 digits is padded back out.</para>
+    ///
+    /// <para>Nothing is ever truncated: a 14-digit GTIN-14 is a real barcode and is passed through as
+    /// it stands. A cell that is not all digits is passed through too — showing a seller exactly what
+    /// their export holds is more use than a padded guess. An empty cell stays empty; padding it
+    /// would invent <c>0000000000000</c>.</para>
+    /// </summary>
+    public static string NormalizeGtin(string raw)
     {
-        var text = raw.Trim();
+        var text = (raw ?? "").Trim();
         if (text.Length == 0)
-            return null;
+            return "";
 
-        return double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value)
-            ? value
-            : null;
+        // A numeric cell read back through a general format can carry a decimal tail: "8683052680295.0"
+        // is the same barcode. Only an all-zero fraction is dropped — .5 is not a rounding error we
+        // may quietly discard.
+        var dot = text.IndexOf('.');
+        if (dot > 0 && text[(dot + 1)..].All(c => c == '0'))
+            text = text[..dot];
+
+        if (!text.All(char.IsAsciiDigit))
+            return text;
+
+        return text.Length < GtinLength ? text.PadLeft(GtinLength, '0') : text;
     }
 
     static string Sanitize(string raw)
@@ -291,6 +303,28 @@ public static class VatSplitBuilder
         public List<string> OtherNames { get; } = [];
 
         public List<VatOfferRow> Offers { get; } = [];
+
+        /// <summary>What is already in <see cref="Offers"/>, so the same product is not listed twice.</summary>
+        readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Adds a product unless this seller already has it. A seller can hold two offers on one
+        /// product; the attachment no longer carries the offer number that would tell those two lines
+        /// apart, so a second identical line would read as a mistake in our file rather than as two
+        /// offers. The first row seen wins.
+        ///
+        /// <para>Rows with no GTIN fall back to title and brand — folding every barcode-less product
+        /// onto one key would delete real products from the seller's list.</para>
+        /// </summary>
+        public void Add(VatOfferRow offer)
+        {
+            var key = offer.Gtin.Length > 0
+                ? "gtin:" + offer.Gtin
+                : $"name:{offer.ProductTitle}{offer.Brand}";
+
+            if (_seen.Add(key))
+                Offers.Add(offer);
+        }
 
         public void SeeName(string name)
         {

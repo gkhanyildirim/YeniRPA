@@ -10,10 +10,11 @@ namespace YeniRPA.Tests;
 /// </summary>
 public class VatSplitBuilderTests
 {
-    const string Headers =
-        "Seller id;Seller;Offer id;Product Title;EAN;Product Brand;Category Label;Offer Condition;Offer Total Price;Stock Qty;State Reasons";
+    /// <summary>Exactly what the Mirakl export writes, lower-case <c>gtin</c> included — the column
+    /// name this module silently failed to find for as long as the tests spelled it "EAN".</summary>
+    const string Headers = "Seller id;Seller;Offer id;Product Title;gtin;Product Brand";
 
-    /// <summary>Semicolons, so a State Reasons cell full of commas stays one cell.</summary>
+    /// <summary>Semicolons, so a product title full of commas stays one cell.</summary>
     static VatSplitBuilder.SplitResult Read(string body)
     {
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes($"{Headers}\n{body}"));
@@ -22,23 +23,21 @@ public class VatSplitBuilderTests
 
     static VatSellerGroup Group(string id, string name, int offers = 1) => new(
         id, name, VatSplitBuilder.SellerKey(id, name),
-        [.. Enumerable.Range(0, offers).Select(i =>
-            new VatOfferRow($"offer{i}", "", "t", "", "", "", "", null, ""))]);
+        [.. Enumerable.Range(0, offers).Select(i => new VatOfferRow($"{i:D13}", "t", ""))]);
 
     [Fact]
     public void OffersAreGroupedByTheSellerTheExportNames()
     {
         var result = Read(
-            "11835;Prodesk;1805444610;LEGO Icons;5702017829159;LEGO;TOY;NEW;23,999.00 €;0;VAT_RATE_MISSING\n" +
-            "11476;BL Müzik;1812641455;Strum Buddy;0858445004684;FLUID;MUSIC;NEW;4,500.00 €;1;VAT_RATE_MISSING\n" +
-            "11835;Prodesk;1805444082;LEGO Optimus;0673419355704;LEGO;TOY;NEW;11,999.00 €;1;VAT_RATE_MISSING\n");
+            "11835;Prodesk;1805444610;LEGO Icons;5702017829159;LEGO\n" +
+            "11476;BL Müzik;1812641455;Strum Buddy;858445004684;FLUID\n" +
+            "11835;Prodesk;1805444082;LEGO Optimus;673419355704;LEGO\n");
 
         Assert.Equal(3, result.OffersInFile);
         Assert.Equal(2, result.Sellers.Count);
 
         var prodesk = result.Sellers.Single(s => s.SellerId == "11835");
-        Assert.Equal(2, prodesk.Offers.Count);
-        Assert.Equal(["1805444610", "1805444082"], prodesk.Offers.Select(o => o.OfferId));
+        Assert.Equal(["5702017829159", "0673419355704"], prodesk.Offers.Select(o => o.Gtin));
 
         // Sellers come back in the order the export introduced them, which is the order the operator
         // scrolled past in Excel.
@@ -46,32 +45,80 @@ public class VatSplitBuilderTests
     }
 
     /// <summary>
-    /// A barcode is not a number. <c>0858445004684</c> is real in this export and loses its leading
-    /// zero the moment anything reads it as one, at which point it no longer identifies the product.
+    /// The export writes this column as <c>gtin</c>. Read under any other name it is not found at all,
+    /// and because it is the only column a seller can look a product up by, the attachment goes out as
+    /// a list of titles with no barcodes — which is exactly what used to happen.
     /// </summary>
     [Fact]
-    public void AnEanKeepsItsLeadingZero()
+    public void TheGtinColumnIsFoundUnderItsMiraklName()
     {
-        var result = Read("11476;BL Müzik;1812641455;Strum Buddy;0858445004684;FLUID;MUSIC;NEW;4,500.00 €;1;VAT_RATE_MISSING\n");
+        var result = Read("11835;Prodesk;o1;LEGO Icons;5702017829159;LEGO\n");
 
-        Assert.Equal("0858445004684", result.Sellers.Single().Offers.Single().Ean);
+        Assert.Equal("5702017829159", result.Sellers.Single().Offers.Single().Gtin);
     }
 
     /// <summary>
-    /// "We could not read the stock" and "there are none in stock" are different claims and a seller
-    /// acts on them differently, so an unreadable cell is null rather than 0.
+    /// A barcode is not a number, but the export stores it as one, so <c>0858445004684</c> arrives as
+    /// <c>858445004684</c> and identifies nothing. The leading zero is put back.
+    /// </summary>
+    [Theory]
+    [InlineData("858445004684", "0858445004684")]
+    [InlineData("8683052680295.0", "8683052680295")]
+    [InlineData("5702017829159", "5702017829159")]
+    // Nothing is ever truncated: a GTIN-14 is a real barcode, and a cell that is not a barcode at all
+    // is shown to the seller exactly as their export holds it rather than padded into a guess.
+    [InlineData("05702017829159", "05702017829159")]
+    [InlineData("N/A", "N/A")]
+    [InlineData("", "")]
+    public void AGtinIsPaddedToThirteenDigits(string cell, string expected)
+    {
+        Assert.Equal(expected, VatSplitBuilder.NormalizeGtin(cell));
+        Assert.Equal(expected, Read($"11835;Prodesk;o1;t;{cell};LEGO\n").Sellers.Single().Offers.Single().Gtin);
+    }
+
+    /// <summary>
+    /// A seller can hold two offers on one product. The attachment no longer carries the offer number
+    /// that would tell those two lines apart, so a second identical line reads as a mistake in our
+    /// file rather than as two offers.
     /// </summary>
     [Fact]
-    public void AnUnreadableStockCellIsNotZero()
+    public void TheSameProductIsListedOnce()
     {
         var result = Read(
-            "1;A;o1;t;;;;;;0;VAT_RATE_MISSING\n" +
-            "2;B;o2;t;;;;;;n/a;VAT_RATE_MISSING\n" +
-            "3;C;o3;t;;;;;;111;VAT_RATE_MISSING\n");
+            "11835;Prodesk;1805444610;LEGO Icons;5702017829159;LEGO\n" +
+            "11835;Prodesk;1805444082;LEGO Icons;5702017829159;LEGO\n");
 
-        Assert.Equal(0, result.Sellers[0].Offers.Single().Stock);
-        Assert.Null(result.Sellers[1].Offers.Single().Stock);
-        Assert.Equal(111, result.Sellers[2].Offers.Single().Stock);
+        var seller = Assert.Single(result.Sellers);
+        Assert.Equal("5702017829159", Assert.Single(seller.Offers).Gtin);
+
+        // The row count the operator uploaded is still reported as it was.
+        Assert.Equal(2, result.OffersInFile);
+    }
+
+    /// <summary>The same product padded on one row and not the other is still one product — the fold
+    /// happens after the GTIN is normalised, not before.</summary>
+    [Fact]
+    public void APaddedGtinAndAnUnpaddedOneAreTheSameProduct()
+    {
+        var result = Read(
+            "11476;BL Müzik;o1;Strum Buddy;858445004684;FLUID\n" +
+            "11476;BL Müzik;o2;Strum Buddy;0858445004684;FLUID\n");
+
+        Assert.Equal("0858445004684", Assert.Single(Assert.Single(result.Sellers).Offers).Gtin);
+    }
+
+    /// <summary>Folding every barcode-less row onto one key would delete real products from the
+    /// seller's list, so those fall back to the title and brand.</summary>
+    [Fact]
+    public void ProductsWithNoGtinAreNotCollapsedTogether()
+    {
+        var result = Read(
+            "11835;Prodesk;o1;LEGO Icons;;LEGO\n" +
+            "11835;Prodesk;o2;LEGO Optimus;;LEGO\n" +
+            "11835;Prodesk;o3;LEGO Icons;;LEGO\n");
+
+        var seller = Assert.Single(result.Sellers);
+        Assert.Equal(["LEGO Icons", "LEGO Optimus"], seller.Offers.Select(o => o.ProductTitle));
     }
 
     /// <summary>The seller id identifies the row, so a mid-month storefront rename is one seller, not
@@ -80,8 +127,8 @@ public class VatSplitBuilderTests
     public void OneSellerIdUnderTwoNamesIsStillOneSeller()
     {
         var result = Read(
-            "12953;VintageOnline;o1;t;;;;;;1;VAT_RATE_MISSING\n" +
-            "12953;Vintage Online;o2;t;;;;;;1;VAT_RATE_MISSING\n");
+            "12953;VintageOnline;o1;t1;5702017829159;\n" +
+            "12953;Vintage Online;o2;t2;673419355704;\n");
 
         var seller = Assert.Single(result.Sellers);
         Assert.Equal(2, seller.Offers.Count);
@@ -95,8 +142,8 @@ public class VatSplitBuilderTests
     public void RowsThatNameNoSellerAreCountedAndReported()
     {
         var result = Read(
-            "11835;Prodesk;o1;t;;;;;;1;VAT_RATE_MISSING\n" +
-            ";;o2;orphan;;;;;;1;VAT_RATE_MISSING\n");
+            "11835;Prodesk;o1;t;5702017829159;LEGO\n" +
+            ";;o2;orphan;673419355704;LEGO\n");
 
         Assert.Equal(2, result.OffersInFile);
         Assert.Single(result.Sellers);
@@ -107,7 +154,7 @@ public class VatSplitBuilderTests
     [Fact]
     public void TrailingBlankLinesAreNotOffers()
     {
-        var result = Read("11835;Prodesk;o1;t;;;;;;1;VAT_RATE_MISSING\n;;;;;;;;;;\n;;;;;;;;;;\n");
+        var result = Read("11835;Prodesk;o1;t;5702017829159;LEGO\n;;;;;\n;;;;;\n");
 
         Assert.Equal(1, result.OffersInFile);
         Assert.Empty(result.Warnings);
@@ -209,6 +256,20 @@ public class VatSplitBuilderTests
 
         var error = Assert.Throws<InvalidOperationException>(() => VatSplitBuilder.Read(stream, "x.csv"));
         Assert.Contains("Product Title", error.Message);
+    }
+
+    /// <summary>
+    /// The attachment is GTIN, title and brand. Without the barcode a seller cannot look the products
+    /// up in their own panel, so a two-column list is not worth sending — and the export quietly
+    /// renaming this column is precisely how it went out empty before.
+    /// </summary>
+    [Fact]
+    public void AnExportWithNoGtinIsRefusedByName()
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("Seller;Offer id;Product Title\nProdesk;o1;t\n"));
+
+        var error = Assert.Throws<InvalidOperationException>(() => VatSplitBuilder.Read(stream, "x.csv"));
+        Assert.Contains("gtin", error.Message);
     }
 
     /// <summary>The seller key follows <c>SellerGroupMap.Resolve</c>'s precedence: id when there is

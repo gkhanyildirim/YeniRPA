@@ -14,30 +14,29 @@ namespace YeniRPA.Web.Models;
 // ---------------------------------------------------------------------------
 
 /// <summary>
-/// One offer as it appears in a seller's own attachment.
+/// One product as it appears in a seller's own attachment.
 ///
-/// <para>Deliberately narrower than the export it comes from. <c>Partner Manager</c>,
-/// <c>Seller Rating</c>, <c>country</c> and the product-lifecycle columns are internal and are not
-/// carried here at all — a column that never enters this record cannot be written into a file that
-/// leaves the building.</para>
+/// <para>Deliberately narrower than the export it comes from. <c>Offer Total Price</c>,
+/// <c>Stock Qty</c>, <c>Partner Manager</c>, <c>Seller Rating</c>, <c>country</c> and the
+/// product-lifecycle columns are read out of no row at all: a column that never enters this record
+/// cannot be written into a file that leaves the building.</para>
 ///
-/// <para><paramref name="Price"/> stays a string: the export already formats it with its currency
-/// ("23,999.00 €"), and re-parsing it to re-format it would risk changing the figure a seller reads.
-/// <paramref name="Stock"/> is a number so the seller can sort by it, and <c>null</c> when the cell
-/// could not be read as one.</para>
+/// <para>Only <paramref name="Gtin"/> reaches the attachment. <paramref name="ProductTitle"/> and
+/// <paramref name="Brand"/> stay on this record because the grouping needs them — a row with no
+/// barcode is told apart from another by its title and brand, and an export with no
+/// <c>Product Title</c> column is refused as the wrong file.</para>
+///
+/// <para><paramref name="Gtin"/> is the export's <c>gtin</c> column padded to 13 digits — see
+/// <c>VatSplitBuilder.NormalizeGtin</c> for why it arrives short.</para>
 /// </summary>
 public sealed record VatOfferRow(
-    string OfferId,
-    string Ean,
+    string Gtin,
     string ProductTitle,
-    string Brand,
-    string Category,
-    string Condition,
-    string Price,
-    double? Stock,
-    string StateReasons);
+    string Brand);
 
-/// <summary>Every offer belonging to one seller, as grouped out of the export.</summary>
+/// <summary>Every product belonging to one seller, as grouped out of the export. One row per
+/// product: the same GTIN offered twice is one line, because the file no longer carries the offer
+/// number that would tell the two lines apart.</summary>
 public sealed record VatSellerGroup(
     string SellerId,
     string SellerName,
@@ -96,8 +95,8 @@ public sealed record VatUnmatchedSeller(
     [property: JsonPropertyName("sellerName")] string SellerName,
     [property: JsonPropertyName("sellerKey")] string SellerKey,
 
-    /// <summary>How many offers are waiting on this one address — the number that says which of these
-    /// rows is worth chasing first.</summary>
+    /// <summary>How many products are waiting on this one address — the number that says which of
+    /// these rows is worth chasing first.</summary>
     [property: JsonPropertyName("offerCount")] int OfferCount,
 
     [property: JsonPropertyName("reason")] string Reason);
@@ -109,6 +108,11 @@ public sealed record VatUnmatchedSeller(
 public sealed record VatFunnel(
     [property: JsonPropertyName("sellersInFile")] int SellersInFile,
     [property: JsonPropertyName("ready")] int Ready,
+
+    /// <summary>Fewer products than the operator's minimum. Their workbook is not written and no mail
+    /// is prepared for them — the one bucket in this funnel that is a choice rather than a fault.</summary>
+    [property: JsonPropertyName("belowMinimum")] int BelowMinimum,
+
     [property: JsonPropertyName("noEmail")] int NoEmail,
     [property: JsonPropertyName("invalidEmail")] int InvalidEmail,
 
@@ -131,6 +135,18 @@ public sealed record VatPrepareData(
     [property: JsonPropertyName("date")] string Date,
 
     [property: JsonPropertyName("outputFolder")] string OutputFolder,
+
+    /// <summary>The CC line this batch was built with, or <c>null</c>. Sent back so the panel shows the
+    /// address that was fixed into the batch rather than whatever the settings box says now — editing
+    /// the box after a build changes nothing until the mails are built again.</summary>
+    [property: JsonPropertyName("cc")] string? Cc,
+
+    /// <summary>Whether this batch signs its mails, for the same reason <paramref name="Cc"/> comes
+    /// back: the panel shows what was fixed into the batch, not what the settings box says now.</summary>
+    [property: JsonPropertyName("includeSignature")] bool IncludeSignature,
+
+    /// <summary>Rows in the export, before duplicate products are folded together — the operator's
+    /// count of what they uploaded, not the number of lines any seller receives.</summary>
     [property: JsonPropertyName("offersInFile")] int OffersInFile,
     [property: JsonPropertyName("directoryRows")] int DirectoryRows,
     [property: JsonPropertyName("mails")] IReadOnlyList<VatSellerMail> Mails,
@@ -162,6 +178,21 @@ public sealed record VatMailFile(
     [property: JsonPropertyName("subjectTemplate")] string? SubjectTemplate,
     [property: JsonPropertyName("bodyTemplate")] string? BodyTemplate,
     [property: JsonPropertyName("outputFolder")] string? OutputFolder,
+
+    /// <summary>How few products it takes for a seller not to be worth a mail. <c>null</c> — which is
+    /// also what a settings file written before this existed deserialises to — means no minimum, so an
+    /// operator who never sets one keeps the behaviour they had.</summary>
+    [property: JsonPropertyName("minOfferCount")] int? MinOfferCount,
+
+    /// <summary>Who is copied on every mail, as one <c>;</c>-joined line, or <c>null</c> for nobody.
+    /// Visible to the seller: this is a CC, not a BCC, so the address is one the operator is content to
+    /// show 130 sellers.</summary>
+    [property: JsonPropertyName("ccAddresses")] string? CcAddresses,
+
+    /// <summary>Whether Outlook's own signature goes under every mail. <c>null</c> — a settings file
+    /// written before this existed — means off, so nothing starts signing itself unasked.</summary>
+    [property: JsonPropertyName("includeSignature")] bool? IncludeSignature,
+
     [property: JsonPropertyName("overrides")] IReadOnlyList<VatOverrideEntry> Overrides);
 
 // ---------------------------------------------------------------------------
@@ -189,4 +220,14 @@ public sealed record VatBatch(
     string BatchId,
     string OutputFolder,
     DateTimeOffset CreatedUtc,
+
+    /// <summary>Who is copied on every mail in this batch. On the batch and not on each
+    /// <see cref="VatBatchMail"/> because it is one decision for the whole run, and held here for the
+    /// same reason the recipients are: what gets sent comes from the batch, never from the browser.</summary>
+    string? Cc,
+
+    /// <summary>Whether these mails carry the operator's signature. Fixed here at prepare time along
+    /// with the CC, so a settings change between the preview and the click cannot alter what is sent.</summary>
+    bool IncludeSignature,
+
     IReadOnlyDictionary<string, VatBatchMail> BySellerKey);

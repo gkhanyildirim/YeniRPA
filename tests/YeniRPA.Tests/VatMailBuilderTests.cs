@@ -11,8 +11,7 @@ public class VatMailBuilderTests
 {
     static VatSellerGroup Seller(string id, string name, int offers = 1) => new(
         id, name, VatSplitBuilder.SellerKey(id, name),
-        [.. Enumerable.Range(0, offers).Select(i =>
-            new VatOfferRow($"offer{i}", "", "t", "", "", "", "", null, ""))]);
+        [.. Enumerable.Range(0, offers).Select(i => new VatOfferRow($"{i:D13}", "t", ""))]);
 
     static VatSellerMail Render(
         VatSellerGroup seller,
@@ -35,11 +34,11 @@ public class VatMailBuilderTests
     {
         var mail = Render(
             Seller("11835", "Prodesk", 42),
-            subject: "{seller} — {offerCount} teklif",
+            subject: "{seller} — {offerCount} ürün",
             body: "{sellerId} · {email} · {recipientCount} · {fileName} · {offerCount} · {date}",
             recipients: ["info@prodesk.com", "satis@prodesk.com"]);
 
-        Assert.Equal("Prodesk — 42 teklif", mail.Subject);
+        Assert.Equal("Prodesk — 42 ürün", mail.Subject);
         Assert.Equal(
             "11835 · info@prodesk.com; satis@prodesk.com · 2 · 11835 - Prodesk.xlsx · 42 · 2026-08-24",
             mail.Body);
@@ -87,7 +86,7 @@ public class VatMailBuilderTests
     }
 
     /// <summary>The count in the text is the number of rows in the file that travels with it. A mail
-    /// promising 42 offers beside a list of 3 is worse than no mail.</summary>
+    /// promising 42 products beside a list of 3 is worse than no mail.</summary>
     [Fact]
     public void TheOfferCountIsTheSizeOfTheirOwnList()
     {

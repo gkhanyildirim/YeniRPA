@@ -27,7 +27,7 @@ public sealed class VatBatchStore
     VatBatch? _current;
 
     /// <summary>Replaces the held batch with a new one and returns it.</summary>
-    public VatBatch Put(string outputFolder, IEnumerable<VatBatchMail> mails)
+    public VatBatch Put(string outputFolder, string? cc, bool includeSignature, IEnumerable<VatBatchMail> mails)
     {
         ArgumentNullException.ThrowIfNull(mails);
 
@@ -43,6 +43,8 @@ public sealed class VatBatchStore
             BatchId: Guid.NewGuid().ToString("N"),
             OutputFolder: outputFolder,
             CreatedUtc: DateTimeOffset.UtcNow,
+            Cc: cc,
+            IncludeSignature: includeSignature,
             BySellerKey: bySellerKey);
 
         lock (_sync)

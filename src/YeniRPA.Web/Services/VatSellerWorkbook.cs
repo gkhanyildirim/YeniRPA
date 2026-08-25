@@ -5,11 +5,16 @@ using static YeniRPA.Web.Services.XlsxStyles;
 namespace YeniRPA.Web.Services;
 
 /// <summary>
-/// Writes one seller's own list of offers with no VAT rate.
+/// Writes one seller's own list of products with no VAT rate.
 ///
 /// <para>Split from <see cref="VatSplitBuilder"/> the way <c>TitleCleanWorkbook</c> is split from
 /// <c>TitleCleanBuilder</c>: the builder decides <em>what belongs to whom</em> and is tested on that
 /// alone, this only renders a group that has already been decided.</para>
+///
+/// <para>One column: the GTIN. It is the key the seller looks the product up by in their own panel,
+/// and everything else was theirs to begin with — a title and a brand they already hold tell them
+/// nothing they cannot read off the barcode. Price, stock, category and offer state are ours, not
+/// theirs, and never reach <see cref="VatOfferRow"/> at all.</para>
 ///
 /// <para>The column headings are Turkish. This is the one artefact in the app that leaves the
 /// building and is read by a seller, so it is written in the language of the mail that carries it —
@@ -21,22 +26,20 @@ public static class VatSellerWorkbook
     const int SubtitleRow = 2;
     const int HeaderRow = 4;
 
-    static readonly string[] Headers =
-        ["Teklif No", "EAN", "Ürün Adı", "Marka", "Kategori", "Durum", "Fiyat", "Stok", "Sorun"];
+    static readonly string[] Headers = ["GTIN"];
 
-    /// <summary>Columns that must be written as text. An EAN is the reason: <c>0858445004684</c> is a
-    /// real barcode in this export and loses its leading zero the moment Excel reads it as a number,
-    /// at which point it no longer identifies the product it names.</summary>
-    static readonly int[] TextColumns = [1, 2];
-
-    const int StockColumn = 8;
+    /// <summary>Columns that must be written as text. The GTIN is the reason: <c>0858445004684</c> is
+    /// a real barcode in this export and loses its leading zero the moment Excel reads it as a number,
+    /// at which point it no longer identifies the product it names. <c>VatSplitBuilder.NormalizeGtin</c>
+    /// pads that zero back on; this format is what stops Excel taking it off again.</summary>
+    static readonly int[] TextColumns = [1];
 
     public static byte[] Build(VatSellerGroup seller, string date)
     {
         ArgumentNullException.ThrowIfNull(seller);
 
         using var workbook = new XLWorkbook();
-        var sheet = workbook.AddWorksheet("KDV Eksik Teklifler");
+        var sheet = workbook.AddWorksheet("KDV Eksik Ürünler");
         ApplyBaseFont(sheet);
         sheet.ShowGridLines = false;
 
@@ -48,7 +51,6 @@ public static class VatSellerWorkbook
             cell.SetValue(Headers[c]);
             cell.Style.Alignment.WrapText = true;
         }
-        sheet.Cell(HeaderRow, StockColumn).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
         StyleHeaderRow(sheet.Range(HeaderRow, 1, HeaderRow, Headers.Length));
 
         foreach (var column in TextColumns)
@@ -59,25 +61,9 @@ public static class VatSellerWorkbook
             var offer = seller.Offers[i];
             var row = HeaderRow + 1 + i;
 
-            // SetValue<string> stores text as text: a title beginning with "=" is never promoted to a
+            // SetValue<string> stores text as text: a cell beginning with "=" is never promoted to a
             // formula, which is the same guard TableWorkbookBuilder.WriteValue relies on.
-            sheet.Cell(row, 1).SetValue(offer.OfferId);
-            sheet.Cell(row, 2).SetValue(offer.Ean);
-            sheet.Cell(row, 3).SetValue(offer.ProductTitle);
-            sheet.Cell(row, 4).SetValue(offer.Brand);
-            sheet.Cell(row, 5).SetValue(offer.Category);
-            sheet.Cell(row, 6).SetValue(offer.Condition);
-            sheet.Cell(row, 7).SetValue(offer.Price);
-
-            var stock = sheet.Cell(row, StockColumn);
-            if (offer.Stock.HasValue)
-            {
-                stock.Value = offer.Stock.Value;
-                stock.Style.NumberFormat.Format = "#,##0";
-            }
-            stock.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
-
-            sheet.Cell(row, 9).SetValue(offer.StateReasons);
+            sheet.Cell(row, 1).SetValue(offer.Gtin);
         }
 
         var lastRow = HeaderRow + seller.Offers.Count;
@@ -115,12 +101,18 @@ public static class VatSellerWorkbook
         title.Style.Font.FontColor = NavyColor;
 
         var subtitle = sheet.Cell(SubtitleRow, 1);
-        subtitle.SetValue($"KDV oranı tanımlı olmayan teklifler · {seller.Offers.Count:N0} teklif · {date}");
+        subtitle.SetValue($"KDV oranı tanımlı olmayan ürünler · {seller.Offers.Count:N0} ürün · {date}");
         subtitle.Style.Font.Italic = true;
         subtitle.Style.Font.FontSize = 9;
         subtitle.Style.Font.FontColor = MutedColor;
 
-        sheet.Range(TitleRow, 1, TitleRow, Headers.Length).Merge();
-        sheet.Range(SubtitleRow, 1, SubtitleRow, Headers.Length).Merge();
+        // Nothing to merge across a single column, and the heading is longer than a GTIN is wide — it
+        // simply overflows into the empty cells beside it, which is what Excel does and what a reader
+        // expects. Merging it into column A instead would clip the seller's own name.
+        if (Headers.Length > 1)
+        {
+            sheet.Range(TitleRow, 1, TitleRow, Headers.Length).Merge();
+            sheet.Range(SubtitleRow, 1, SubtitleRow, Headers.Length).Merge();
+        }
     }
 }

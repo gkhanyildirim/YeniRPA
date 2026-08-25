@@ -31,6 +31,9 @@ public sealed class OutlookMailSender : IDisposable
     /// <summary><c>olMailItem</c>.</summary>
     const int MailItemType = 0;
 
+    /// <summary><c>olSave</c>, the <c>Inspector.Close</c> mode that keeps what was written.</summary>
+    const int InspectorSaveOnClose = 0;
+
     readonly ILogger<OutlookMailSender> _logger;
     readonly BlockingCollection<Action> _work = new();
     readonly Thread _thread;
@@ -104,12 +107,19 @@ public sealed class OutlookMailSender : IDisposable
     /// logged what it would have done would not catch the two things that actually go wrong — a
     /// mangled address and the wrong file attached.</para>
     /// </summary>
-    public Task SendAsync(string to, string subject, string body, string attachmentPath, bool dryRun) =>
+    public Task SendAsync(
+        string to,
+        string? cc,
+        string subject,
+        string body,
+        string attachmentPath,
+        bool dryRun,
+        bool withSignature = false) =>
         RunAsync<object?>(() =>
         {
             try
             {
-                Compose(to, subject, body, attachmentPath, dryRun);
+                Compose(to, cc, subject, body, attachmentPath, dryRun, withSignature);
             }
             catch (Exception ex) when (IsComFailure(ex))
             {
@@ -117,7 +127,7 @@ public sealed class OutlookMailSender : IDisposable
                 // dead proxy. Drop it and try once more on a fresh one before giving up on this row.
                 _logger.LogWarning(ex, "The Outlook call failed; reconnecting and retrying once.");
                 ReleaseApplication();
-                Compose(to, subject, body, attachmentPath, dryRun);
+                Compose(to, cc, subject, body, attachmentPath, dryRun, withSignature);
             }
 
             return null;
@@ -127,7 +137,14 @@ public sealed class OutlookMailSender : IDisposable
     // On the STA thread
     // ---------------------------------------------------------------------
 
-    void Compose(string to, string subject, string body, string attachmentPath, bool dryRun)
+    void Compose(
+        string to,
+        string? cc,
+        string subject,
+        string body,
+        string attachmentPath,
+        bool dryRun,
+        bool withSignature)
     {
         var application = EnsureApplication();
 
@@ -137,26 +154,122 @@ public sealed class OutlookMailSender : IDisposable
         object? attachments = null;
         try
         {
-            Set(mail, "To", to);
-            Set(mail, "Subject", subject);
-            // Plain text. The template is a plain-text box, and letting Outlook decide the format
-            // would render the operator's line breaks differently from the preview they approved.
-            Set(mail, "BodyFormat", 1);
-            Set(mail, "Body", body);
+            Step("setting the recipient", () => Set(mail, "To", to));
 
-            attachments = Get(mail, "Attachments")
-                ?? throw new InvalidOperationException("Outlook returned no attachments collection.");
-            Call(attachments, "Add", attachmentPath);
+            // Only touched when there is something to copy. Setting an empty CC would be harmless here
+            // but leaves an empty header on every mail, and this property is otherwise never written.
+            if (!string.IsNullOrWhiteSpace(cc))
+                Step("setting the CC", () => Set(mail, "CC", cc));
 
-            if (dryRun)
-                Call(mail, "Save");
-            else
-                Call(mail, "Send");
+            Step("setting the subject", () => Set(mail, "Subject", subject));
+
+            if (!withSignature || !TryWriteSignedBody(mail, body))
+            {
+                // Plain text. The template is a plain-text box, and letting Outlook decide the format
+                // would render the operator's line breaks differently from the preview they approved.
+                Step("writing the body", () =>
+                {
+                    Set(mail, "BodyFormat", 1);
+                    Set(mail, "Body", body);
+                });
+            }
+
+            Step("attaching the file", () =>
+            {
+                attachments = Get(mail, "Attachments")
+                    ?? throw new InvalidOperationException("Outlook returned no attachments collection.");
+                Call(attachments, "Add", attachmentPath);
+            });
+
+            Step(dryRun ? "saving the draft" : "sending the mail", () => Call(mail, dryRun ? "Save" : "Send"));
         }
         finally
         {
             Release(attachments);
             Release(mail);
+        }
+    }
+
+    /// <summary>
+    /// Writes the body as HTML with the operator's own Outlook signature under it. <c>false</c> when
+    /// the signature could not be obtained, so the caller can fall back to a plain-text mail.
+    ///
+    /// <para><b>Why the signature is not read off disk.</b> It lives in
+    /// <c>%APPDATA%\Microsoft\Signatures</c> as an <c>.htm</c> file whose logo is a relative reference
+    /// into a sibling folder. Pasting that HTML into a mail leaves the image pointing at a path the
+    /// recipient does not have, so the logo arrives broken and would have to be re-embedded by hand.
+    /// Reading <c>GetInspector</c> instead makes Outlook insert its own default signature — the one the
+    /// operator sees when they compose a mail themselves — with the image already attached the way
+    /// Outlook attaches it. Nothing is parsed and nothing can drift out of date.</para>
+    ///
+    /// <para>A failure here costs a signature, not a run: 130 mails must not stop because a cosmetic
+    /// flourish was unavailable. <b>Every</b> exception is caught, not just the COM ones — the first
+    /// version of this caught only <see cref="COMException"/>, and Outlook answers a bad call with
+    /// <c>E_INVALIDARG</c>, which .NET surfaces as an <see cref="ArgumentException"/>. That slipped
+    /// straight past the filter and failed whole mails over a signature.</para>
+    /// </summary>
+    bool TryWriteSignedBody(object mail, string body)
+    {
+        object? inspector = null;
+        try
+        {
+            // Reading this property is the whole trick — it is what makes Outlook populate the item
+            // with the default signature. The inspector itself is not used, and never displayed.
+            inspector = Get(mail, "GetInspector");
+
+            var signature = Get(mail, "HTMLBody") as string ?? "";
+
+            // BodyFormat is deliberately not set: writing HTMLBody switches the item to HTML on its
+            // own, and setting it to plain text would flatten the signature that was just inserted.
+            Set(mail, "HTMLBody", MailHtml.InsertBeforeSignature(MailHtml.FromPlainText(body), signature));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The Outlook signature could not be read; sending this mail as plain text.");
+            return false;
+        }
+        finally
+        {
+            CloseInspector(inspector);
+        }
+    }
+
+    /// <summary>
+    /// Closes the inspector opened by <see cref="TryWriteSignedBody"/> and lets go of it.
+    ///
+    /// <para><b>Closing is not optional and releasing is not closing.</b> Outlook refuses to
+    /// <c>Send</c> an item that is open in an inspector, and answers with <c>E_INVALIDARG</c> —
+    /// "Value does not fall within the expected range", which says nothing about inspectors.
+    /// <c>FinalReleaseComObject</c> drops our reference but leaves the item open as far as Outlook is
+    /// concerned, so every signed mail failed at the last step. Measured: closing here sends, not
+    /// closing does not.</para>
+    ///
+    /// <para><c>olSave</c> rather than <c>olDiscard</c>: discarding would throw away the body that was
+    /// just written. And a plain <c>ReleaseComObject</c> rather than the final one — the inspector and
+    /// the item are entangled, and there is nothing to gain from forcing this handle to zero.</para>
+    /// </summary>
+    void CloseInspector(object? inspector)
+    {
+        if (inspector is null)
+            return;
+
+        try
+        {
+            Call(inspector, "Close", InspectorSaveOnClose);
+        }
+        catch (Exception ex)
+        {
+            // Reported, not thrown: the mail itself may still be sendable, and the send is what matters.
+            _logger.LogWarning(ex, "The Outlook inspector could not be closed; this mail may fail to send.");
+        }
+        finally
+        {
+            if (Marshal.IsComObject(inspector))
+            {
+                try { Marshal.ReleaseComObject(inspector); }
+                catch (ArgumentException) { /* Already released. */ }
+            }
         }
     }
 
@@ -264,6 +377,26 @@ public sealed class OutlookMailSender : IDisposable
     // which of them are properties and which are methods — a distinction `dynamic` hides and Outlook's
     // object model does not forgive.
 
+    /// <summary>
+    /// Runs one step of <see cref="Compose"/> and, if it throws, says which step it was.
+    ///
+    /// <para>Worth the wrapper because Outlook's own messages name nothing. "Value does not fall within
+    /// the expected range" was every one of these nine calls at once, and finding out which took a
+    /// purpose-built probe. Now the run log says <c>sending the mail — Value does not fall…</c> and the
+    /// next one of these is read, not investigated.</para>
+    /// </summary>
+    static void Step(string what, Action work)
+    {
+        try
+        {
+            work();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"{what} — {Describe(ex)}", ex);
+        }
+    }
+
     static object? Get(object target, string name) =>
         target.GetType().InvokeMember(name, BindingFlags.GetProperty, null, target, null);
 
@@ -300,11 +433,12 @@ public sealed class OutlookMailSender : IDisposable
 
     /// <summary>
     /// True when Outlook itself failed the call, as opposed to us passing it something invalid.
-    /// Every call here goes through <see cref="MethodBase.Invoke(object, object[])"/>, so the
-    /// <see cref="COMException"/> always arrives wrapped — testing for it directly would make the
-    /// reconnect-and-retry above dead code.
+    ///
+    /// <para>Walks the whole inner-exception chain rather than naming the wrappers it expects. Every
+    /// call here arrives wrapped in a <see cref="TargetInvocationException"/> from reflection and now
+    /// in a step label on top of that, and a version of this that listed the wrappers it knew about
+    /// would quietly stop recognising COM failures the next time one was added.</para>
     /// </summary>
-    static bool IsComFailure(Exception ex) =>
-        ex is COMException or InvalidComObjectException ||
-        (ex is TargetInvocationException { InnerException: { } inner } && IsComFailure(inner));
+    static bool IsComFailure(Exception? ex) =>
+        ex is not null && (ex is COMException or InvalidComObjectException || IsComFailure(ex.InnerException));
 }

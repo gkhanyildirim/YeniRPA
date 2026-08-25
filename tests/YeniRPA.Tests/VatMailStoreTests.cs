@@ -1,3 +1,4 @@
+using System.Text.Json;
 using YeniRPA.Web.Models;
 using YeniRPA.Web.Services;
 
@@ -99,5 +100,99 @@ public class VatMailStoreTests
 
         Assert.Empty(VatMailStore.FindOverrideProblems(overrides));
         Assert.Null(VatMailStore.FindOverride(overrides, "99999", "Someone Else"));
+    }
+
+    // ---------------------------------------------------------------------
+    // The minimum product count
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Zero, a negative number and a blank box all mean "mail everybody". Collapsed to one value so no
+    /// caller has to test for three — the one that forgot would refuse to mail anybody.
+    /// </summary>
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(0, null)]
+    [InlineData(-5, null)]
+    [InlineData(1, 1)]
+    [InlineData(10, 10)]
+    public void AMinimumOfZeroOrLessIsNoMinimumAtAll(int? saved, int? expected)
+    {
+        Assert.Equal(expected, VatMailStore.NormalizeMinimum(saved));
+    }
+
+    /// <summary>A settings file written before the threshold existed has to keep working. Its missing
+    /// field must read as "no minimum", never as a threshold nobody typed.</summary>
+    [Fact]
+    public void ASettingsFileWithNoThresholdReadsAsNoMinimum()
+    {
+        const string json = """
+            {"version":1,"subjectTemplate":"x","bodyTemplate":"y","overrides":[]}
+            """;
+
+        var file = JsonSerializer.Deserialize<VatMailFile>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(file);
+        Assert.Null(VatMailStore.NormalizeMinimum(file.MinOfferCount));
+    }
+
+    /// <summary>And a saved threshold survives the round trip it is written and read back through.</summary>
+    [Fact]
+    public void ASavedThresholdComesBackAsItWasWritten()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var written = new VatMailFile(1, null, null, null, null, 10, null, null, []);
+
+        var read = JsonSerializer.Deserialize<VatMailFile>(JsonSerializer.Serialize(written, options), options);
+
+        Assert.Equal(10, read?.MinOfferCount);
+    }
+
+    // ---------------------------------------------------------------------
+    // The CC line
+    // ---------------------------------------------------------------------
+
+    /// <summary>Nobody typed anything, so nobody is copied. Not an error — the CC is optional.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(" ; , ")]
+    public void AnEmptyCcCopiesNobodyAndIsNotAProblem(string? raw)
+    {
+        var (cc, problem) = VatMailStore.NormalizeCc(raw);
+
+        Assert.Null(cc);
+        Assert.Null(problem);
+    }
+
+    /// <summary>Several people can be copied, written the way any other address cell in this app is
+    /// written — and joined into the one line Outlook's CC field expects.</summary>
+    [Theory]
+    [InlineData("bilgi@sirket.com", "bilgi@sirket.com")]
+    [InlineData("  bilgi@sirket.com  ", "bilgi@sirket.com")]
+    [InlineData("a@x.com; b@x.com", "a@x.com; b@x.com")]
+    [InlineData("a@x.com, b@x.com", "a@x.com; b@x.com")]
+    [InlineData("a@x.com; A@X.com; b@x.com", "a@x.com; b@x.com")]
+    public void TheCcIsSplitDeduplicatedAndJoinedBack(string raw, string expected)
+    {
+        var (cc, problem) = VatMailStore.NormalizeCc(raw);
+
+        Assert.Equal(expected, cc);
+        Assert.Null(problem);
+    }
+
+    /// <summary>
+    /// A typo is named rather than dropped. Dropping it would mail every seller with the copy going
+    /// nowhere, and nothing on the screen would say so.
+    /// </summary>
+    [Fact]
+    public void AMangledCcIsRefusedAndNamed()
+    {
+        var (cc, problem) = VatMailStore.NormalizeCc("bilgi@sirket.com; kayit@");
+
+        Assert.Null(cc);
+        Assert.NotNull(problem);
+        Assert.Contains("kayit@", problem);
     }
 }

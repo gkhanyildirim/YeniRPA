@@ -60,10 +60,14 @@ public sealed class VatWarningsController : ControllerBase
         [property: JsonPropertyName("subjectTemplate")] string? SubjectTemplate,
         [property: JsonPropertyName("bodyTemplate")] string? BodyTemplate,
         [property: JsonPropertyName("outputFolder")] string? OutputFolder,
+        [property: JsonPropertyName("minOfferCount")] int? MinOfferCount,
+        [property: JsonPropertyName("ccAddresses")] string? CcAddresses,
+        [property: JsonPropertyName("includeSignature")] bool? IncludeSignature,
         [property: JsonPropertyName("overrides")] IReadOnlyList<VatOverrideEntry>? Overrides);
 
     public sealed record MailsExcelRequest(
-        [property: JsonPropertyName("mails")] IReadOnlyList<VatSellerMail>? Mails);
+        [property: JsonPropertyName("mails")] IReadOnlyList<VatSellerMail>? Mails,
+        [property: JsonPropertyName("cc")] string? Cc);
 
     /// <summary>
     /// One approved mail coming back from the browser, keyed by the seller key the prepare handed out.
@@ -138,6 +142,9 @@ public sealed class VatWarningsController : ControllerBase
             placeholders = VatMailBuilder.Placeholders,
             outputFolder = _store.ResolveOutputFolder(file),
             defaultOutputFolder = _store.DefaultOutputFolder,
+            minOfferCount = file.MinOfferCount ?? 0,
+            ccAddresses = file.CcAddresses ?? "",
+            includeSignature = file.IncludeSignature ?? false,
             defaultSheetName = SellerMailDirectory.DefaultSheetName,
             overrides = file.Overrides,
             path = _store.FilePath,
@@ -151,12 +158,21 @@ public sealed class VatWarningsController : ControllerBase
     {
         var overrides = Clean(request?.Overrides);
 
+        // Refused rather than saved and quietly ignored later: this is the moment the operator typed the
+        // address, and it is the only moment they are looking at it.
+        var (cc, ccProblem) = VatMailStore.NormalizeCc(request?.CcAddresses);
+        if (ccProblem is not null)
+            return BadRequest(new { error = $"The CC address was not saved: {ccProblem}" });
+
         _store.Save(new VatMailFile(
             Version: 0,                       // stamped by the store
             UpdatedUtc: null,                 // stamped by the store
             SubjectTemplate: NullIfBlank(request?.SubjectTemplate),
             BodyTemplate: NullIfBlank(request?.BodyTemplate),
             OutputFolder: NullIfBlank(request?.OutputFolder),
+            MinOfferCount: VatMailStore.NormalizeMinimum(request?.MinOfferCount),
+            CcAddresses: cc,
+            IncludeSignature: request?.IncludeSignature ?? false,
             Overrides: overrides));
 
         // The cleaned list comes back so the table shows what is actually stored: Clean collapses rows
@@ -166,6 +182,9 @@ public sealed class VatWarningsController : ControllerBase
         {
             saved = overrides.Count,
             overrides,
+            minOfferCount = VatMailStore.NormalizeMinimum(request?.MinOfferCount) ?? 0,
+            ccAddresses = cc ?? "",
+            includeSignature = request?.IncludeSignature ?? false,
             path = _store.FilePath,
             warnings = VatMailStore.FindOverrideProblems(overrides)
         });
@@ -189,6 +208,7 @@ public sealed class VatWarningsController : ControllerBase
         [FromForm] string? sheetName,
         [FromForm] string? subjectTemplate,
         [FromForm] string? bodyTemplate,
+        [FromForm] int? minOfferCount,
         CancellationToken cancellationToken)
     {
         if (offers is not { Length: > 0 })
@@ -200,6 +220,23 @@ public sealed class VatWarningsController : ControllerBase
         var settings = _store.Load();
         var subject = NullIfBlank(subjectTemplate) ?? settings.SubjectTemplate;
         var body = NullIfBlank(bodyTemplate) ?? settings.BodyTemplate;
+
+        // What the panel sent wins over what is saved, so the operator can try a threshold for one run
+        // without committing to it. 0 — and anything below it — means every seller is worth a mail.
+        var minimum = Math.Max(0, minOfferCount ?? settings.MinOfferCount ?? 0);
+
+        // Fixed into the batch here and read back at send time, like the recipients and the attachment.
+        // Editing the settings box after this point changes nothing until the mails are built again, so
+        // the address on the cards is the address that goes out.
+        //
+        // A malformed CC stops the build. Save refuses one already, so this only fires on a hand-edited
+        // settings file — and building 130 mails whose copy silently goes nowhere is worse than saying so.
+        var (cc, ccProblem) = VatMailStore.NormalizeCc(settings.CcAddresses);
+        if (ccProblem is not null)
+            throw new InvalidOperationException($"The saved CC address cannot be used: {ccProblem}");
+
+        // Fixed into the batch alongside the CC, for the same reason.
+        var includeSignature = settings.IncludeSignature ?? false;
 
         VatSplitBuilder.SplitResult split;
         using (var stream = await CopyToSeekableStreamAsync(offers, cancellationToken))
@@ -243,7 +280,8 @@ public sealed class VatWarningsController : ControllerBase
         var unmatched = new List<VatUnmatchedSeller>();
         var batchMails = new List<VatBatchMail>();
 
-        int ready = 0, noEmail = 0, invalidEmail = 0, ambiguousEmail = 0, fileNameClash = 0, writeFailed = 0;
+        int ready = 0, belowMinimum = 0, noEmail = 0, invalidEmail = 0, ambiguousEmail = 0,
+            fileNameClash = 0, writeFailed = 0;
 
         foreach (var seller in split.Sellers)
         {
@@ -253,14 +291,26 @@ public sealed class VatWarningsController : ControllerBase
             var matchedBy = "";
             IReadOnlyList<string> recipients = [];
             long size = 0;
+            var underMinimum = false;
 
             if (clashes.Contains(seller.SellerKey))
             {
                 // Neither of the two is written and neither is sent: the second write would overwrite
                 // the first, and then one of these sellers receives the other's list.
+                //
+                // Checked before the minimum on purpose: a name collision is a fault in the export and
+                // is worth naming even for a seller the threshold would have dropped anyway.
                 problem = $"'{fileName}' is also another seller's file name. Neither seller is mailed — " +
                           "give one of them a distinct name in the export.";
                 fileNameClash++;
+            }
+            else if (seller.Offers.Count < minimum)
+            {
+                // Below the threshold nothing is written at all — an unsent workbook full of a seller's
+                // products is a file that exists for no reason.
+                problem = $"{seller.Offers.Count:N0} product(s) — under the minimum of {minimum:N0}. Not mailed.";
+                underMinimum = true;
+                belowMinimum++;
             }
             else if (!TryWrite(folder, fileName, seller, date, out size, out var writeError))
             {
@@ -339,9 +389,11 @@ public sealed class VatWarningsController : ControllerBase
                     AttachmentPath: Path.Combine(folder, fileName),
                     AttachmentName: fileName));
             }
-            else if (matchedBy.Length == 0 && !clashes.Contains(seller.SellerKey))
+            else if (matchedBy.Length == 0 && !clashes.Contains(seller.SellerKey) && !underMinimum)
             {
                 // The editable list: sellers whose file is ready and waiting on nothing but an address.
+                // A seller under the threshold is not waiting on anything, so entering an address for
+                // them would answer a question nobody asked.
                 unmatched.Add(new VatUnmatchedSeller(
                     SellerId: seller.SellerId,
                     SellerName: seller.SellerName,
@@ -351,7 +403,7 @@ public sealed class VatWarningsController : ControllerBase
             }
         }
 
-        var batch = _batches.Put(folder, batchMails);
+        var batch = _batches.Put(folder, cc, includeSignature, batchMails);
 
         var warnings = new List<string>(split.Warnings);
         warnings.AddRange(addresses.Warnings);
@@ -365,6 +417,8 @@ public sealed class VatWarningsController : ControllerBase
             BatchId: batch.BatchId,
             Date: date,
             OutputFolder: folder,
+            Cc: cc,
+            IncludeSignature: includeSignature,
             OffersInFile: split.OffersInFile,
             DirectoryRows: addresses.RowCount,
             Mails: mails,
@@ -372,6 +426,7 @@ public sealed class VatWarningsController : ControllerBase
             Funnel: new VatFunnel(
                 SellersInFile: split.Sellers.Count,
                 Ready: ready,
+                BelowMinimum: belowMinimum,
                 NoEmail: noEmail,
                 InvalidEmail: invalidEmail,
                 AmbiguousEmail: ambiguousEmail,
@@ -392,7 +447,10 @@ public sealed class VatWarningsController : ControllerBase
         if (mails.Count == 0)
             return BadRequest(new { error = "There is nothing to export." });
 
-        return File(BuildMailsWorkbook(mails), XlsxContentType, $"vat-warnings-{DateTime.Now:yyyyMMdd-HHmm}.xlsx");
+        return File(
+            BuildMailsWorkbook(mails, request?.Cc),
+            XlsxContentType,
+            $"vat-warnings-{DateTime.Now:yyyyMMdd-HHmm}.xlsx");
     }
 
     // -----------------------------------------------------------------
@@ -518,7 +576,11 @@ public sealed class VatWarningsController : ControllerBase
                 Subject: subject,
                 Body: body,
                 AttachmentPath: match.Path,
-                AttachmentName: expected));
+                AttachmentName: expected,
+                // From the batch, never from the request — the same rule the recipients and the
+                // attachment follow. Nothing the browser posts can add a reader to these mails.
+                Cc: batch.Cc,
+                IncludeSignature: batch.IncludeSignature));
         }
 
         if (!_runner.TryStart(mails, request!.DryRun, ModuleName))
@@ -620,13 +682,15 @@ public sealed class VatWarningsController : ControllerBase
         return cleaned;
     }
 
-    static byte[] BuildMailsWorkbook(IReadOnlyList<VatSellerMail> mails)
+    static byte[] BuildMailsWorkbook(IReadOnlyList<VatSellerMail> mails, string? cc)
     {
         using var workbook = new XLWorkbook();
         var sheet = workbook.AddWorksheet("Mails");
 
+        // CC is one value for the whole run, but it is repeated on every row: this sheet is the record
+        // of what was sent, and a reader filtering it down to one seller still has to see who was copied.
         string[] headers =
-            ["Seller ID", "Seller", "E-mail", "Attachment", "Offers", "Address from", "Problem", "Subject", "Body"];
+            ["Seller ID", "Seller", "E-mail", "CC", "Attachment", "Products", "Address from", "Problem", "Subject", "Body"];
 
         for (var c = 0; c < headers.Length; c++)
             sheet.Cell(1, c + 1).Value = headers[c];
@@ -640,21 +704,22 @@ public sealed class VatWarningsController : ControllerBase
             sheet.Cell(row, 1).SetValue(mail.SellerId);
             sheet.Cell(row, 2).SetValue(mail.SellerName);
             sheet.Cell(row, 3).SetValue(mail.Email);
-            sheet.Cell(row, 4).SetValue(mail.AttachmentName);
-            sheet.Cell(row, 5).SetValue(mail.OfferCount);
-            sheet.Cell(row, 6).SetValue(mail.MatchedBy);
-            sheet.Cell(row, 7).SetValue(mail.Problem ?? "");
-            sheet.Cell(row, 8).SetValue(mail.Subject);
-            sheet.Cell(row, 9).SetValue(mail.Body);
+            sheet.Cell(row, 4).SetValue(mail.Problem is null ? cc ?? "" : "");
+            sheet.Cell(row, 5).SetValue(mail.AttachmentName);
+            sheet.Cell(row, 6).SetValue(mail.OfferCount);
+            sheet.Cell(row, 7).SetValue(mail.MatchedBy);
+            sheet.Cell(row, 8).SetValue(mail.Problem ?? "");
+            sheet.Cell(row, 9).SetValue(mail.Subject);
+            sheet.Cell(row, 10).SetValue(mail.Body);
         }
 
         // Ids and the body are text: an id loses its leading zeros as a number, and the body has to
         // keep the line breaks that make it a message rather than a paragraph.
         sheet.Column(1).Style.NumberFormat.Format = "@";
-        sheet.Column(9).Style.NumberFormat.Format = "@";
-        sheet.Column(9).Style.Alignment.WrapText = true;
-        sheet.Column(9).Width = 80;
-        sheet.Columns(1, 8).AdjustToContents();
+        sheet.Column(10).Style.NumberFormat.Format = "@";
+        sheet.Column(10).Style.Alignment.WrapText = true;
+        sheet.Column(10).Width = 80;
+        sheet.Columns(1, 9).AdjustToContents();
 
         using var buffer = new MemoryStream();
         workbook.SaveAs(buffer);

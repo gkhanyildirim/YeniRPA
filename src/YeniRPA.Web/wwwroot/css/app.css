@@ -1917,6 +1917,28 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   overflow-wrap: anywhere;
 }
 
+/* A hundred-odd sellers is the normal size of a VAT run. The list scrolls inside its own box so the
+   page does not grow past the Send button, and every card starts collapsed to one line. */
+.msg-list {
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.msg-card.is-collapsed .msg-body { display: none; }
+
+/* A seller with four addresses would otherwise wrap their head over three lines and undo the point of
+   collapsing. Clipped to one line; the whole thing is readable again the moment the row is opened. */
+.msg-card.is-collapsed .msg-head {
+  border-bottom: 0;
+  flex-wrap: nowrap;
+}
+.msg-card.is-collapsed .msg-meta {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .note-list {
   margin: 8px 0 0;
   padding-left: 18px;

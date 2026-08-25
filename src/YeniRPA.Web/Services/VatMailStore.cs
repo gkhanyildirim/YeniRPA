@@ -95,7 +95,14 @@ public sealed class VatMailStore
             if (file is null)
                 return Empty();
 
-            return file with { Overrides = file.Overrides ?? [] };
+            // The CC is left exactly as stored, malformed or not: refusing to load the whole settings
+            // file over a typo in one informational field would take the hand-entered addresses down
+            // with it. NormalizeCc is applied where the value is used — on save and on prepare.
+            return file with
+            {
+                Overrides = file.Overrides ?? [],
+                MinOfferCount = NormalizeMinimum(file.MinOfferCount)
+            };
         }
     }
 
@@ -123,12 +130,42 @@ public sealed class VatMailStore
         }
     }
 
+    /// <summary>
+    /// The saved minimum product count, reduced to one value for "no minimum".
+    ///
+    /// <para>Zero, a negative number and a missing field are three ways of writing the same thing: mail
+    /// every seller. Collapsed to <c>null</c> in one place so no caller has to remember to test for all
+    /// three — the one that forgot would refuse to mail anybody.</para>
+    /// </summary>
+    public static int? NormalizeMinimum(int? value) => value is > 0 ? value : null;
+
+    /// <summary>
+    /// The CC line, cleaned, or the reason it cannot be used.
+    ///
+    /// <para>Split, de-duplicated and re-joined by the same three helpers that handle a seller's own
+    /// address, so a CC cell behaves exactly like every other address cell in the app. A bad address is
+    /// named rather than dropped: silently mailing 130 sellers with no copy going anywhere is the
+    /// failure this returns a problem to prevent.</para>
+    /// </summary>
+    public static (string? Cc, string? Problem) NormalizeCc(string? raw)
+    {
+        var addresses = SellerMailStore.SplitAddresses(raw);
+        if (addresses.Count == 0)
+            return (null, null);
+
+        var bad = addresses.FirstOrDefault(a => !SellerMailStore.LooksLikeEmail(a));
+        if (bad is not null)
+            return (null, $"'{bad}' does not look like an e-mail address.");
+
+        return (SellerMailStore.JoinAddresses(addresses), null);
+    }
+
     /// <summary>The folder the workbooks should be written under: the saved one when set, the default
     /// otherwise.</summary>
     public string ResolveOutputFolder(VatMailFile file) =>
         string.IsNullOrWhiteSpace(file.OutputFolder) ? DefaultOutputFolder : file.OutputFolder.Trim();
 
-    VatMailFile Empty() => new(CurrentVersion, null, null, null, null, []);
+    VatMailFile Empty() => new(CurrentVersion, null, null, null, null, null, null, null, []);
 
     // ---------------------------------------------------------------------
     // Overrides

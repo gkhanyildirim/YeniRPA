@@ -27,6 +27,15 @@
   let lastMails = [];
   let lastUnmatched = [];
 
+  // Who this batch copies. Read back from the prepare rather than from the settings box: editing the
+  // box after a build changes nothing until the mails are built again, and the cards must show the
+  // address that will actually go out.
+  let lastCc = '';
+
+  // Whether this batch signs its mails. Same rule as lastCc: read back from the prepare, not from the
+  // checkbox, so the cards describe the batch rather than the settings box.
+  let lastSignature = false;
+
   // Identifies the batch the server prepared. Every send quotes it; a send against a batch the server
   // no longer holds is refused rather than served from a stale pairing.
   let batchId = '';
@@ -34,6 +43,16 @@
   // Which mails the operator has ticked, keyed by the server's own seller key. A Set rather than a
   // flag on each mail, so a re-render cannot silently drop a decision made about a row.
   let selected = new Set();
+
+  // Which rows are open, by the same key. A run is well over a hundred sellers, so every card starts
+  // collapsed to one line; this remembers what the operator opened, because re-rendering after a tick
+  // would otherwise shut a mail they were halfway through reading.
+  let expanded = new Set();
+
+  // The list filter. Purely a view: nothing here removes a mail from lastMails or from the selection —
+  // see updateSelectionSummary for how a hidden-but-ticked mail is reported rather than dropped.
+  let search = '';
+  let statusFilter = 'all';
 
   // The saved hand-entered addresses, as loaded. The unmatched table merges into this list.
   let overrides = [];
@@ -57,6 +76,13 @@
    * the operator's tick to a different row than the one they ticked.
    */
   function sellerKey(row) { return row.sellerKey || ''; }
+
+  /** The minimum product count as a number the server can act on. A blank or nonsense box is 0, which
+   * is the same statement as "no minimum" — never a threshold nobody typed. */
+  function minProducts() {
+    const value = Math.floor(Number(el('vw-min-products').value));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
 
   // ---------------------------------------------------------------------------
   // Outlook + status
@@ -254,10 +280,13 @@
     renderOverrides();
     renderSettingsWarnings(data.warnings);
 
+    el('vw-cc').value = data.ccAddresses || '';
+    el('vw-signature').checked = !!data.includeSignature;
     el('vw-subject').value = data.subjectTemplate || '';
     el('vw-body').value = data.bodyTemplate || '';
     el('vw-folder').value = data.outputFolder || '';
     el('vw-sheet').value = data.defaultSheetName || '';
+    el('vw-min-products').value = data.minOfferCount || 0;
     el('vw-settings-path').textContent = data.path || '';
     el('vw-settings-updated').textContent = data.updatedUtc ? 'Last saved ' + data.updatedUtc : 'Never saved';
     el('vw-output-summary').textContent = 'Default: ' + (data.defaultOutputFolder || '');
@@ -267,12 +296,16 @@
       .join(' ');
   }
 
-  /** Writes the whole settings file: the wording, the folder and every hand-entered address. */
+  /** Writes the whole settings file: the wording, the folder, the threshold and every hand-entered
+   * address. */
   async function putSettings(entries) {
     const result = await sendJsonMethod('PUT', '/api/vat-warnings/settings', {
       subjectTemplate: el('vw-subject').value,
       bodyTemplate: el('vw-body').value,
       outputFolder: el('vw-folder').value,
+      minOfferCount: minProducts(),
+      ccAddresses: el('vw-cc').value,
+      includeSignature: el('vw-signature').checked,
       overrides: entries
     });
 
@@ -281,7 +314,15 @@
     overrides = result.overrides || [];
     renderOverrides();
     renderSettingsWarnings(result.warnings);
-    el('vw-settings-updated').textContent = 'Saved just now · ' + result.saved + ' hand-entered address(es)';
+    // What came back, not what was typed: the server splits and de-duplicates the CC line, so the box
+    // shows the value that was actually stored.
+    el('vw-min-products').value = result.minOfferCount || 0;
+    el('vw-cc').value = result.ccAddresses || '';
+    el('vw-signature').checked = !!result.includeSignature;
+    el('vw-settings-updated').textContent = 'Saved just now · ' + result.saved + ' hand-entered address(es)' +
+      (result.minOfferCount ? ' · minimum ' + RPA.fmtInt(result.minOfferCount) + ' products' : '') +
+      (result.ccAddresses ? ' · cc ' + result.ccAddresses : '') +
+      (result.includeSignature ? ' · signed' : '');
     return result;
   }
 
@@ -328,14 +369,14 @@
     el('vw-unmatched').hidden = lastUnmatched.length === 0;
     if (!lastUnmatched.length) return;
 
-    // Sorted by how many offers are waiting on the address: that is the one number that says which of
-    // these rows is worth chasing first.
+    // Sorted by how many products are waiting on the address: that is the one number that says which
+    // of these rows is worth chasing first.
     const rows = lastUnmatched.slice().sort((a, b) => b.offerCount - a.offerCount);
 
     el('vw-unmatched-body').innerHTML = rows.map(unmatchedRowHtml).join('');
     el('vw-unmatched-summary').textContent =
       RPA.fmtInt(rows.length) + ' seller(s) · ' +
-      RPA.fmtInt(rows.reduce((sum, r) => sum + r.offerCount, 0)) + ' offer(s) waiting on an address';
+      RPA.fmtInt(rows.reduce((sum, r) => sum + r.offerCount, 0)) + ' product(s) waiting on an address';
   }
 
   /**
@@ -395,6 +436,7 @@
     return [
       { label: 'Sellers in the export', count: funnel.sellersInFile },
       { label: 'Ready to send', count: funnel.ready },
+      { label: 'Under the minimum product count', count: funnel.belowMinimum },
       { label: 'No address for this seller', count: funnel.noEmail },
       { label: 'An address does not look valid', count: funnel.invalidEmail },
       { label: 'Address list gives two different addresses', count: funnel.ambiguousEmail },
@@ -413,16 +455,43 @@
     el('vw-warnings-list').innerHTML = warnings.map(w => '<li>' + RPA.escapeHtml(w) + '</li>').join('');
   }
 
-  function mailCardHtml(mail, index) {
+  /**
+   * The mails the filter currently shows. Only ever a view over lastMails — the selection, the send
+   * and the export all keep reading the full list, so a filter can never quietly drop a seller.
+   */
+  function visibleMails() {
+    // RPA.fold, not toLowerCase: an operator typing "yörük" has to find "YÖRÜK", and the two only
+    // agree under the app's own Turkish-aware folding.
+    const needle = RPA.fold(search);
+
+    return lastMails.filter(function (mail) {
+      if (statusFilter === 'ready' && mail.problem) return false;
+      if (statusFilter === 'problem' && !mail.problem) return false;
+      if (!needle) return true;
+
+      const haystack = [mail.sellerName, mail.sellerId, mail.email, mail.attachmentName]
+        .filter(Boolean).join(' ');
+
+      return RPA.fold(haystack).indexOf(needle) >= 0;
+    });
+  }
+
+  function mailCardHtml(mail) {
     const broken = !!mail.problem;
+    const key = sellerKey(mail);
     const recipients = mail.recipients || [];
+    const open = expanded.has(key);
+    const bodyId = 'vw-body-' + RPA.fold(key).replace(/[^a-z0-9]+/g, '-');
 
     // The seller is the label on the badge, because the seller is what identifies the mail — and it
     // is the seller/attachment pairing that has to be read to catch a wrong row.
+    //
+    // The checkbox carries the seller key, never an index into lastMails: the list is filtered, so an
+    // index would point at a different seller than the one the operator ticked.
     const head = broken
       ? '<span class="badge amber">' + RPA.escapeHtml(mail.problem) + '</span>'
-      : '<label class="check"><input type="checkbox" class="vw-pick" data-index="' + index + '"' +
-        (selected.has(sellerKey(mail)) ? ' checked' : '') + ' />' +
+      : '<label class="check"><input type="checkbox" class="vw-pick" data-key="' + RPA.escapeHtml(key) + '"' +
+        (selected.has(key) ? ' checked' : '') + ' />' +
         '<span class="badge green">' + RPA.escapeHtml(mail.sellerName || mail.email) + '</span></label>';
 
     const attachment = mail.attachmentName
@@ -438,13 +507,28 @@
     // A hand-entered address is visibly hand-entered: it is the one the operator is answerable for.
     const source = mail.matchedBy === 'override' ? ' · ✎ entered by hand' : '';
 
-    return '<div class="msg-card">' +
+    // Shown on every card that will actually go out. This is a CC, so the seller sees it too — the
+    // operator should be reading it beside the seller's own address, not remembering it.
+    const copy = (lastCc && !broken) ? ' · cc ' + RPA.escapeHtml(lastCc) : '';
+
+    // The preview below the head is the plain-text body; Outlook appends the signature at send time,
+    // so this marker is the only place a card can say it is coming.
+    const signed = (lastSignature && !broken) ? ' · ✒ signed' : '';
+
+    return '<div class="msg-card' + (open ? '' : ' is-collapsed') + '" data-key="' + RPA.escapeHtml(key) + '">' +
       '<div class="msg-head">' +
         head +
-        '<span class="msg-meta">✉ ' + to + ' · 📎 ' + attachment +
-          ' · ' + RPA.fmtInt(mail.offerCount) + ' offer(s)' + source + '</span>' +
+        '<span class="msg-meta">✉ ' + to + copy + ' · 📎 ' + attachment +
+          ' · ' + RPA.fmtInt(mail.offerCount) + ' product(s)' + source + signed + '</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm vw-toggle" aria-controls="' + bodyId + '"' +
+          ' aria-expanded="' + (open ? 'true' : 'false') + '">' +
+          '<span class="spinner" aria-hidden="true"></span>' +
+          '<span class="btn-text">' + (open ? 'Hide mail' : 'Show mail') + '</span>' +
+        '</button>' +
       '</div>' +
-      '<pre class="msg-body">' + RPA.escapeHtml(mail.subject) + '\n\n' + RPA.escapeHtml(mail.body) + '</pre>' +
+      '<pre class="msg-body" id="' + bodyId + '">' +
+        RPA.escapeHtml(mail.subject) + '\n\n' + RPA.escapeHtml(mail.body) +
+      '</pre>' +
     '</div>';
   }
 
@@ -456,8 +540,14 @@
     const ready = lastMails.filter(m => !m.problem).length;
     const picked = selectedMails().length;
 
+    // A ticked mail the filter is hiding still goes out. Said out loud rather than unticked behind the
+    // operator's back: silently changing what they chose is the worse of the two surprises.
+    const shownKeys = new Set(visibleMails().map(sellerKey));
+    const hiddenPicked = selectedMails().filter(m => !shownKeys.has(sellerKey(m))).length;
+
     el('vw-mails-summary').textContent = ready
-      ? RPA.fmtInt(picked) + ' of ' + RPA.fmtInt(ready) + ' selected'
+      ? RPA.fmtInt(picked) + ' of ' + RPA.fmtInt(ready) + ' selected' +
+        (hiddenPicked ? ' · ' + RPA.fmtInt(hiddenPicked) + ' of them hidden by the filter' : '')
       : '';
 
     el('vw-send').disabled = running || picked === 0;
@@ -465,9 +555,17 @@
   }
 
   function renderMails() {
+    const shown = visibleMails();
+
     el('vw-mails').innerHTML = lastMails.length
-      ? lastMails.map(mailCardHtml).join('')
+      ? (shown.length
+          ? shown.map(mailCardHtml).join('')
+          : '<div class="empty-state">No seller matches this filter.</div>')
       : '<div class="empty-state">No mail to compose — the export named no sellers.</div>';
+
+    el('vw-shown-summary').textContent = lastMails.length
+      ? RPA.fmtInt(shown.length) + ' of ' + RPA.fmtInt(lastMails.length) + ' sellers shown'
+      : '';
 
     updateSelectionSummary();
   }
@@ -475,14 +573,24 @@
   function renderPrepared(data) {
     lastMails = data.mails || [];
     lastUnmatched = data.unmatched || [];
+    lastCc = data.cc || '';
+    lastSignature = !!data.includeSignature;
     batchId = data.batchId || '';
 
     // Everything that can be sent starts ticked: the operator's job here is to spot the row that
     // should not go, not to tick 123 boxes to get the normal case.
     selected = new Set(lastMails.filter(m => !m.problem).map(sellerKey));
 
+    // A fresh run is a fresh list: last run's open rows and typed filter would hide sellers this one
+    // has never shown the operator.
+    expanded = new Set();
+    search = '';
+    statusFilter = 'all';
+    el('vw-search').value = '';
+    el('vw-filter-status').value = 'all';
+
     RPA.setExportContext(
-      RPA.fmtInt(data.offersInFile) + ' offers · ' +
+      RPA.fmtInt(data.offersInFile) + ' offer rows · ' +
       RPA.fmtInt(data.directoryRows) + ' address rows · ' + data.date);
 
     renderWarnings(data.warnings);
@@ -523,6 +631,7 @@
       form.append('sheetName', el('vw-sheet').value);
       form.append('subjectTemplate', el('vw-subject').value);
       form.append('bodyTemplate', el('vw-body').value);
+      form.append('minOfferCount', minProducts());
 
       renderPrepared(await RPA.postJson('/api/vat-warnings/prepare', form));
     } catch (err) {
@@ -558,7 +667,17 @@
       : '\n\nThis holds the automation slot for roughly ' +
         Math.max(1, Math.round(mails.length * 3.5 / 60)) + ' minute(s).';
 
-    return window.confirm(heading + '\n\n  ' + shown.join('\n  ') + tail + slotWarning);
+    // Stated once, above the list, because it applies to every line of it — and stated at all because
+    // a CC is visible to each of these sellers.
+    const copy = lastCc
+      ? '\n\nEvery one of them also copies ' + lastCc + ', visibly.'
+      : '';
+
+    const signature = lastSignature
+      ? '\nYour Outlook signature goes under each one.'
+      : '';
+
+    return window.confirm(heading + copy + signature + '\n\n  ' + shown.join('\n  ') + tail + slotWarning);
   }
 
   async function send() {
@@ -655,7 +774,8 @@
       RPA.clearError('vw-mails-alert');
       RPA.setBusy(button, true, 'Building…');
       try {
-        await RPA.postDownloadJson('/api/vat-warnings/mails/excel', { mails: lastMails }, 'vat-warnings.xlsx');
+        await RPA.postDownloadJson(
+          '/api/vat-warnings/mails/excel', { mails: lastMails, cc: lastCc }, 'vat-warnings.xlsx');
       } catch (err) {
         RPA.showError('vw-mails-alert', err.message);
       } finally {
@@ -680,8 +800,32 @@
       el('vw-body').value = defaultBody;
     });
 
+    // Both filters re-render rather than hiding nodes, so the "N of M shown" count and the card list
+    // can never disagree about what the operator is looking at.
+    el('vw-search').addEventListener('input', function () {
+      search = this.value;
+      renderMails();
+    });
+
+    el('vw-filter-status').addEventListener('change', function () {
+      statusFilter = this.value;
+      renderMails();
+    });
+
+    el('vw-expand-all').addEventListener('click', function () {
+      visibleMails().forEach(m => expanded.add(sellerKey(m)));
+      renderMails();
+    });
+
+    el('vw-collapse-all').addEventListener('click', function () {
+      expanded = new Set();
+      renderMails();
+    });
+
+    // Selects what is on screen, not the whole run: after filtering to "Not sendable" or to one seller
+    // name, "everything" means the rows the operator can actually see.
     el('vw-select-all').addEventListener('click', function () {
-      selected = new Set(lastMails.filter(m => !m.problem).map(sellerKey));
+      visibleMails().filter(m => !m.problem).forEach(m => selected.add(sellerKey(m)));
       renderMails();
     });
 
@@ -695,13 +839,32 @@
       const box = event.target.closest('.vw-pick');
       if (!box) return;
 
-      const mail = lastMails[Number(box.dataset.index)];
+      // Found by key, never by position — see mailCardHtml.
+      const mail = lastMails.find(m => sellerKey(m) === box.dataset.key);
       if (!mail) return;
 
       if (box.checked) selected.add(sellerKey(mail));
       else selected.delete(sellerKey(mail));
 
       updateSelectionSummary();
+    });
+
+    // Opening a row touches that row only. Re-rendering the list here would jump the scroll position
+    // back to the top, which in a hundred-row list loses the operator's place entirely.
+    el('vw-mails').addEventListener('click', function (event) {
+      const button = event.target.closest('.vw-toggle');
+      if (!button) return;
+
+      const card = button.closest('.msg-card');
+      if (!card) return;
+
+      const open = card.classList.toggle('is-collapsed') === false;
+
+      if (open) expanded.add(card.dataset.key);
+      else expanded.delete(card.dataset.key);
+
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+      button.querySelector('.btn-text').textContent = open ? 'Hide mail' : 'Show mail';
     });
 
     // app.js selects the initial module while running its own DOMContentLoaded handler, which is
