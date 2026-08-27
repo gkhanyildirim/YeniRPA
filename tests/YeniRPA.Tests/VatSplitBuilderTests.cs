@@ -12,7 +12,7 @@ public class VatSplitBuilderTests
 {
     /// <summary>Exactly what the Mirakl export writes, lower-case <c>gtin</c> included — the column
     /// name this module silently failed to find for as long as the tests spelled it "EAN".</summary>
-    const string Headers = "Seller id;Seller;Offer id;Product Title;gtin;Product Brand";
+    const string Headers = "Seller id;Seller;Offer id;Product Title;gtin;Product Brand;State Reasons";
 
     /// <summary>Semicolons, so a product title full of commas stays one cell.</summary>
     static VatSplitBuilder.SplitResult Read(string body)
@@ -29,9 +29,9 @@ public class VatSplitBuilderTests
     public void OffersAreGroupedByTheSellerTheExportNames()
     {
         var result = Read(
-            "11835;Prodesk;1805444610;LEGO Icons;5702017829159;LEGO\n" +
-            "11476;BL Müzik;1812641455;Strum Buddy;858445004684;FLUID\n" +
-            "11835;Prodesk;1805444082;LEGO Optimus;673419355704;LEGO\n");
+            "11835;Prodesk;1805444610;LEGO Icons;5702017829159;LEGO;VAT_RATE_MISSING\n" +
+            "11476;BL Müzik;1812641455;Strum Buddy;858445004684;FLUID;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;1805444082;LEGO Optimus;673419355704;LEGO;VAT_RATE_MISSING\n");
 
         Assert.Equal(3, result.OffersInFile);
         Assert.Equal(2, result.Sellers.Count);
@@ -52,7 +52,7 @@ public class VatSplitBuilderTests
     [Fact]
     public void TheGtinColumnIsFoundUnderItsMiraklName()
     {
-        var result = Read("11835;Prodesk;o1;LEGO Icons;5702017829159;LEGO\n");
+        var result = Read("11835;Prodesk;o1;LEGO Icons;5702017829159;LEGO;VAT_RATE_MISSING\n");
 
         Assert.Equal("5702017829159", result.Sellers.Single().Offers.Single().Gtin);
     }
@@ -73,7 +73,9 @@ public class VatSplitBuilderTests
     public void AGtinIsPaddedToThirteenDigits(string cell, string expected)
     {
         Assert.Equal(expected, VatSplitBuilder.NormalizeGtin(cell));
-        Assert.Equal(expected, Read($"11835;Prodesk;o1;t;{cell};LEGO\n").Sellers.Single().Offers.Single().Gtin);
+        Assert.Equal(
+            expected,
+            Read($"11835;Prodesk;o1;t;{cell};LEGO;VAT_RATE_MISSING\n").Sellers.Single().Offers.Single().Gtin);
     }
 
     /// <summary>
@@ -85,8 +87,8 @@ public class VatSplitBuilderTests
     public void TheSameProductIsListedOnce()
     {
         var result = Read(
-            "11835;Prodesk;1805444610;LEGO Icons;5702017829159;LEGO\n" +
-            "11835;Prodesk;1805444082;LEGO Icons;5702017829159;LEGO\n");
+            "11835;Prodesk;1805444610;LEGO Icons;5702017829159;LEGO;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;1805444082;LEGO Icons;5702017829159;LEGO;VAT_RATE_MISSING\n");
 
         var seller = Assert.Single(result.Sellers);
         Assert.Equal("5702017829159", Assert.Single(seller.Offers).Gtin);
@@ -101,8 +103,8 @@ public class VatSplitBuilderTests
     public void APaddedGtinAndAnUnpaddedOneAreTheSameProduct()
     {
         var result = Read(
-            "11476;BL Müzik;o1;Strum Buddy;858445004684;FLUID\n" +
-            "11476;BL Müzik;o2;Strum Buddy;0858445004684;FLUID\n");
+            "11476;BL Müzik;o1;Strum Buddy;858445004684;FLUID;VAT_RATE_MISSING\n" +
+            "11476;BL Müzik;o2;Strum Buddy;0858445004684;FLUID;VAT_RATE_MISSING\n");
 
         Assert.Equal("0858445004684", Assert.Single(Assert.Single(result.Sellers).Offers).Gtin);
     }
@@ -113,9 +115,9 @@ public class VatSplitBuilderTests
     public void ProductsWithNoGtinAreNotCollapsedTogether()
     {
         var result = Read(
-            "11835;Prodesk;o1;LEGO Icons;;LEGO\n" +
-            "11835;Prodesk;o2;LEGO Optimus;;LEGO\n" +
-            "11835;Prodesk;o3;LEGO Icons;;LEGO\n");
+            "11835;Prodesk;o1;LEGO Icons;;LEGO;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;o2;LEGO Optimus;;LEGO;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;o3;LEGO Icons;;LEGO;VAT_RATE_MISSING\n");
 
         var seller = Assert.Single(result.Sellers);
         Assert.Equal(["LEGO Icons", "LEGO Optimus"], seller.Offers.Select(o => o.ProductTitle));
@@ -127,8 +129,8 @@ public class VatSplitBuilderTests
     public void OneSellerIdUnderTwoNamesIsStillOneSeller()
     {
         var result = Read(
-            "12953;VintageOnline;o1;t1;5702017829159;\n" +
-            "12953;Vintage Online;o2;t2;673419355704;\n");
+            "12953;VintageOnline;o1;t1;5702017829159;;VAT_RATE_MISSING\n" +
+            "12953;Vintage Online;o2;t2;673419355704;;VAT_RATE_MISSING\n");
 
         var seller = Assert.Single(result.Sellers);
         Assert.Equal(2, seller.Offers.Count);
@@ -142,8 +144,8 @@ public class VatSplitBuilderTests
     public void RowsThatNameNoSellerAreCountedAndReported()
     {
         var result = Read(
-            "11835;Prodesk;o1;t;5702017829159;LEGO\n" +
-            ";;o2;orphan;673419355704;LEGO\n");
+            "11835;Prodesk;o1;t;5702017829159;LEGO;VAT_RATE_MISSING\n" +
+            ";;o2;orphan;673419355704;LEGO;VAT_RATE_MISSING\n");
 
         Assert.Equal(2, result.OffersInFile);
         Assert.Single(result.Sellers);
@@ -154,10 +156,90 @@ public class VatSplitBuilderTests
     [Fact]
     public void TrailingBlankLinesAreNotOffers()
     {
-        var result = Read("11835;Prodesk;o1;t;5702017829159;LEGO\n;;;;;\n;;;;;\n");
+        var result = Read("11835;Prodesk;o1;t;5702017829159;LEGO;VAT_RATE_MISSING\n;;;;;;\n;;;;;;\n");
 
         Assert.Equal(1, result.OffersInFile);
+
+        // Blank lines are not rows at all, so they are not "filtered out" either.
+        Assert.Equal(0, result.OffersFilteredOut);
         Assert.Empty(result.Warnings);
+    }
+
+    // ---------------------------------------------------------------------
+    // The state-reason filter
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// <b>The rule this filter exists for.</b> An offer that is also switched off, out of stock or
+    /// priced at zero has a bigger problem than its VAT rate, and asking its seller to fix the VAT
+    /// rate is the wrong message. Only offers whose sole complaint is the missing VAT rate are warned
+    /// about — the export writes the others alongside it in the same cell.
+    /// </summary>
+    [Fact]
+    public void OnlyOffersWhoseSoleStateReasonIsTheMissingVatRateAreWarnedAbout()
+    {
+        var result = Read(
+            "11835;Prodesk;o1;LEGO Icons;5702017829159;LEGO;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;o2;LEGO Optimus;673419355704;LEGO;INACTIVE_IN_MIRAKL,MIRAKL_ZERO_QUANTITY,VAT_RATE_MISSING\n" +
+            "11476;BL Müzik;o3;Strum Buddy;858445004684;FLUID;SELLER_NOT_AUTHORIZED_TO_SELL_REFURBISHED,VAT_RATE_MISSING\n");
+
+        // One row survived, and it is the one that names nothing else.
+        Assert.Equal(1, result.OffersInFile);
+        Assert.Equal(2, result.OffersFilteredOut);
+
+        var seller = Assert.Single(result.Sellers);
+        Assert.Equal("11835", seller.SellerId);
+        Assert.Equal("LEGO Icons", Assert.Single(seller.Offers).ProductTitle);
+    }
+
+    /// <summary>The filter runs before the grouping, so a seller is only in the run for the offers
+    /// that survived it — not for every offer the export lists against their name.</summary>
+    [Fact]
+    public void ASellerCarriesOnlyTheOffersThatSurvivedTheFilter()
+    {
+        var result = Read(
+            "11835;Prodesk;o1;LEGO Icons;5702017829159;LEGO;INACTIVE_IN_MIRAKL,VAT_RATE_MISSING\n" +
+            "11835;Prodesk;o2;LEGO Optimus;673419355704;LEGO;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;o3;LEGO Creator;5702017829160;LEGO;PRICE_IS_ZERO,VAT_RATE_MISSING\n");
+
+        var seller = Assert.Single(result.Sellers);
+        Assert.Equal("LEGO Optimus", Assert.Single(seller.Offers).ProductTitle);
+    }
+
+    /// <summary>A file in which nothing carries the reason on its own leaves nobody to mail, rather
+    /// than falling back to mailing everybody.</summary>
+    [Fact]
+    public void AnExportWhereEveryRowNamesAnotherReasonLeavesNoSellers()
+    {
+        var result = Read(
+            "11835;Prodesk;o1;LEGO Icons;5702017829159;LEGO;INACTIVE_IN_MIRAKL,VAT_RATE_MISSING\n" +
+            "11476;BL Müzik;o2;Strum Buddy;858445004684;FLUID;PRICE_IS_ZERO\n");
+
+        Assert.Empty(result.Sellers);
+        Assert.Equal(0, result.OffersInFile);
+        Assert.Equal(2, result.OffersFilteredOut);
+    }
+
+    /// <summary>
+    /// The cell is a comma-joined list, so the rule is "reduces to exactly this one reason", not
+    /// "contains it". Spacing and casing are the export's business, not the seller's.
+    /// </summary>
+    [Theory]
+    [InlineData("VAT_RATE_MISSING", true)]
+    [InlineData("  VAT_RATE_MISSING  ", true)]
+    [InlineData("vat_rate_missing", true)]
+    // A trailing separator writes an empty reason, not a second one.
+    [InlineData("VAT_RATE_MISSING,", true)]
+    [InlineData("INACTIVE_IN_MIRAKL,VAT_RATE_MISSING", false)]
+    [InlineData("VAT_RATE_MISSING,MIRAKL_ZERO_QUANTITY", false)]
+    [InlineData("VAT_RATE_MISSING, VAT_RATE_MISSING", false)]
+    [InlineData("PRICE_IS_ZERO", false)]
+    // A row that states no reason at all is not a row that states this one.
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    public void AStateReasonCellCountsOnlyWhenItReducesToTheOneReason(string cell, bool expected)
+    {
+        Assert.Equal(expected, VatSplitBuilder.IsVatRateMissingOnly(cell));
     }
 
     // ---------------------------------------------------------------------
@@ -270,6 +352,21 @@ public class VatSplitBuilderTests
 
         var error = Assert.Throws<InvalidOperationException>(() => VatSplitBuilder.Read(stream, "x.csv"));
         Assert.Contains("gtin", error.Message);
+    }
+
+    /// <summary>
+    /// The column this module selects on. An export that renamed it would match nothing, and rather
+    /// than warning nobody the module would fall back to warning everybody — every offer in the file
+    /// mailed to its seller as a VAT problem. So the file is refused by name instead.
+    /// </summary>
+    [Fact]
+    public void AnExportWithNoStateReasonsColumnIsRefusedByName()
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(
+            "Seller;Offer id;Product Title;gtin\nProdesk;o1;t;5702017829159\n"));
+
+        var error = Assert.Throws<InvalidOperationException>(() => VatSplitBuilder.Read(stream, "x.csv"));
+        Assert.Contains("State Reasons", error.Message);
     }
 
     /// <summary>The seller key follows <c>SellerGroupMap.Resolve</c>'s precedence: id when there is

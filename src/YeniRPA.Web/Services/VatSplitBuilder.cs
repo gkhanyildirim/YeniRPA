@@ -23,6 +23,11 @@ public static class VatSplitBuilder
     static readonly string[] TitleHeaders = ["Product Title", "Product title", "Ürün Adı"];
     static readonly string[] GtinHeaders = ["gtin", "GTIN", "EAN", "Barkod"];
     static readonly string[] BrandHeaders = ["Product Brand", "Brand", "Marka"];
+    static readonly string[] StateReasonHeaders =
+        ["State Reasons", "State Reason", "StateReasons", "Durum Nedeni"];
+
+    /// <summary>The one state reason this module warns about. See <see cref="IsVatRateMissingOnly"/>.</summary>
+    public const string VatRateMissing = "VAT_RATE_MISSING";
 
     /// <summary>The number of digits a GTIN-13 has, and what a shorter one is padded out to. See
     /// <see cref="NormalizeGtin"/>.</summary>
@@ -36,7 +41,15 @@ public static class VatSplitBuilder
 
     public sealed record SplitResult(
         IReadOnlyList<VatSellerGroup> Sellers,
+
+        /// <summary>Rows whose only state reason is <see cref="VatRateMissing"/>, before duplicate
+        /// products are folded together.</summary>
         int OffersInFile,
+
+        /// <summary>Rows the state-reason filter dropped. Reported so "40 sellers out of a 1 600-row
+        /// export" reads as the filter working rather than as most of the file having gone missing.</summary>
+        int OffersFilteredOut,
+
         IReadOnlyList<string> Warnings);
 
     /// <summary>Reads the export and groups it by seller, in the order the sellers first appear.</summary>
@@ -77,6 +90,14 @@ public static class VatSplitBuilder
 
         var cBrand = FindColumn(header, BrandHeaders);
 
+        // Required for the obvious reason: it is what this module filters on. An export that renamed
+        // this column would otherwise match nothing, and rather than warning nobody it would fall
+        // back to warning everybody — every offer in the file mailed to its seller as a VAT problem.
+        var cState = FindColumn(header, StateReasonHeaders)
+            ?? throw new InvalidOperationException(
+                $"Required column '{StateReasonHeaders[0]}' was not found in the offer export. " +
+                "That is the column this module selects on — check the file.");
+
         var dataRows = table.Count - 1;
         if (dataRows > MaxOfferRows)
         {
@@ -91,6 +112,7 @@ public static class VatSplitBuilder
         var order = new List<string>();
 
         var offersInFile = 0;
+        var offersFilteredOut = 0;
         var rowsWithNoSeller = 0;
 
         foreach (var row in table.Skip(1))
@@ -100,11 +122,23 @@ public static class VatSplitBuilder
 
             var offerId = TabularFile.GetCell(row, cOffer).Trim();
             var title = TabularFile.GetCell(row, cTitle).Trim();
+            var state = TabularFile.GetCell(row, cState);
 
             // A completely blank line at the end of a sheet is not a row; the used range often runs
             // past the data. Only rows that carry something are counted.
-            if (id.Length == 0 && name.Length == 0 && offerId.Length == 0 && title.Length == 0)
+            if (id.Length == 0 && name.Length == 0 && offerId.Length == 0 && title.Length == 0 &&
+                state.Trim().Length == 0)
                 continue;
+
+            // Before the row is counted as ours: an offer that is also inactive, out of stock or
+            // priced at zero has a bigger problem than its VAT rate, and telling its seller to fix
+            // the VAT rate is the wrong message. Only offers whose sole complaint is the missing VAT
+            // rate are warned about.
+            if (!IsVatRateMissingOnly(state))
+            {
+                offersFilteredOut++;
+                continue;
+            }
 
             offersInFile++;
 
@@ -160,7 +194,28 @@ public static class VatSplitBuilder
                 $"'{builder.SellerName}' is the one used in the mail.");
         }
 
-        return new SplitResult(sellers, offersInFile, warnings);
+        return new SplitResult(sellers, offersInFile, offersFilteredOut, warnings);
+    }
+
+    /// <summary>
+    /// Whether a <c>State Reasons</c> cell says the missing VAT rate is this offer's <em>only</em>
+    /// problem.
+    ///
+    /// <para>The export writes this column as a comma-joined list — an offer can arrive as
+    /// <c>INACTIVE_IN_MIRAKL,MIRAKL_ZERO_QUANTITY,VAT_RATE_MISSING</c>. A substring test would accept
+    /// that row, and its seller would be asked to fix a VAT rate on an offer that is switched off and
+    /// out of stock. So the cell must reduce to exactly one reason, and that reason must be
+    /// <see cref="VatRateMissing"/>.</para>
+    ///
+    /// <para>An empty cell is <c>false</c>: a row that states no reason at all is not a row that
+    /// states this one.</para>
+    /// </summary>
+    public static bool IsVatRateMissingOnly(string raw)
+    {
+        var reasons = (raw ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return reasons.Length == 1 &&
+               string.Equals(reasons[0], VatRateMissing, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---------------------------------------------------------------------

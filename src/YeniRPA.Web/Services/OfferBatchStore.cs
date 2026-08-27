@@ -7,10 +7,10 @@ namespace YeniRPA.Web.Services;
 /// which seller — so <c>send</c> can read it back instead of trusting the browser.
 ///
 /// <para><b>Why this exists at all.</b> The pairing is computed from two uploaded files and is written
-/// down nowhere else, so if it were not held here the only copy at send time would be the one in the
-/// browser. Taking a client-supplied address or path is how an automation ends up mailing one seller's
-/// complete price list to another. The twin of <see cref="OfferBatchStore"/>, kept separate for the
-/// same reason the two split builders are.</para>
+/// down nowhere else, so without this the only copy at send time would be the one in the browser.
+/// Taking a client-supplied address or path is how an automation ends up mailing one seller's complete
+/// offer list to another. The twin of <see cref="VatBatchStore"/>, kept separate for the same reason
+/// the two split builders are.</para>
 ///
 /// <para>Exactly one batch is kept: the most recent prepare. A send naming an older batch is refused
 /// rather than served from a stale pairing — build the mails again and read the list.</para>
@@ -19,17 +19,17 @@ namespace YeniRPA.Web.Services;
 /// re-prepare), and it holds every seller's address, which is not something to persist for no
 /// gain.</para>
 /// </summary>
-public sealed class VatBatchStore
+public sealed class OfferBatchStore
 {
     readonly object _sync = new();
-    VatBatch? _current;
+    OfferBatch? _current;
 
     /// <summary>Replaces the held batch with a new one and returns it.</summary>
-    public VatBatch Put(string outputFolder, string? cc, bool includeSignature, IEnumerable<VatBatchMail> mails)
+    public OfferBatch Put(string outputFolder, string? cc, bool includeSignature, IEnumerable<OfferBatchMail> mails)
     {
         ArgumentNullException.ThrowIfNull(mails);
 
-        var bySellerKey = new Dictionary<string, VatBatchMail>(StringComparer.Ordinal);
+        var bySellerKey = new Dictionary<string, OfferBatchMail>(StringComparer.Ordinal);
         foreach (var mail in mails)
         {
             // Last one wins rather than throwing: prepare builds one entry per seller group, so a
@@ -37,7 +37,7 @@ public sealed class VatBatchStore
             bySellerKey[mail.SellerKey] = mail;
         }
 
-        var batch = new VatBatch(
+        var batch = new OfferBatch(
             BatchId: Guid.NewGuid().ToString("N"),
             OutputFolder: outputFolder,
             CreatedUtc: DateTimeOffset.UtcNow,
@@ -53,7 +53,7 @@ public sealed class VatBatchStore
 
     /// <summary>The held batch when <paramref name="batchId"/> names it, <c>null</c> otherwise —
     /// including when it names a batch that has since been replaced.</summary>
-    public VatBatch? Get(string? batchId)
+    public OfferBatch? Get(string? batchId)
     {
         if (string.IsNullOrWhiteSpace(batchId))
             return null;
@@ -63,7 +63,7 @@ public sealed class VatBatchStore
     }
 
     /// <summary>The held batch, whatever its id. For the status endpoint.</summary>
-    public VatBatch? Current
+    public OfferBatch? Current
     {
         get { lock (_sync) return _current; }
     }

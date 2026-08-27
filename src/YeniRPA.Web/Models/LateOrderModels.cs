@@ -141,4 +141,12 @@ public sealed record RenderedMessage(
 
     /// <summary>Placeholders in the template that are not recognised, so the panel can point at the
     /// typo instead of shipping "Merhaba ," to a seller.</summary>
-    [property: JsonPropertyName("unknownPlaceholders")] IReadOnlyList<string> UnknownPlaceholders);
+    [property: JsonPropertyName("unknownPlaceholders")] IReadOnlyList<string> UnknownPlaceholders,
+
+    /// <summary>
+    /// How many seller accounts this one message covers. Normally 1; more when the operator has mapped
+    /// two accounts of the same company to the same WhatsApp group, and their overdue orders were
+    /// merged rather than sent as two messages to one group. Last in the record so the panel's
+    /// post-back of a rendered message keeps deserialising.
+    /// </summary>
+    [property: JsonPropertyName("accountCount")] int AccountCount);

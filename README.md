@@ -8,8 +8,9 @@ with tab navigation between them and results rendered in place.
 | **Order Report** (Late Shipment & Cancellation) | `orders.xlsx` | In-page dashboard (20 KPIs, 8 charts, 5 tables, 2 ranked lists), filterable by date range and seller + 4-sheet Excel workbook |
 | **Return SLA Report** | `orders` export + 1–2 return tracking templates (`.xlsx` or `.csv`) | In-page dashboard (6 KPIs, 4 tables) |
 | **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
-| **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per seller (copy to clipboard or export to Excel) |
-| **Seller Offer Warnings** | The seller → e-mail → attachment mapping + a folder of per-seller offer workbooks | One warning mail per seller with that seller's own offer list attached, previewed in full, then sent through Outlook with a live run log |
+| **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per WhatsApp group (copy to clipboard or export to Excel) |
+| **Seller Offer Warnings** | The Mirakl `offers` export + the seller address list (`Onboarding Check List.xlsx`, sheet `Data`) | One `.xlsx` per seller listing their offers with a lead time to ship of 1–2 days, then one warning mail per seller carrying their own file, previewed in full and sent through Outlook with a live run log |
+| **Seller VAT Warnings** | The "offers with no VAT rate" export (needs a `State Reasons` column) + the same seller address list | One `.xlsx` per seller listing the products whose *only* state reason is `VAT_RATE_MISSING`, mailed the same way |
 | **Title Cleaner** | A product export (`.xlsx` or `.csv`) with a title column and attribute columns | Each title stripped of what that row's own attributes name, the cells that disagreed with their title, and the cells completed from it — previewed in full, then a 3-sheet workbook |
 | **Data & Methodology** | — | Reference page: source column per metric, calculation rules, known export traps, limits |
 
@@ -17,16 +18,19 @@ The reports are read-only: they never leave the machine and nothing is stored. *
 not** — it drives a real browser against the Mirakl back office and writes to the marketplace. See
 [Create Return](#create-return-automation). **Late Order Warnings is not either**, and goes further:
 it posts messages to external parties in WhatsApp groups, and a sent message cannot be recalled. See
-[Late Order Warnings](#late-order-warnings). **Seller Offer Warnings** is the same class of thing
-again, with one extra hazard: every mail carries a commercially sensitive attachment, so the file
-that goes out matters as much as the address. See
+[Late Order Warnings](#late-order-warnings). **Seller Offer Warnings and Seller VAT Warnings** are the
+same class of thing again, with one extra hazard: every mail carries a commercially sensitive
+attachment, so the file that goes out matters as much as the address. See
 [Seller Offer Warnings](#seller-offer-warnings).
 
 ## Late Order Warnings
 
 Finds orders that are **overdue right now** — `Shipping date` empty, status one the seller can still
-act on, `Shipping deadline` passed — groups them by seller and posts one message per seller in that
-seller's WhatsApp group.
+act on, `Shipping deadline` passed — groups them by seller and posts **one message per WhatsApp
+group**. Usually that is one message per seller. When a company trades under two Mirakl ids and the
+mapping points both at the same group, their overdue orders are merged into a single message, each
+account's orders under its own heading — two messages in one chat is not what anyone wants, and
+dropping one of the two accounts would leave those orders unchased.
 
 This is a **different rule** from the Order Report's late-shipment rate. That one is retrospective
 (`Shipping date > Shipping deadline`, i.e. it shipped, late) and is used to rank sellers. This one is
@@ -77,47 +81,69 @@ and lists everything tried.
 
 ## Seller Offer Warnings
 
-Mails each seller a warning about their offer lead times, attaching **that seller's own offer list**.
-The mapping table — `Seller`, `SellerId`, `Email`, `DosyaAdi`, `LeadTime0`, `LeadTime1` — is the
-input; the attachment folder holds one `.xlsx` per seller, named exactly as `DosyaAdi` says.
+Mails each seller a warning about the offers they ship too fast, attaching **that seller's own list**.
+Two uploads go in — the Mirakl `offers` export and the seller address list — and the app writes one
+`.xlsx` per seller, resolves each address, renders every mail and sends the ones the operator ticks.
+
+**Seller VAT Warnings is the same module with a different filter**: same two uploads, same address
+matching, same batch, same guards. Only what it selects out of the export and what it puts in the
+attachment differ. Its filter is the `State Reasons` column, and it keeps a row only when that cell
+reduces to `VAT_RATE_MISSING` **on its own** — an offer that is also inactive, out of stock or priced
+at zero has a bigger problem than its VAT rate, and asking its seller to fix the VAT rate is the
+wrong message. The column is required for the same reason `Lead time to ship` is: an export that
+renamed it would match nothing, and falling back to no filter means mailing every offer in the file.
+The two modules are deliberately separate code — see [The guards](#the-guards).
+
+### What it selects
+
+Only offers whose **`Lead time to ship` is 1 or 2 days**. On the current export that is 86 912 of
+203 543 rows, belonging to 287 of 444 sellers. Zero is excluded on purpose: it is what the export
+writes for offers the seller does not ship at all. A blank cell — a third of the file — is not a
+promise anyone made, so it is not one anyone is warned about.
+
+The attachment has **two columns: `Product SKU` and `Termin (Gün)`**. Nothing else from the 26-column
+export reaches the record the workbook is written from, so no price, stock, discount or category can
+be written into a file that leaves the building. Rows are sorted by lead time so a seller can work
+down the one-day offers first.
+
+### 287 sellers against a 250-mail run
+
+More sellers qualify than one run may mail, and the cap is a **refusal, not a truncation** — sending
+the first 250 silently would leave the operator believing all of them went out. Two levers:
+**Minimum offers**, which drops sellers with only a handful of short-lead offers before anything is
+written for them, and the per-card selection, which splits a run into two passes. The prepare says so
+in a warning as soon as it knows, while the threshold box is still on screen, rather than letting the
+send refuse after 287 cards have been read.
+
+### Why the export is not read like every other upload
+
+At 27.5 MB compressed — 195 MB of worksheet XML, 203 543 rows × 26 columns — this file is two orders
+of magnitude larger than anything else the app reads. `TabularFile`'s ClosedXML path materialises the
+whole worksheet DOM before the first row is looked at: 5.3 million cell objects, gigabytes of working
+set, for a file four columns are read out of.
+
+So `OfferExportReader` streams it instead — shared strings once into a flat array, then the sheet
+walked with `OpenXmlReader`, one row yielded and dropped at a time. It indexes cells on their **cell
+reference**, not on arrival order, because Excel writes no element at all for an empty cell: row 2 of
+the real export jumps from `L2` to `N2`, and appending would shift every column after the gap by one
+and read the `EAN` column as the lead time.
 
 ### Where the addresses come from
 
-`Fetch e-mails from Mirakl` reads each seller's *Users* tab in the operator back office
-(`/mmp/operator/shop/{sellerId}/user`) and puts every **enabled** user on that seller's row. A seller
-usually has several users and they all belong on **one** mail's To line, not on one mail each — the
-`Email` cell holds a `;`-separated list and one mail goes out per seller.
+The **Onboarding Check List** workbook, on the sheet named `Data` — its first sheet is a funnel
+summary with no address column at all, which is why the sheet has to be named and why a wrong name is
+refused with the real sheet list rather than silently falling back to sheet one.
 
-It runs on the Mirakl session Create Return already owns, driving one browser page from seller to
-seller — roughly 4 s each, so ~190 sellers take about 13 minutes. It is a background run on the
-shared job bus with a live log, and it holds the app-wide automation slot for its duration.
+`SellerMailDirectory` indexes it by seller id and by folded name, and **matches on nothing else**. A
+key that appears twice with two different addresses is poisoned rather than resolved — picking one
+would be picking whose inbox an offer list lands in. Cells holding `#N/A` or `#REF!` are counted and
+skipped; they are broken lookups, not addresses. A seller often has several users and they all belong
+on **one** mail's To line, not on one mail each.
 
-### Why it drives a page instead of calling an API
-
-The Users tab is a React micro-frontend. The server-rendered HTML is an empty shell (14 KB, no table
-in it) and the list arrives from an internal endpoint under `/private/organizations/{org}/users`,
-reached by resolving the shop to an organisation first. That chain is undocumented, unversioned, and
-free to change on any Mirakl release — and it does not fail loudly when it does, it returns nothing,
-which written back into the table would erase every address in it. The public `/api/` operator API
-answers `401` to session cookies; it needs an API key, and it does not expose a shop's users.
-
-Reading the page the operator would have read is slower and true by construction. This runs once a
-month.
-
-Two more things are load-bearing:
-
-- **An expired session answers `200`.** The back office redirects to `/login` and serves the sign-in
-  page, so nothing about the status code looks wrong and a naive parser reads every seller as "no
-  users". So the check is on the *final URL*, and a sign-in page aborts the whole fetch — the table
-  comes back untouched rather than half-cleared.
-- **It does not save.** Like the Excel import it hands back the merged table for review; the operator
-  presses Save. A fetch that rewrote 190 addresses in place would only be recoverable from the `.bak`
-  generation, with nothing to compare against.
-
-The parser deliberately does not know Mirakl's class names. It takes table rows carrying both an
-address and a status word — which survives a CSS refactor on their side, and keeps the operator's own
-address (present in the page chrome on every page) out of the results. `Enabled` is matched as a
-whole word, because `Contains("Enabled")` is also true of `Disabled`.
+Sellers the list does not cover appear in their own table with an editable address box, and what is
+typed there is saved and wins over the uploaded list from then on. That is the whole answer to a
+seller who does not match: state the address once, rather than widening the match until
+`Yazıcı Bende` lands on `Yazıcı Ticaret`.
 
 ### Why Outlook and not SMTP
 
@@ -148,36 +174,43 @@ elevation** as this app.
 
 ### The guards
 
-A mail cannot be recalled, and its attachment is a complete price and stock list, so:
+A mail cannot be recalled, and its attachment is a complete list of one seller's offers, so:
 
-1. **Each mail names a seller, and that seller must resolve to exactly one row** of the saved mapping
-   table (id first, folded name as the fallback). Two candidate rows are refused, never picked
-   between. Keyed by seller rather than by address because neither side is unique on its own: a
-   seller has several users on one mail, and one agency address can be a recipient for several
-   sellers.
-2. **Recipients and attachment are both re-derived server-side** from that row, never taken from the
-   browser. What the browser sent is compared to the table and a difference is refused by name — it
-   never wins.
-3. **The path is resolved inside the attachment folder and nowhere else.** A file name is a *name*:
-   anything containing a separator, a drive letter or an invalid character is refused, so a stray
-   `..\` in a spreadsheet cell cannot mail a seller a file off your disk.
-4. **Nothing is matched approximately, and none may ever be added.** Not "starts with", not "closest
-   file name", not "the only workbook containing the seller's name". An 85 %-similar match attaches
-   one seller's price list to a different seller's mail — a competitor data leak delivered by our own
-   automation, and it would look exactly like a working system until someone complained.
-   `OfferMailBuilderTests.ResolutionIsByNameAloneAndNeverGuessesANeighbour` exists to fail if anyone
-   tries.
+1. **The pairing is the server's, and the server keeps its own copy.** `prepare` computes which
+   address and which file belong to which seller and puts it in `OfferBatchStore`; `send` reads it
+   back from there. Nothing the browser posts can change either. A send quoting a batch the server no
+   longer holds is refused — build the mails again and read the list.
+2. **Recipients and attachment are re-derived from that batch**, never taken from the request. What
+   the browser sent is compared to it and a difference is refused by name — it never wins.
+3. **The path is resolved inside the run's own folder and nowhere else.** A file name is a *name*:
+   anything containing a separator, a drive letter or an invalid character is refused, so a seller
+   name of `..\..\auth` cannot mail anyone a file off your disk. Each run writes into a fresh
+   timestamped folder, so last month's files can never be picked up by this month's send.
+4. **Nothing is matched approximately, and nothing approximate may ever be added.** Not "starts
+   with", not "closest file name", not "the only workbook containing the seller's name". An
+   85 %-similar match attaches one seller's offer list to a different seller's mail — a competitor
+   data leak delivered by our own automation, and it would look exactly like a working system until
+   someone complained. `OfferMailBuilderTests.ResolutionIsByNameAloneAndNeverGuessesANeighbour`
+   exists to fail if anyone tries.
+5. **Two sellers whose names reduce to one file name are both refused**, not just the second: the
+   second write overwrites the first, so mailing either one hands a seller the other's list.
 
 Plus: one seller per mail (the same seller twice in a run is refused; the same *address* across
-different sellers is fine and expected — each of those mails carries a different attachment, and the
-panel says how many are affected), the file confirmed on disk again immediately before Outlook is
-called, dry run the default
-(it `Save`s a real draft with the real attachment instead of sending), at most 250 mails per run
-(refused, not truncated) and 2–5 s randomised between them.
+different sellers is fine and expected — each of those mails carries a different attachment), the
+file confirmed on disk again immediately before Outlook is called, dry run the default (it `Save`s a
+real draft with the real attachment instead of sending), at most 250 mails per run (refused, not
+truncated) and 2–5 s randomised between them.
 
-**Keep the attachment folder out of `wwwroot`.** Anything under there is served to the browser and
-copied into the build output on every build — 188 × ~1.2 MB of seller price lists in both places. The
-default is `%LOCALAPPDATA%\YeniRPA\Offers`.
+**Why the two modules are separate code.** `OfferSplitBuilder`/`VatSplitBuilder`,
+`OfferMailStore`/`VatMailStore` and `OfferBatchStore`/`VatBatchStore` are near-copies rather than a
+shared generic. They agree today; a change made for one export's shape must fail that module's own
+test rather than quietly alter whose offers land in whose inbox in the other. The one thing they do
+share is `OfferMailBuilder.ResolveAttachment` — it states an invariant that must *not* be allowed to
+drift apart — and `SellerMailStore`'s address-cell rules, which carry no seller in them.
+
+**Keep the output folder out of `wwwroot`.** Anything under there is served to the browser and copied
+into the build output on every build — 287 sellers' offer lists in both places. The default is
+`%LOCALAPPDATA%\YeniRPA\OfferLeadTimes` (VAT Warnings uses `…\VatOffers`).
 
 The Order Report dashboard has two layers. *Key metrics* down to *Late shipment & cancellation —
 top 5 sellers* is the original port and is covered by the guarantees below. Below that sit the
@@ -505,8 +538,19 @@ src/YeniRPA.Web/
 │   ├── CarrierNames.cs              Free-text shipping company -> canonical carrier
 │   ├── ReturnSlaReportBuilder.cs    BuildData() -> dashboard JSON
 │   ├── ReturnListBuilder.cs         4 exports -> the Create Return input list
-│   ├── SellerMailStore.cs           seller-mails.json: the mapping, templates and folder
-│   ├── OfferMailBuilder.cs          One seller -> subject, body and which file is theirs
+│   ├── SellerMailStore.cs           How an address cell is split, joined and checked
+│   ├── SellerMailDirectory.cs       The uploaded seller -> e-mail list; id, then folded name
+│   ├── OfferExportReader.cs         Streaming xlsx reader for the 200k-row offer export
+│   ├── OfferSplitBuilder.cs         Offers with a 1-2 day lead time, grouped by seller
+│   ├── OfferSellerWorkbook.cs       One seller -> Product SKU + lead time, one sheet
+│   ├── OfferMailBuilder.cs          One seller -> subject, body, and the containment rule
+│   ├── OfferMailStore.cs            offer-warnings.json: templates, folder, typed addresses
+│   ├── OfferBatchStore.cs           The prepared seller -> address -> file pairing, in memory
+│   ├── VatSplitBuilder.cs           The VAT twin: products with no VAT rate, by seller
+│   ├── VatSellerWorkbook.cs         │
+│   ├── VatMailBuilder.cs            │ near-copies of the four above, deliberately not shared
+│   ├── VatMailStore.cs              │
+│   ├── VatBatchStore.cs             ┘
 │   ├── TabularFile.cs               xlsx/csv -> table, plus the order-number key, the
 │   │                                day-first template dates and the tracking-code rule
 │   ├── TitleCleaner/
@@ -521,9 +565,9 @@ src/YeniRPA.Web/
 │       ├── AutomationJobBus.cs      Single-run lock + SSE progress fan-out
 │       ├── MiraklBrowser.cs         Playwright browser + encrypted saved login
 │       ├── CreateReturnRunner.cs    The Create Return flow, one order at a time
-│       ├── MiraklSellerUserScraper.cs  Seller -> its back-office users, one page at a time
 │       ├── OutlookMailSender.cs     Outlook COM on one dedicated STA thread
-│       └── OfferMailRunner.cs       The seller warning batch, one mail at a time
+│       └── OfferMailRunner.cs       The seller warning batch, one mail at a time —
+│                                    shared by both warning modules, module name a parameter
 ├── Models/ReportModels.cs           JSON contract with the dashboard JavaScript
 │                                    (terse row fields; extended ones omitted when default)
 ├── Models/MethodologyViewModel.cs   Reads rules off the builders for the Methodology page
@@ -539,7 +583,8 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
     ├── js/return-sla-report.js      Return SLA dashboard
     ├── js/create-return.js          Create Return: session, upload, live run log
     ├── js/late-orders.js            Late Order Warnings: mapping editor, preview, messages
-    ├── js/offer-warnings.js         Seller Offer Warnings: mapping editor, preview, send
+    ├── js/offer-warnings.js         Seller Offer Warnings: two uploads, preview, send
+    ├── js/vat-warnings.js           Seller VAT Warnings: the same, with the VAT filter
     └── js/title-cleaner.js          Title Cleaner: rule editor, preview, download
 ```
 
@@ -565,16 +610,13 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
 | `POST` | `/api/late-orders/send` | JSON `{ messages, dryRun }` | `{ count, dryRun }`; the run continues in the background |
 | `GET` | `/api/late-orders/status` | — | `{ hasProfile, signedIn, browserReady, isRunning, runningModule, profilePath }` |
 | `POST` | `/api/late-orders/login` \| `check-session` \| `clear-session` | — | `200` |
-| `GET` \| `PUT` | `/api/offer-warnings/mapping` | JSON `{ entries, subjectTemplate, bodyTemplate, attachmentFolder }` | The seller → e-mail → attachment mapping, the templates and the folder |
-| `POST` | `/api/offer-warnings/mapping/import` | `file` | Merged table for review — **does not save** |
-| `POST` | `/api/offer-warnings/mapping/fetch-emails` | JSON `{ entries, onlyMissing }` | `{ started, rows }`; the fetch continues in the background |
-| `GET` | `/api/offer-warnings/mapping/fetch-result` | — | The table the last fetch produced — **does not save** |
-| `POST` | `/api/offer-warnings/mapping/excel` | JSON `{ entries }` | `satici-mail-eslesme.xlsx`, re-importable |
-| `POST` | `/api/offer-warnings/prepare` | JSON `{ subjectTemplate, bodyTemplate }` (both optional) | One rendered mail per row with its resolved attachment, a funnel and warnings |
-| `POST` | `/api/offer-warnings/mails/excel` | JSON `{ mails }` | `.xlsx` (one row per mail, body wrapped) |
-| `POST` | `/api/offer-warnings/send` | JSON `{ mails, dryRun }` | `{ count, dryRun }`; the run continues in the background |
-| `GET` | `/api/offer-warnings/status` | — | `{ outlookAvailable, attachmentFolder, folderExists, filesInFolder, isRunning, runningModule }` |
+| `GET` \| `PUT` | `/api/offer-warnings/settings` | JSON `{ subjectTemplate, bodyTemplate, outputFolder, minOfferCount, ccAddresses, includeSignature, overrides }` | The templates, the folder, the threshold and the hand-entered addresses |
+| `POST` | `/api/offer-warnings/prepare` | `offers`, `directory`, `sheetName`, `subjectTemplate`, `bodyTemplate`, `minOfferCount` | Writes one workbook per seller; returns `batchId`, one rendered mail per seller, the sellers with no address, a funnel and warnings |
+| `POST` | `/api/offer-warnings/mails/excel` | JSON `{ mails, cc }` | `.xlsx` (one row per mail, body wrapped) |
+| `POST` | `/api/offer-warnings/send` | JSON `{ batchId, mails, dryRun }` | `{ count, dryRun }`; the run continues in the background |
+| `GET` | `/api/offer-warnings/status` | — | `{ outlookAvailable, outputFolder, batchId, batchSellers, maxMailsPerRun, isRunning, runningModule }` |
 | `POST` | `/api/offer-warnings/check-outlook` | — | `{ available, error }` — starts Outlook if it is not running |
+| | `/api/vat-warnings/…` | | The same six routes, same shapes — see [The guards](#the-guards) for why they are not one controller |
 | `POST` | `/api/title-cleaner/suggest` | `file`, `name` | A draft rule set plus what the scan saw in each column — **saves nothing** |
 | `GET` \| `PUT` | `/api/title-cleaner/rules` | JSON `{ sets }` | The saved rule sets, in the editor's flattened shape |
 | `DELETE` | `/api/title-cleaner/rules/{name}` | — | The sets that remain. Confirmed in the browser first — a rule set cannot be regenerated |

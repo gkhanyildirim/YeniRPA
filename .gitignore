@@ -36,6 +36,8 @@ auth.json
 auth.dat
 seller-groups.json
 seller-mails.json
+offer-warnings.json
+vat-mails.json
 **/WhatsApp/profile/
 appsettings.*.local.json
 secrets.json

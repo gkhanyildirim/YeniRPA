@@ -6,10 +6,9 @@ namespace YeniRPA.Web.Models;
 // Seller VAT Warnings — splits the "offers with no VAT rate" export into one
 // workbook per seller and mails each seller their own.
 //
-// The sibling of Seller Offer Warnings, with one structural difference: there
-// the attachments are produced outside the app and matched by name, here the
-// app produces them. That moves the "which seller gets which file" decision
-// from a hand-typed cell to a value computed in one place — see VatSplitBuilder.
+// The twin of Seller Offer Warnings: same two uploads in, same one attachment
+// per seller out, same batch re-read at send time. Only the filter and the
+// attachment's columns differ — see VatSplitBuilder against OfferSplitBuilder.
 // Consumed by wwwroot/js/vat-warnings.js.
 // ---------------------------------------------------------------------------
 
@@ -52,7 +51,7 @@ public sealed record VatSellerGroup(
 /// payload posted back and what Outlook receives are all these same strings.
 ///
 /// <para>A seller who cannot be mailed stays in the list with <paramref name="Problem"/> set rather
-/// than being filtered out, for the same reason <see cref="RenderedMail"/> does it: two collections
+/// than being filtered out, for the same reason <see cref="OfferSellerMail"/> does it: two collections
 /// invite a panel that renders one and forgets the other, and the forgotten one is the seller who
 /// silently never got warned.</para>
 /// </summary>
@@ -103,7 +102,7 @@ public sealed record VatUnmatchedSeller(
 
 /// <summary>
 /// Where the sellers went. Each count is a terminal bucket, so they sum to
-/// <paramref name="SellersInFile"/> — the same shape as <see cref="OfferMailFunnel"/>.
+/// <paramref name="SellersInFile"/> — the same shape as <see cref="OfferFunnel"/>.
 /// </summary>
 public sealed record VatFunnel(
     [property: JsonPropertyName("sellersInFile")] int SellersInFile,
@@ -145,9 +144,15 @@ public sealed record VatPrepareData(
     /// back: the panel shows what was fixed into the batch, not what the settings box says now.</summary>
     [property: JsonPropertyName("includeSignature")] bool IncludeSignature,
 
-    /// <summary>Rows in the export, before duplicate products are folded together — the operator's
-    /// count of what they uploaded, not the number of lines any seller receives.</summary>
+    /// <summary>Rows the state-reason filter kept, before duplicate products are folded together —
+    /// the operator's count of what this run is about, not the number of lines any seller receives.
+    /// The rows the filter dropped are counted separately below.</summary>
     [property: JsonPropertyName("offersInFile")] int OffersInFile,
+
+    /// <summary>Rows the state-reason filter dropped, so "40 sellers out of a 1 600-row file" reads
+    /// as the filter working rather than as most of the export having gone missing.</summary>
+    [property: JsonPropertyName("offersFilteredOut")] int OffersFilteredOut,
+
     [property: JsonPropertyName("directoryRows")] int DirectoryRows,
     [property: JsonPropertyName("mails")] IReadOnlyList<VatSellerMail> Mails,
     [property: JsonPropertyName("unmatched")] IReadOnlyList<VatUnmatchedSeller> Unmatched,
@@ -171,7 +176,7 @@ public sealed record VatOverrideEntry(
     [property: JsonPropertyName("email")] string Email);
 
 /// <summary>The whole of vat-mails.json — the templates, the hand-entered addresses and the output
-/// folder, in one file for the same reason <see cref="SellerMailFile"/> holds all three.</summary>
+/// folder, in one file for the same reason <see cref="OfferMailFile"/> holds all three.</summary>
 public sealed record VatMailFile(
     [property: JsonPropertyName("version")] int Version,
     [property: JsonPropertyName("updatedUtc")] string? UpdatedUtc,
@@ -202,11 +207,9 @@ public sealed record VatMailFile(
 /// <summary>
 /// What the server remembers about one prepared mail. <b>Never serialised to the browser.</b>
 ///
-/// <para>Seller Offer Warnings re-derives the recipient and the attachment from its saved mapping
-/// table at send time, so nothing the browser posts can change either. This module has no saved
-/// table — the pairing is computed from an uploaded file — so the pairing itself is what has to be
-/// remembered. These records are that memory, and they are what <c>send</c> reads instead of trusting
-/// the request.</para>
+/// <para>The pairing is computed from two uploaded files and is written down nowhere else, so without
+/// this the only copy at send time would be the one in the browser. These records are that memory, and
+/// they are what <c>send</c> reads instead of trusting the request.</para>
 /// </summary>
 public sealed record VatBatchMail(
     string SellerKey,

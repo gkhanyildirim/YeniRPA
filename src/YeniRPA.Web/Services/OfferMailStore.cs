@@ -4,20 +4,19 @@ using YeniRPA.Web.Models;
 namespace YeniRPA.Web.Services;
 
 /// <summary>
-/// Owns <c>%LOCALAPPDATA%\YeniRPA\Mail\vat-mails.json</c> — the operator's edited subject and body,
-/// the addresses they entered by hand for sellers the uploaded list does not cover, and the folder
-/// the per-seller workbooks are written to.
+/// Owns <c>%LOCALAPPDATA%\YeniRPA\Mail\offer-warnings.json</c> — the operator's edited subject and
+/// body, the addresses they entered by hand for sellers the uploaded list does not cover, and the
+/// folder the per-seller workbooks are written to.
 ///
-/// <para>Deliberately a near-copy of <see cref="OfferMailStore"/> rather than a shared base class. The
-/// two files hold different shapes and are read by different modules, and a common base would make a
-/// fix to one silently change the other — in a place where a wrong row sends one seller's data to a
-/// different seller. The one thing they do share is <see cref="SellerMailStore"/>'s address-cell rules,
-/// which carry no seller in them and so cannot move a file into the wrong mail.</para>
+/// <para>Deliberately a near-copy of <see cref="VatMailStore"/> rather than a shared base class, for
+/// the reason that class already records: the two files hold different shapes and are read by different
+/// modules, and a common base would make a fix to one silently change the other — in a place where a
+/// wrong row sends one seller's data to a different seller.</para>
 ///
 /// <para>The hand-entered addresses are the only data here that cannot be rebuilt from an upload,
 /// which is why <see cref="Save"/> keeps a backup generation and replaces the file atomically.</para>
 /// </summary>
-public sealed class VatMailStore
+public sealed class OfferMailStore
 {
     const int CurrentVersion = 1;
 
@@ -30,7 +29,7 @@ public sealed class VatMailStore
     /// actions needs them not to interleave.</summary>
     readonly object _sync = new();
 
-    public VatMailStore()
+    public OfferMailStore()
     {
         var root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -39,10 +38,10 @@ public sealed class VatMailStore
         var directory = Path.Combine(root, "Mail");
         Directory.CreateDirectory(directory);
 
-        FilePath = Path.Combine(directory, "vat-mails.json");
+        FilePath = Path.Combine(directory, "offer-warnings.json");
         BackupPath = FilePath + ".bak";
 
-        DefaultOutputFolder = Path.Combine(root, "VatOffers");
+        DefaultOutputFolder = Path.Combine(root, "OfferLeadTimes");
     }
 
     public string FilePath { get; }
@@ -52,14 +51,14 @@ public sealed class VatMailStore
     /// Where the generated per-seller workbooks go when the operator has not chosen a folder.
     ///
     /// <para>Under <c>%LOCALAPPDATA%</c> and emphatically not under <c>wwwroot</c>: everything there is
-    /// served to the browser and copied into the build output, so a folder of 131 sellers' price and
-    /// stock lists placed there would be downloadable by anyone who can reach the app.</para>
+    /// served to the browser and copied into the build output, so a folder of 287 sellers' offer lists
+    /// placed there would be downloadable by anyone who can reach the app.</para>
     /// </summary>
     public string DefaultOutputFolder { get; }
 
     /// <summary>Reads the file every call rather than caching it — a few KB, and a cache would go
     /// stale the moment someone edited the JSON by hand.</summary>
-    public VatMailFile Load()
+    public OfferMailFile Load()
     {
         lock (_sync)
         {
@@ -74,22 +73,22 @@ public sealed class VatMailStore
             catch (IOException ex)
             {
                 throw new InvalidOperationException(
-                    $"The VAT warning settings could not be read from {FilePath}: {ex.Message}", ex);
+                    $"The offer warning settings could not be read from {FilePath}: {ex.Message}", ex);
             }
 
             if (string.IsNullOrWhiteSpace(json))
                 return Empty();
 
-            VatMailFile? file;
+            OfferMailFile? file;
             try
             {
-                file = JsonSerializer.Deserialize<VatMailFile>(json, JsonOptions);
+                file = JsonSerializer.Deserialize<OfferMailFile>(json, JsonOptions);
             }
             catch (JsonException ex)
             {
                 // Never silently start over: that would look identical to "the addresses vanished".
                 throw new InvalidOperationException(
-                    $"The VAT warning settings at {FilePath} are not valid JSON ({ex.Message}). " +
+                    $"The offer warning settings at {FilePath} are not valid JSON ({ex.Message}). " +
                     $"The previous version is kept at {BackupPath}.", ex);
             }
 
@@ -109,7 +108,7 @@ public sealed class VatMailStore
 
     /// <summary>Writes to a temp file and moves it over the original, keeping one backup generation.
     /// A torn write here would destroy the hand-entered addresses, which exist nowhere else.</summary>
-    public void Save(VatMailFile file)
+    public void Save(OfferMailFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
 
@@ -132,7 +131,7 @@ public sealed class VatMailStore
     }
 
     /// <summary>
-    /// The saved minimum product count, reduced to one value for "no minimum".
+    /// The saved minimum offer count, reduced to one value for "no minimum".
     ///
     /// <para>Zero, a negative number and a missing field are three ways of writing the same thing: mail
     /// every seller. Collapsed to <c>null</c> in one place so no caller has to remember to test for all
@@ -145,7 +144,7 @@ public sealed class VatMailStore
     ///
     /// <para>Split, de-duplicated and re-joined by the same three helpers that handle a seller's own
     /// address, so a CC cell behaves exactly like every other address cell in the app. A bad address is
-    /// named rather than dropped: silently mailing 130 sellers with no copy going anywhere is the
+    /// named rather than dropped: silently mailing 287 sellers with no copy going anywhere is the
     /// failure this returns a problem to prevent.</para>
     /// </summary>
     public static (string? Cc, string? Problem) NormalizeCc(string? raw)
@@ -163,10 +162,10 @@ public sealed class VatMailStore
 
     /// <summary>The folder the workbooks should be written under: the saved one when set, the default
     /// otherwise.</summary>
-    public string ResolveOutputFolder(VatMailFile file) =>
+    public string ResolveOutputFolder(OfferMailFile file) =>
         string.IsNullOrWhiteSpace(file.OutputFolder) ? DefaultOutputFolder : file.OutputFolder.Trim();
 
-    VatMailFile Empty() => new(CurrentVersion, null, null, null, null, null, null, null, []);
+    OfferMailFile Empty() => new(CurrentVersion, null, null, null, null, null, null, null, []);
 
     // ---------------------------------------------------------------------
     // Overrides
@@ -180,20 +179,20 @@ public sealed class VatMailStore
     /// with an id is not reachable by name alone.</para>
     ///
     /// <para>The <b>last</b> matching row wins, which is the same rule the save path applies when it
-    /// collapses duplicates. Saving cannot leave two rows for one seller, so this only ever matters
-    /// for a file edited by hand — and there the two must not disagree about which row is live.</para>
+    /// collapses duplicates. Saving cannot leave two rows for one seller, so this only ever matters for
+    /// a file edited by hand — and there the two must not disagree about which row is live.</para>
     /// </summary>
     public static string? FindOverride(
-        IReadOnlyList<VatOverrideEntry> overrides, string sellerId, string sellerName)
+        IReadOnlyList<OfferOverrideEntry> overrides, string sellerId, string sellerName)
     {
         ArgumentNullException.ThrowIfNull(overrides);
 
-        var key = VatSplitBuilder.SellerKey(sellerId, sellerName);
+        var key = OfferSplitBuilder.SellerKey(sellerId, sellerName);
         string? found = null;
 
         foreach (var entry in overrides)
         {
-            if (VatSplitBuilder.SellerKey(entry.SellerId, entry.SellerName) != key)
+            if (OfferSplitBuilder.SellerKey(entry.SellerId, entry.SellerName) != key)
                 continue;
 
             var email = SellerMailStore.JoinAddresses(SellerMailStore.SplitAddresses(entry.Email));
@@ -208,7 +207,7 @@ public sealed class VatMailStore
     /// Problems that are properties of the saved list rather than of any one lookup, shown above the
     /// editor.
     /// </summary>
-    public static IReadOnlyList<string> FindOverrideProblems(IReadOnlyList<VatOverrideEntry> overrides)
+    public static IReadOnlyList<string> FindOverrideProblems(IReadOnlyList<OfferOverrideEntry> overrides)
     {
         ArgumentNullException.ThrowIfNull(overrides);
 
@@ -217,7 +216,7 @@ public sealed class VatMailStore
         // Saving collapses these, so reaching here means the JSON was edited by hand. Worth saying:
         // only one of the rows is live, and it is not the one nearest the top.
         foreach (var group in overrides
-            .GroupBy(e => VatSplitBuilder.SellerKey(e.SellerId, e.SellerName), StringComparer.Ordinal)
+            .GroupBy(e => OfferSplitBuilder.SellerKey(e.SellerId, e.SellerName), StringComparer.Ordinal)
             .Where(g => g.Count() > 1))
         {
             var label = group.First().SellerName.Trim();
@@ -234,7 +233,9 @@ public sealed class VatMailStore
             if (bad is not null)
             {
                 var label = entry.SellerName.Trim();
-                warnings.Add($"'{bad}' on {(label.Length > 0 ? $"'{label}'" : "a hand-entered row")} does not look like an e-mail address.");
+                warnings.Add(
+                    $"'{bad}' on {(label.Length > 0 ? $"'{label}'" : "a hand-entered row")} does not " +
+                    "look like an e-mail address.");
             }
         }
 

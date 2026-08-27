@@ -486,6 +486,9 @@
         '<span class="badge green">' + RPA.escapeHtml(message.groupName) + '</span>' +
         '<span class="msg-meta">' + RPA.escapeHtml(message.sellerName) +
           ' · ' + message.orderCount + ' order(s)' +
+          // Two accounts of one company sharing a group is normal here, but it is worth seeing: the
+          // body below lists both accounts' order numbers.
+          (message.accountCount > 1 ? ' · <span class="badge amber">' + message.accountCount + ' accounts merged</span>' : '') +
           (message.truncated ? ' · <span class="badge amber">truncated</span>' : '') +
         '</span>' +
         '<button type="button" class="btn btn-ghost btn-sm lo-copy" data-index="' + index + '">Copy</button>' +

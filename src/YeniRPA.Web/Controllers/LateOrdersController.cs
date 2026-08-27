@@ -104,10 +104,17 @@ public sealed class LateOrdersController : ControllerBase
 
         // Unmapped sellers are not messaged, but they are also not the caller's mistake — the panel
         // reports them separately, so they are simply not rendered here.
+        //
+        // Grouped by destination, not by seller: one company can trade under two Mirakl ids and be
+        // reached through a single WhatsApp group, and two messages in one chat is not what the
+        // operator wants. Merging here rather than at send time keeps the cards, the Excel export and
+        // the keystrokes identical. GroupBy preserves first-occurrence order, so the most overdue
+        // group still sorts first.
         var messages = sellers
             .Where(s => !string.IsNullOrWhiteSpace(s.GroupName))
-            .Select(s => LateOrderMessageBuilder.Render(
-                s, request?.ReferenceTime ?? "", request?.Template, request?.OrderLineTemplate))
+            .GroupBy(s => s.GroupName!.Trim(), StringComparer.Ordinal)
+            .Select(group => LateOrderMessageBuilder.Render(
+                [.. group], request?.ReferenceTime ?? "", request?.Template, request?.OrderLineTemplate))
             .ToList();
 
         var warnings = messages
@@ -239,12 +246,22 @@ public sealed class LateOrdersController : ControllerBase
             messages.Add(new WhatsAppMessage(group, (message.SellerId ?? "").Trim(), (message.SellerName ?? "").Trim(), body));
         }
 
+        // A backstop, not a gate the operator can walk into: /messages already merges every seller
+        // account that shares a group into one message. Bodies arrive from the browser and are not
+        // re-rendered here, so this stays as the last thing standing between a stale page and two
+        // messages in the same chat.
         var duplicate = messages
             .GroupBy(m => m.GroupName, StringComparer.Ordinal)
             .FirstOrDefault(g => g.Count() > 1);
 
         if (duplicate is not null)
-            return BadRequest(new { error = $"'{duplicate.Key}' appears twice in this run. Each group is messaged once." });
+        {
+            return BadRequest(new
+            {
+                error = $"'{duplicate.Key}' appears twice in this run and each group is messaged once. " +
+                        "Re-render the messages and try again."
+            });
+        }
 
         if (!_runner.TryStart(messages, request!.DryRun))
             return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });

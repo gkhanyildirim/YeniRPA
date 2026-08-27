@@ -590,7 +590,8 @@
     el('vw-filter-status').value = 'all';
 
     RPA.setExportContext(
-      RPA.fmtInt(data.offersInFile) + ' offer rows · ' +
+      RPA.fmtInt(data.offersInFile) + ' VAT-only offer rows · ' +
+      RPA.fmtInt(data.offersFilteredOut) + ' other rows skipped · ' +
       RPA.fmtInt(data.directoryRows) + ' address rows · ' + data.date);
 
     renderWarnings(data.warnings);

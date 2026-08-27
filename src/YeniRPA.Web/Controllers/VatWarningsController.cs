@@ -12,12 +12,10 @@ namespace YeniRPA.Web.Controllers;
 /// Seller VAT Warnings: splits the "offers with no VAT rate" export into one workbook per seller,
 /// finds each seller's address in an uploaded list, and mails every seller their own file.
 ///
-/// <para>The sibling of <see cref="OfferWarningsController"/>, with one structural difference. There,
-/// the attachments are produced outside the app and the seller → file pairing is a hand-typed cell
-/// that <c>send</c> re-reads from the saved table. Here the app computes the pairing, so there is no
-/// saved table to re-read — <see cref="VatBatchStore"/> is what holds it, and <c>send</c> takes both
-/// the recipients and the file from there. The posted values are compared to it and a difference is
-/// named, never resolved.</para>
+/// <para>The twin of <see cref="OfferWarningsController"/> and structurally identical to it: the app
+/// computes the seller → address → file pairing from two uploads, <see cref="VatBatchStore"/> holds it,
+/// and <c>send</c> takes both the recipients and the file from there. The posted values are compared to
+/// it and a difference is named, never resolved.</para>
 ///
 /// <para>Every entry point validates synchronously and lets <c>ReportExceptionFilter</c> turn a
 /// builder's <see cref="InvalidOperationException"/> into <c>400 { error }</c>.</para>
@@ -254,7 +252,15 @@ public sealed class VatWarningsController : ControllerBase
         }
 
         if (split.Sellers.Count == 0)
-            throw new InvalidOperationException("The offer export names no sellers, so there is nothing to split.");
+        {
+            // The filter emptying the file is a different situation from an export with no sellers in
+            // it, and saying "names no sellers" about a file full of sellers sends the operator
+            // looking for a fault that is not there.
+            throw new InvalidOperationException(split.OffersFilteredOut > 0
+                ? $"No row in the export carries '{VatSplitBuilder.VatRateMissing}' on its own — " +
+                  $"all {split.OffersFilteredOut:N0} row(s) also carry another state reason, so there is nothing to send."
+                : "The offer export names no sellers, so there is nothing to split.");
+        }
 
         var date = DateTime.Now.ToString("yyyy-MM-dd");
 
@@ -420,6 +426,7 @@ public sealed class VatWarningsController : ControllerBase
             Cc: cc,
             IncludeSignature: includeSignature,
             OffersInFile: split.OffersInFile,
+            OffersFilteredOut: split.OffersFilteredOut,
             DirectoryRows: addresses.RowCount,
             Mails: mails,
             Unmatched: unmatched,

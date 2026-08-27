@@ -10,11 +10,17 @@ namespace YeniRPA.Tests;
 /// </summary>
 public class OfferMailBuilderTests
 {
-    static readonly SellerMailEntry Seller =
-        new("12421", "Tedarik Türkiye", "topcuu@mms-marketplace.com", "Tedarik Türkiye.xlsx", 0, 19700);
+    static readonly OfferSellerGroup Seller = new(
+        SellerId: "12421",
+        SellerName: "Tedarik Türkiye",
+        SellerKey: "id:12421",
+        Offers: [.. Enumerable.Range(0, 1200).Select(i => new OfferLeadRow($"SKU{i}", i < 500 ? 1 : 2))],
+        LeadTime1: 500,
+        LeadTime2: 700);
 
-    static RenderedMail Render(string? subject, string? body) =>
-        OfferMailBuilder.Render(Seller, "2026-08-20", subject, body, "", 0, null);
+    static OfferSellerMail Render(string? subject, string? body) => OfferMailBuilder.Render(
+        Seller, ["topcuu@mms-marketplace.com"], "12421 - Tedarik Türkiye.xlsx", 0,
+        "2026-08-20", subject, body, "directory", null);
 
     // -----------------------------------------------------------------
     // Rendering
@@ -25,18 +31,31 @@ public class OfferMailBuilderTests
     {
         var mail = Render(
             "{seller} ({sellerId})",
-            "{email} · {fileName} · {leadTime0} / {leadTime1} / {leadTimeTotal} · {date}");
+            "{email} · {recipientCount} · {fileName} · {offerCount} · {leadTime1} / {leadTime2} · {date}");
 
         Assert.Equal("Tedarik Türkiye (12421)", mail.Subject);
-        Assert.Equal("topcuu@mms-marketplace.com · Tedarik Türkiye.xlsx · 0 / 19.700 / 19.700 · 2026-08-20", mail.Body);
+        Assert.Equal(
+            "topcuu@mms-marketplace.com · 1 · 12421 - Tedarik Türkiye.xlsx · 1.200 · 500 / 700 · 2026-08-20",
+            mail.Body);
     }
 
-    /// <summary>Turkish groups thousands with a dot, and these counts run to five digits. "19700"
-    /// in a Turkish sentence reads as a typo.</summary>
+    /// <summary>Turkish groups thousands with a dot. "1200" in a Turkish sentence reads as a typo.</summary>
     [Fact]
     public void CountsAreGroupedTheTurkishWay()
     {
-        Assert.Contains("19.700", Render("s", "{leadTime1}").Body);
+        Assert.Contains("1.200", Render("s", "{offerCount}").Body);
+    }
+
+    /// <summary>The two lead-time counts are what the mail is about; they have to come off the group
+    /// rather than being recounted anywhere else, or the mail and the attachment can disagree.</summary>
+    [Fact]
+    public void TheLeadTimeCountsComeFromTheGroup()
+    {
+        var mail = Render("s", "b");
+
+        Assert.Equal(500, mail.LeadTime1);
+        Assert.Equal(700, mail.LeadTime2);
+        Assert.Equal(1200, mail.OfferCount);
     }
 
     [Fact]
@@ -45,7 +64,8 @@ public class OfferMailBuilderTests
         var mail = Render("", "   ");
 
         Assert.Contains("Tedarik Türkiye", mail.Subject);
-        Assert.Contains("19.700", mail.Body);
+        Assert.Contains("500", mail.Body);
+        Assert.Contains("700", mail.Body);
     }
 
     /// <summary>
@@ -56,6 +76,14 @@ public class OfferMailBuilderTests
     public void NewlinesInTheSubjectAreFoldedToSpaces()
     {
         Assert.Equal("first second", Render("first\nsecond", "b").Subject);
+    }
+
+    /// <summary>A subject pasted out of Word carries CRLF, and folding the two characters separately
+    /// would leave two spaces where the operator saw one.</summary>
+    [Fact]
+    public void ACrLfInTheSubjectBecomesOneSpace()
+    {
+        Assert.Equal("first second", Render("first\r\nsecond", "b").Subject);
     }
 
     [Fact]
@@ -91,8 +119,8 @@ public class OfferMailBuilderTests
     [Fact]
     public void ASellerNameContainingAPlaceholderIsNotResubstituted()
     {
-        var hostile = new SellerMailEntry("1", "{email}", "a@b.com", "f.xlsx", 0, 0);
-        var mail = OfferMailBuilder.Render(hostile, "2026-08-20", "s", "{seller}", "", 0, null);
+        var hostile = new OfferSellerGroup("1", "{email}", "id:1", [], 0, 0);
+        var mail = OfferMailBuilder.Render(hostile, ["a@b.com"], "f.xlsx", 0, "2026-08-20", "s", "{seller}", "", null);
 
         Assert.Equal("{email}", mail.Body);
     }
@@ -124,9 +152,9 @@ public class OfferMailBuilderTests
     }
 
     /// <summary>
-    /// The mapping table is a spreadsheet anyone can edit. A path in the file-name column must not be
-    /// able to reach anything outside the attachment folder — <c>auth.dat</c> is two directories up
-    /// from a plausible folder choice.
+    /// The file name is derived from a seller name that came out of an uploaded spreadsheet. A path in
+    /// it must not be able to reach anything outside the output folder — <c>auth.dat</c> is two
+    /// directories up from a plausible folder choice.
     /// </summary>
     [Theory]
     [InlineData(@"..\..\auth.dat")]
@@ -134,7 +162,7 @@ public class OfferMailBuilderTests
     [InlineData(@"sub\Alpha.xlsx")]
     [InlineData(@"C:\Windows\win.ini")]
     [InlineData(@"\\server\share\Alpha.xlsx")]
-    public void APathInTheFileNameColumnIsRefused(string fileName)
+    public void APathInTheFileNameIsRefused(string fileName)
     {
         var match = OfferMailBuilder.ResolveAttachment(Folder, fileName);
 
@@ -156,8 +184,8 @@ public class OfferMailBuilderTests
 
     /// <summary>
     /// The rule is exact-name only. This test exists to be the thing that fails if anyone ever
-    /// "helpfully" adds fuzzy matching: an 85 %-similar match attaches one seller's complete price
-    /// and stock list to another seller's mail.
+    /// "helpfully" adds fuzzy matching: an 85 %-similar match attaches one seller's complete offer
+    /// list to another seller's mail.
     /// </summary>
     [Fact]
     public void ResolutionIsByNameAloneAndNeverGuessesANeighbour()

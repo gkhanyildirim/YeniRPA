@@ -1,13 +1,15 @@
 /* =============================================================================
-   Seller Offer Warnings — one warning mail per seller, carrying that seller's
-   own offer list as an attachment.
+   Seller Offer Warnings — splits the Mirakl offer export into one workbook per
+   seller, listing that seller's offers with a lead time to ship of 1 or 2 days,
+   and mails each seller their own.
 
-   The mapping table is the input here, not an export: prepare renders from what
-   is saved plus whatever wording is currently in the template boxes, so trying
-   out a sentence costs a few KB rather than a re-upload. Sending drives the
-   Outlook running on the server side; progress arrives over the shared
-   /api/automation/events stream, the same one Create Return and Late Order
-   Warnings report on.
+   The twin of vat-warnings.js: two uploads in, the server writes the
+   attachments, and a batch id that every send has to quote — the server keeps
+   its own copy of which address and which file belong to which seller, and that
+   copy is what it sends from. Nothing here is re-derived in the browser.
+
+   Progress arrives over the shared /api/automation/events stream, the same one
+   Create Return and the other warning modules report on.
    ============================================================================= */
 
 (function (RPA) {
@@ -15,40 +17,54 @@
 
   const MODULE = 'offer-warnings';
 
-  // The address fetch is a second run this panel owns: it drives the Mirakl browser rather than
-  // Outlook, so it is its own module on the shared bus, but it reports into the same run log.
-  const FETCH_MODULE = 'offer-emails';
-
   let activated = false;
   let stream = null;       // EventSource, once the panel has been visited
   let total = 0;
   let running = false;
 
-  // The prepared payload, held here so a template edit can re-render without a reload.
+  // The prepared payload, held here so the cards can re-render without a rebuild.
   let lastMails = [];
+  let lastUnmatched = [];
 
-  // Which mails the operator has ticked, keyed by seller. A Set rather than a flag on each mail, so
-  // a re-render cannot silently drop a decision that was made about a row.
+  // Who this batch copies. Read back from the prepare rather than from the settings box: editing the
+  // box after a build changes nothing until the mails are built again, and the cards must show the
+  // address that will actually go out.
+  let lastCc = '';
+
+  // Whether this batch signs its mails. Same rule as lastCc: read back from the prepare, not from the
+  // checkbox, so the cards describe the batch rather than the settings box.
+  let lastSignature = false;
+
+  // Identifies the batch the server prepared. Every send quotes it; a send against a batch the server
+  // no longer holds is refused rather than served from a stale pairing.
+  let batchId = '';
+
+  // Which mails the operator has ticked, keyed by the server's own seller key. A Set rather than a
+  // flag on each mail, so a re-render cannot silently drop a decision made about a row.
   let selected = new Set();
+
+  // Which rows are open, by the same key. A run is well over two hundred sellers, so every card starts
+  // collapsed to one line; this remembers what the operator opened, because re-rendering after a tick
+  // would otherwise shut a mail they were halfway through reading.
+  let expanded = new Set();
+
+  // The list filter. Purely a view: nothing here removes a mail from lastMails or from the selection —
+  // see updateSelectionSummary for how a hidden-but-ticked mail is reported rather than dropped.
+  let search = '';
+  let statusFilter = 'all';
+
+  // The saved hand-entered addresses, as loaded. The unmatched table merges into this list.
+  let overrides = [];
 
   // What the server says "Reset to default" should restore.
   let defaultSubject = '';
   let defaultBody = '';
 
-  function el(id) { return document.getElementById(id); }
+  // How many mails one run may carry. Read from the server rather than written here, so the number the
+  // panel quotes and the number the send endpoint enforces cannot drift apart.
+  let maxPerRun = 0;
 
-  /**
-   * A mail is identified by its seller, not by its address: a seller has several users on one mail,
-   * and one agency address can be a recipient for several sellers.
-   *
-   * Deliberately *not* RPA.fold — this is only a local key for which checkboxes are ticked, and
-   * borrowing the fold would imply it agrees with the server's SellerKey, which folds differently.
-   * The server does its own resolution and refuses anything ambiguous.
-   */
-  function sellerKey(row) {
-    const id = (row.sellerId || '').trim();
-    return id ? 'id:' + id : 'name:' + (row.sellerName || '').trim().toLowerCase();
-  }
+  function el(id) { return document.getElementById(id); }
 
   function fmtBytes(bytes) {
     if (!bytes) return '';
@@ -57,8 +73,22 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
+  /**
+   * The key a seller is identified by, as the server handed it out. Deliberately not recomputed here:
+   * the server folds names its own way, and a key invented in the browser that disagreed would send
+   * the operator's tick to a different row than the one they ticked.
+   */
+  function sellerKey(row) { return row.sellerKey || ''; }
+
+  /** The minimum offer count as a number the server can act on. A blank or nonsense box is 0, which
+   * is the same statement as "no minimum" — never a threshold nobody typed. */
+  function minOffers() {
+    const value = Math.floor(Number(el('ow-min-offers').value));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
   // ---------------------------------------------------------------------------
-  // Outlook + folder status
+  // Outlook + status
   // ---------------------------------------------------------------------------
 
   async function refreshStatus() {
@@ -88,27 +118,7 @@
       badge.textContent = 'Not checked yet';
     }
 
-    renderFolderSummary(status);
     setRunning(status.isRunning, status.runningModule);
-  }
-
-  function renderFolderSummary(status) {
-    const summary = el('ow-folder-summary');
-    if (!status.folderExists) {
-      summary.textContent = 'Folder not found';
-      return;
-    }
-    summary.textContent = RPA.fmtInt(status.filesInFolder) + ' file(s) in the folder';
-  }
-
-  async function checkFolder() {
-    const button = el('ow-check-folder');
-    RPA.setBusy(button, true, 'Looking…');
-    try {
-      await refreshStatus();
-    } finally {
-      RPA.setBusy(button, false);
-    }
   }
 
   /** Idempotent: the run state arrives from the POST, from /status and from the event stream. */
@@ -118,12 +128,6 @@
     const send = el('ow-send');
     RPA.setBusy(send, running && runningModule === MODULE, 'Running…');
     send.disabled = running || selectedMails().length === 0;
-
-    // One run slot for the whole app, so the fetch and the send lock each other out as well as
-    // locking out Create Return.
-    const fetchButton = el('ow-map-fetch');
-    RPA.setBusy(fetchButton, running && runningModule === FETCH_MODULE, 'Reading Mirakl…');
-    fetchButton.disabled = running;
 
     if (running && runningModule && runningModule !== MODULE) {
       send.title = 'Another automation run (' + runningModule + ') holds the slot.';
@@ -156,20 +160,19 @@
 
   // Only this panel's runs are rendered here. The bus is shared and its log lines carry no module of
   // their own, so the running module is latched on `started` and gates the rest.
-  let mine = null;
+  let mine = false;
 
   function handleEvent(event) {
     switch (event.type) {
       case 'started':
-        mine = (event.module === MODULE || event.module === FETCH_MODULE) ? event.module : null;
+        mine = event.module === MODULE;
         if (!mine) return;
         total = event.total;
         el('ow-run').hidden = false;
         el('ow-console').textContent = '';
         el('ow-progress').classList.remove('is-done');
-        el('ow-progress-label').textContent = mine === FETCH_MODULE ? 'Seller pages read' : 'Mails processed';
         setProgress(0);
-        setRunning(true, mine);
+        setRunning(true, MODULE);
         break;
 
       case 'log':
@@ -182,21 +185,15 @@
         setProgress(event.completed);
         break;
 
-      case 'done': {
+      case 'done':
         if (!mine) return;
-        const wasFetch = mine === FETCH_MODULE;
-
         appendLog('');
         appendLog('Finished. Processed: ' + event.processed + ' · Failed: ' + event.failed.length);
         if (event.failed.length) appendLog('Failed:\n  ' + event.failed.join('\n  '));
         el('ow-progress').classList.add('is-done');
         setRunning(false);
-
-        // The bus carries progress; the table it produced is collected separately.
-        if (wasFetch) collectFetchResult();
         refreshStatus();
         break;
-      }
     }
   }
 
@@ -220,217 +217,220 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Mapping table
+  // Settings
   // ---------------------------------------------------------------------------
 
-  function mappingRowHtml(entry) {
+  function overrideRowHtml(entry) {
     return '<tr>' +
-      '<td><input type="text" class="map-id" value="' + RPA.escapeHtml(entry.sellerId || '') + '" aria-label="Seller ID" /></td>' +
-      '<td><input type="text" class="map-name" value="' + RPA.escapeHtml(entry.sellerName || '') + '" aria-label="Seller name" /></td>' +
-      '<td><input type="text" class="map-email" value="' + RPA.escapeHtml(entry.email || '') + '" aria-label="E-mail" /></td>' +
-      '<td><input type="text" class="map-file" value="' + RPA.escapeHtml(entry.fileName || '') + '" aria-label="Attachment file name" /></td>' +
-      '<td><input type="number" class="map-lead0" min="0" value="' + Number(entry.leadTime0 || 0) + '" aria-label="Offers at lead time 0" /></td>' +
-      '<td><input type="number" class="map-lead1" min="0" value="' + Number(entry.leadTime1 || 0) + '" aria-label="Offers at lead time 1" /></td>' +
-      '<td class="num"><button type="button" class="btn btn-ghost btn-sm map-remove" aria-label="Remove row">Remove</button></td>' +
+      '<td><input type="text" class="ov-id" value="' + RPA.escapeHtml(entry.sellerId || '') + '" aria-label="Seller ID" /></td>' +
+      '<td><input type="text" class="ov-name" value="' + RPA.escapeHtml(entry.sellerName || '') + '" aria-label="Seller name" /></td>' +
+      '<td><input type="text" class="ov-email" value="' + RPA.escapeHtml(entry.email || '') + '" aria-label="E-mail" /></td>' +
+      '<td class="num"><button type="button" class="btn btn-ghost btn-sm ov-remove" aria-label="Remove row">Remove</button></td>' +
       '</tr>';
   }
 
-  function renderMapping(entries) {
-    el('ow-mapping-body').innerHTML = (entries || []).map(mappingRowHtml).join('');
-    updateMappingCount();
-  }
-
-  /**
-   * Counts what would actually be saved, not what is on screen: a row with no seller is dropped by
-   * the server, so counting <tr> elements would disagree with the save confirmation.
-   */
-  function updateMappingCount() {
-    const entries = collectMapping();
-    const ready = entries.filter(e => e.email && e.fileName).length;
-
-    el('ow-mapping-count').textContent = entries.length
-      ? RPA.fmtInt(entries.length) + ' seller(s) · ' + RPA.fmtInt(ready) + ' with an address and a file'
-      : 'No sellers mapped yet';
+  function renderOverrides() {
+    el('ow-overrides-body').innerHTML = overrides.map(overrideRowHtml).join('');
+    updateOverridesCount();
   }
 
   /** Reads the table back out. Rows with no seller are dropped; a half-filled row is kept. */
-  function collectMapping() {
-    return Array.from(el('ow-mapping-body').querySelectorAll('tr')).map(function (row) {
+  function collectOverrides() {
+    return Array.from(el('ow-overrides-body').querySelectorAll('tr')).map(function (row) {
       return {
-        sellerId: row.querySelector('.map-id').value.trim(),
-        sellerName: row.querySelector('.map-name').value.trim(),
-        email: row.querySelector('.map-email').value.trim(),
-        fileName: row.querySelector('.map-file').value.trim(),
-        leadTime0: Number(row.querySelector('.map-lead0').value) || 0,
-        leadTime1: Number(row.querySelector('.map-lead1').value) || 0
+        sellerId: row.querySelector('.ov-id').value.trim(),
+        sellerName: row.querySelector('.ov-name').value.trim(),
+        email: row.querySelector('.ov-email').value.trim()
       };
     }).filter(e => e.sellerId || e.sellerName);
   }
 
-  function renderMappingWarnings(warnings) {
-    const box = el('ow-mapping-warnings');
+  function updateOverridesCount() {
+    const entries = collectOverrides();
+    const withAddress = entries.filter(e => e.email).length;
+
+    el('ow-overrides-count').textContent = entries.length
+      ? RPA.fmtInt(entries.length) + ' seller(s) · ' + RPA.fmtInt(withAddress) + ' with an address'
+      : 'No addresses entered by hand yet';
+  }
+
+  function renderSettingsWarnings(warnings) {
+    const box = el('ow-settings-warnings');
     if (!warnings || !warnings.length) {
       box.hidden = true;
       box.innerHTML = '';
       return;
     }
     box.hidden = false;
-    box.innerHTML = warnings
-      .map(w => '<span class="badge amber">' + RPA.escapeHtml(w) + '</span>')
-      .join(' ');
+    box.innerHTML = warnings.map(w => '<span class="badge amber">' + RPA.escapeHtml(w) + '</span>').join(' ');
   }
 
-  function addMappingRow() {
-    el('ow-mapping-body').insertAdjacentHTML('beforeend', mappingRowHtml({}));
-    updateMappingCount();
-
-    const rows = el('ow-mapping-body').querySelectorAll('tr');
-    const added = rows[rows.length - 1];
-    added.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    added.querySelector('.map-name').focus();
-  }
-
-  async function loadMapping() {
+  async function loadSettings() {
     let data;
     try {
-      const response = await fetch('/api/offer-warnings/mapping');
+      const response = await fetch('/api/offer-warnings/settings');
       if (!response.ok) throw new Error('Request failed with status ' + response.status + '.');
       data = await response.json();
     } catch (err) {
-      RPA.showError('ow-mapping-alert', 'The mapping could not be loaded: ' + err.message);
+      RPA.showError('ow-settings-alert', 'The settings could not be loaded: ' + err.message);
       return;
     }
 
     defaultSubject = data.defaultSubjectTemplate || '';
     defaultBody = data.defaultBodyTemplate || '';
+    maxPerRun = data.maxMailsPerRun || 0;
 
-    renderMapping(data.entries);
-    renderMappingWarnings(data.warnings);
+    overrides = data.overrides || [];
+    renderOverrides();
+    renderSettingsWarnings(data.warnings);
 
+    el('ow-cc').value = data.ccAddresses || '';
+    el('ow-signature').checked = !!data.includeSignature;
     el('ow-subject').value = data.subjectTemplate || '';
     el('ow-body').value = data.bodyTemplate || '';
-    el('ow-folder').value = data.attachmentFolder || '';
-    el('ow-mapping-path').textContent = data.path || '';
-    el('ow-mapping-updated').textContent = data.updatedUtc ? 'Last saved ' + data.updatedUtc : 'Never saved';
+    el('ow-folder').value = data.outputFolder || '';
+    el('ow-sheet').value = data.defaultSheetName || '';
+    el('ow-min-offers').value = data.minOfferCount || 0;
+    el('ow-settings-path').textContent = data.path || '';
+    el('ow-settings-updated').textContent = data.updatedUtc ? 'Last saved ' + data.updatedUtc : 'Never saved';
+    el('ow-output-summary').textContent = 'Default: ' + (data.defaultOutputFolder || '');
+
+    // The one thing about this module a reader cannot infer from the controls: which lead times are
+    // selected, and how many mails a single run may carry.
+    const leads = data.leadTimes || [];
+    el('ow-lead-summary').textContent =
+      (leads.length ? 'Lead time to ship ' + leads.join(' and ') + ' day(s)' : '') +
+      (maxPerRun ? ' · at most ' + RPA.fmtInt(maxPerRun) + ' mails per run' : '');
 
     el('ow-placeholders').innerHTML = (data.placeholders || [])
       .map(p => '<code>' + RPA.escapeHtml(p) + '</code>')
       .join(' ');
   }
 
-  async function saveMapping() {
-    const button = el('ow-map-save');
-    RPA.clearError('ow-mapping-alert');
+  /** Writes the whole settings file: the wording, the folder, the threshold and every hand-entered
+   * address. */
+  async function putSettings(entries) {
+    const result = await sendJsonMethod('PUT', '/api/offer-warnings/settings', {
+      subjectTemplate: el('ow-subject').value,
+      bodyTemplate: el('ow-body').value,
+      outputFolder: el('ow-folder').value,
+      minOfferCount: minOffers(),
+      ccAddresses: el('ow-cc').value,
+      includeSignature: el('ow-signature').checked,
+      overrides: entries
+    });
+
+    // What came back, not what went out: the server collapses rows describing one seller, and
+    // re-rendering the pre-collapse list would post the duplicates straight back next time.
+    overrides = result.overrides || [];
+    renderOverrides();
+    renderSettingsWarnings(result.warnings);
+    // What came back, not what was typed: the server splits and de-duplicates the CC line, so the box
+    // shows the value that was actually stored.
+    el('ow-min-offers').value = result.minOfferCount || 0;
+    el('ow-cc').value = result.ccAddresses || '';
+    el('ow-signature').checked = !!result.includeSignature;
+    el('ow-settings-updated').textContent = 'Saved just now · ' + result.saved + ' hand-entered address(es)' +
+      (result.minOfferCount ? ' · minimum ' + RPA.fmtInt(result.minOfferCount) + ' offers' : '') +
+      (result.ccAddresses ? ' · cc ' + result.ccAddresses : '') +
+      (result.includeSignature ? ' · signed' : '');
+    return result;
+  }
+
+  async function saveSettings() {
+    const button = el('ow-save-settings');
+    RPA.clearError('ow-settings-alert');
     RPA.setBusy(button, true, 'Saving…');
     try {
-      const result = await sendJsonMethod('PUT', '/api/offer-warnings/mapping', {
-        entries: collectMapping(),
-        subjectTemplate: el('ow-subject').value,
-        bodyTemplate: el('ow-body').value,
-        attachmentFolder: el('ow-folder').value
-      });
-      renderMappingWarnings(result.warnings);
-      el('ow-mapping-updated').textContent = 'Saved just now · ' + result.saved + ' entries';
+      await putSettings(collectOverrides());
       await refreshStatus();
     } catch (err) {
-      RPA.showError('ow-mapping-alert', err.message);
+      RPA.showError('ow-settings-alert', err.message);
     } finally {
       RPA.setBusy(button, false);
     }
   }
 
-  function renderFetchProblems(problems) {
-    const box = el('ow-fetch-problems');
-    if (!problems || !problems.length) {
-      box.hidden = true;
-      return;
-    }
-    box.hidden = false;
-    RPA.renderTable('ow-fetch-problems-wrap', problems, FETCH_PROBLEM_COLUMNS, '');
+  function addOverrideRow() {
+    el('ow-overrides-body').insertAdjacentHTML('beforeend', overrideRowHtml({}));
+    updateOverridesCount();
+
+    const rows = el('ow-overrides-body').querySelectorAll('tr');
+    const added = rows[rows.length - 1];
+    added.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    added.querySelector('.ov-name').focus();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Unmatched sellers
+  // ---------------------------------------------------------------------------
+
+  function unmatchedRowHtml(row) {
+    return '<tr data-key="' + RPA.escapeHtml(row.sellerKey) + '">' +
+      '<td class="num">' + RPA.escapeHtml(row.sellerId || '-') + '</td>' +
+      '<td>' + RPA.escapeHtml(row.sellerName || '-') + '</td>' +
+      '<td class="num">' + RPA.fmtInt(row.offerCount) + '</td>' +
+      '<td><input type="text" class="um-email" value="" spellcheck="false" aria-label="E-mail for ' +
+        RPA.escapeHtml(row.sellerName || row.sellerId) + '" /></td>' +
+      '<td><span class="badge amber">' + RPA.escapeHtml(row.reason || '') + '</span></td>' +
+      '</tr>';
+  }
+
+  function renderUnmatched() {
+    el('ow-unmatched').hidden = lastUnmatched.length === 0;
+    if (!lastUnmatched.length) return;
+
+    // Sorted by how many offers are waiting on the address: that is the one number that says which of
+    // these rows is worth chasing first.
+    const rows = lastUnmatched.slice().sort((a, b) => b.offerCount - a.offerCount);
+
+    el('ow-unmatched-body').innerHTML = rows.map(unmatchedRowHtml).join('');
+    el('ow-unmatched-summary').textContent =
+      RPA.fmtInt(rows.length) + ' seller(s) · ' +
+      RPA.fmtInt(rows.reduce((sum, r) => sum + r.offerCount, 0)) + ' offer(s) waiting on an address';
   }
 
   /**
-   * Starts the address fetch. It drives a real browser through one seller page at a time, so it runs
-   * in the background and reports into the run log; the finished table is collected when it is done.
-   * Like the import, it replaces the table in place and leaves saving to the operator.
+   * Appends what was typed to the saved list and writes the whole thing.
+   *
+   * Deliberately appends rather than merging: deduplicating here would mean recomputing the server's
+   * seller key in JavaScript, and RPA.fold is *not* that rule — it also strips accents and
+   * punctuation. A key that disagreed by one character would add a second row for a seller instead of
+   * replacing the first, leaving a stale address in front of the one just entered. The server
+   * collapses the list on the way in, where the key rule actually lives.
    */
-  async function fetchEmails() {
-    const button = el('ow-map-fetch');
-    RPA.clearError('ow-mapping-alert');
-    renderFetchProblems([]);
-    RPA.setBusy(button, true, 'Reading Mirakl…');
+  async function saveUnmatched() {
+    const button = el('ow-unmatched-save');
+    RPA.clearError('ow-unmatched-alert');
 
-    // Opened before the POST so the first events of the run cannot be missed.
-    connect();
-    el('ow-run').hidden = false;
+    const typed = Array.from(el('ow-unmatched-body').querySelectorAll('tr'))
+      .map(function (row) {
+        const source = lastUnmatched.find(u => u.sellerKey === row.dataset.key);
+        return {
+          sellerId: source ? source.sellerId : '',
+          sellerName: source ? source.sellerName : '',
+          email: row.querySelector('.um-email').value.trim()
+        };
+      })
+      .filter(e => e.email);
 
-    try {
-      await RPA.sendJson('/api/offer-warnings/mapping/fetch-emails', {
-        entries: collectMapping(),
-        onlyMissing: el('ow-fetch-missing').checked
-      });
-      el('ow-mapping-updated').textContent = 'Reading the Mirakl back office — watch the run log below';
-    } catch (err) {
-      RPA.showError('ow-mapping-alert', err.message);
-      RPA.setBusy(button, false);
-    }
-  }
-
-  /** Picks up the table the fetch produced, once its run reports done. */
-  async function collectFetchResult() {
-    RPA.setBusy(el('ow-map-fetch'), false);
-
-    let result;
-    try {
-      const response = await fetch('/api/offer-warnings/mapping/fetch-result');
-      if (!response.ok) throw new Error('Request failed with status ' + response.status + '.');
-      result = await response.json();
-    } catch (err) {
-      RPA.showError('ow-mapping-alert', 'The fetched table could not be collected: ' + err.message);
+    if (!typed.length) {
+      RPA.showError('ow-unmatched-alert', 'Nothing to save — no address has been entered above.');
       return;
     }
 
-    if (!result.available) return;
+    // The table above is the authority on what is currently saved, including edits not yet written.
+    const merged = collectOverrides().concat(typed);
 
-    if (result.error) {
-      // The table comes back untouched in this case — say so, rather than letting a half-applied
-      // fetch sit there looking finished.
-      RPA.showError('ow-mapping-alert', result.error);
-      el('ow-mapping-updated').textContent = 'Fetch stopped — the table was not changed';
-      return;
-    }
-
-    renderMapping(result.entries);
-    renderFetchProblems(result.problems);
-
-    const parts = [
-      result.filled + ' filled',
-      result.unchanged + ' already had an address',
-      result.noSellerId + ' without a seller ID'
-    ];
-    if (result.skippedDisabled) parts.push(result.skippedDisabled + ' disabled user(s) skipped');
-
-    el('ow-mapping-updated').textContent = 'Fetched: ' + parts.join(', ') + ' — not saved yet';
-  }
-
-  async function importMapping(file) {
-    const button = el('ow-map-import');
-    RPA.clearError('ow-mapping-alert');
-    RPA.setBusy(button, true, 'Reading…');
+    RPA.setBusy(button, true, 'Saving…');
     try {
-      const form = new FormData();
-      form.append('file', file);
-      const result = await RPA.postJson('/api/offer-warnings/mapping/import', form);
-
-      renderMapping(result.entries);
-      el('ow-mapping-updated').textContent =
-        'Imported: ' + result.added + ' added, ' + result.updated + ' updated, ' +
-        result.skipped + ' unchanged — not saved yet';
+      await putSettings(merged);
+      el('ow-unmatched-summary').textContent =
+        RPA.fmtInt(typed.length) + ' address(es) saved — build the mails again to pick them up';
     } catch (err) {
-      RPA.showError('ow-mapping-alert', err.message);
+      RPA.showError('ow-unmatched-alert', err.message);
     } finally {
       RPA.setBusy(button, false);
-      el('ow-map-file').value = '';
     }
   }
 
@@ -439,34 +439,20 @@
   // ---------------------------------------------------------------------------
 
   const FUNNEL_COLUMNS = [
-    { label: 'Where the rows went', render: f => RPA.escapeHtml(f.label) },
-    { label: 'Rows', render: f => RPA.fmtInt(f.count), numeric: true, value: f => f.count }
-  ];
-
-  /** Rows the fetch could not fill, so the operator knows exactly which ones need a hand. */
-  const FETCH_PROBLEM_COLUMNS = [
-    { label: 'Seller ID', render: p => RPA.escapeHtml(p.sellerId || '-'), numeric: true },
-    { label: 'Seller', render: p => RPA.escapeHtml(p.sellerName || '-') },
-    { label: 'Why', render: p => '<span class="badge amber">' + RPA.escapeHtml(p.reason || '') + '</span>' }
-  ];
-
-  const PROBLEM_COLUMNS = [
-    { label: 'Seller ID', render: m => RPA.escapeHtml(m.sellerId || '-'), numeric: true },
-    { label: 'Seller', render: m => RPA.escapeHtml(m.sellerName) },
-    { label: 'E-mail', render: m => RPA.escapeHtml(m.email || '-') },
-    { label: 'Attachment', render: m => RPA.escapeHtml(m.attachmentName || '-') },
-    { label: 'Why', render: m => '<span class="badge amber">' + RPA.escapeHtml(m.problem || '') + '</span>' }
+    { label: 'Where the sellers went', render: f => RPA.escapeHtml(f.label) },
+    { label: 'Sellers', render: f => RPA.fmtInt(f.count), numeric: true, value: f => f.count }
   ];
 
   function funnelRows(funnel) {
     return [
-      { label: 'Rows in the mapping table', count: funnel.entriesInTable },
+      { label: 'Sellers with a short lead time', count: funnel.sellersInFile },
       { label: 'Ready to send', count: funnel.ready },
-      { label: 'No e-mail address', count: funnel.noEmail },
+      { label: 'Under the minimum offer count', count: funnel.belowMinimum },
+      { label: 'No address for this seller', count: funnel.noEmail },
       { label: 'An address does not look valid', count: funnel.invalidEmail },
-      { label: 'Seller repeated on another row', count: funnel.duplicateSeller },
-      { label: 'No attachment file name', count: funnel.noFileName },
-      { label: 'Attachment not found in the folder', count: funnel.fileNotFound }
+      { label: 'Address list gives two different addresses', count: funnel.ambiguousEmail },
+      { label: 'File name collides with another seller', count: funnel.fileNameClash },
+      { label: 'File could not be written', count: funnel.writeFailed }
     ];
   }
 
@@ -477,22 +463,46 @@
       return;
     }
     card.hidden = false;
-    el('ow-warnings-list').innerHTML = warnings
-      .map(w => '<li>' + RPA.escapeHtml(w) + '</li>')
-      .join('');
+    el('ow-warnings-list').innerHTML = warnings.map(w => '<li>' + RPA.escapeHtml(w) + '</li>').join('');
   }
 
-  function mailCardHtml(mail, index) {
+  /**
+   * The mails the filter currently shows. Only ever a view over lastMails — the selection, the send
+   * and the export all keep reading the full list, so a filter can never quietly drop a seller.
+   */
+  function visibleMails() {
+    // RPA.fold, not toLowerCase: an operator typing "yörük" has to find "YÖRÜK", and the two only
+    // agree under the app's own Turkish-aware folding.
+    const needle = RPA.fold(search);
+
+    return lastMails.filter(function (mail) {
+      if (statusFilter === 'ready' && mail.problem) return false;
+      if (statusFilter === 'problem' && !mail.problem) return false;
+      if (!needle) return true;
+
+      const haystack = [mail.sellerName, mail.sellerId, mail.email, mail.attachmentName]
+        .filter(Boolean).join(' ');
+
+      return RPA.fold(haystack).indexOf(needle) >= 0;
+    });
+  }
+
+  function mailCardHtml(mail) {
     const broken = !!mail.problem;
+    const key = sellerKey(mail);
     const recipients = mail.recipients || [];
+    const open = expanded.has(key);
+    const bodyId = 'ow-body-' + RPA.fold(key).replace(/[^a-z0-9]+/g, '-');
 
     // The seller is the label on the badge, because the seller is what identifies the mail — and it
-    // is the seller/attachment pairing that has to be read to catch a wrong row. The addresses go
-    // underneath in full: a count alone ("3 recipients") hides the one that should not be there.
+    // is the seller/attachment pairing that has to be read to catch a wrong row.
+    //
+    // The checkbox carries the seller key, never an index into lastMails: the list is filtered, so an
+    // index would point at a different seller than the one the operator ticked.
     const head = broken
       ? '<span class="badge amber">' + RPA.escapeHtml(mail.problem) + '</span>'
-      : '<label class="check"><input type="checkbox" class="ow-pick" data-index="' + index + '"' +
-        (selected.has(sellerKey(mail)) ? ' checked' : '') + ' />' +
+      : '<label class="check"><input type="checkbox" class="ow-pick" data-key="' + RPA.escapeHtml(key) + '"' +
+        (selected.has(key) ? ' checked' : '') + ' />' +
         '<span class="badge green">' + RPA.escapeHtml(mail.sellerName || mail.email) + '</span></label>';
 
     const attachment = mail.attachmentName
@@ -505,12 +515,36 @@
         ' · ' + RPA.escapeHtml(recipients.join('; '))
       : 'no recipient';
 
-    return '<div class="msg-card">' +
+    // A hand-entered address is visibly hand-entered: it is the one the operator is answerable for.
+    const source = mail.matchedBy === 'override' ? ' · ✎ entered by hand' : '';
+
+    // Shown on every card that will actually go out. This is a CC, so the seller sees it too — the
+    // operator should be reading it beside the seller's own address, not remembering it.
+    const copy = (lastCc && !broken) ? ' · cc ' + RPA.escapeHtml(lastCc) : '';
+
+    // The preview below the head is the plain-text body; Outlook appends the signature at send time,
+    // so this marker is the only place a card can say it is coming.
+    const signed = (lastSignature && !broken) ? ' · ✒ signed' : '';
+
+    // The split is the point of the mail, so it belongs on the collapsed line rather than only in the
+    // body — a seller with 900 one-day offers is a different conversation from one with three.
+    const split = RPA.fmtInt(mail.offerCount) + ' offer(s) · ' +
+      RPA.fmtInt(mail.leadTime1) + ' × 1 gün, ' + RPA.fmtInt(mail.leadTime2) + ' × 2 gün';
+
+    return '<div class="msg-card' + (open ? '' : ' is-collapsed') + '" data-key="' + RPA.escapeHtml(key) + '">' +
       '<div class="msg-head">' +
         head +
-        '<span class="msg-meta">✉ ' + to + ' · 📎 ' + attachment + '</span>' +
+        '<span class="msg-meta">✉ ' + to + copy + ' · 📎 ' + attachment +
+          ' · ' + split + source + signed + '</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm ow-toggle" aria-controls="' + bodyId + '"' +
+          ' aria-expanded="' + (open ? 'true' : 'false') + '">' +
+          '<span class="spinner" aria-hidden="true"></span>' +
+          '<span class="btn-text">' + (open ? 'Hide mail' : 'Show mail') + '</span>' +
+        '</button>' +
       '</div>' +
-      '<pre class="msg-body">' + RPA.escapeHtml(mail.subject) + '\n\n' + RPA.escapeHtml(mail.body) + '</pre>' +
+      '<pre class="msg-body" id="' + bodyId + '">' +
+        RPA.escapeHtml(mail.subject) + '\n\n' + RPA.escapeHtml(mail.body) +
+      '</pre>' +
     '</div>';
   }
 
@@ -522,8 +556,21 @@
     const ready = lastMails.filter(m => !m.problem).length;
     const picked = selectedMails().length;
 
+    // A ticked mail the filter is hiding still goes out. Said out loud rather than unticked behind the
+    // operator's back: silently changing what they chose is the worse of the two surprises.
+    const shownKeys = new Set(visibleMails().map(sellerKey));
+    const hiddenPicked = selectedMails().filter(m => !shownKeys.has(sellerKey(m))).length;
+
+    // The run cap is not a truncation — the send is refused outright — so the count that is over it
+    // has to be visible beside the button rather than discovered on the click.
+    const overCap = maxPerRun && picked > maxPerRun
+      ? ' · ' + RPA.fmtInt(picked - maxPerRun) + ' over the ' + RPA.fmtInt(maxPerRun) + '-mail limit'
+      : '';
+
     el('ow-mails-summary').textContent = ready
-      ? RPA.fmtInt(picked) + ' of ' + RPA.fmtInt(ready) + ' selected'
+      ? RPA.fmtInt(picked) + ' of ' + RPA.fmtInt(ready) + ' selected' +
+        (hiddenPicked ? ' · ' + RPA.fmtInt(hiddenPicked) + ' of them hidden by the filter' : '') +
+        overCap
       : '';
 
     el('ow-send').disabled = running || picked === 0;
@@ -531,51 +578,86 @@
   }
 
   function renderMails() {
+    const shown = visibleMails();
+
     el('ow-mails').innerHTML = lastMails.length
-      ? lastMails.map(mailCardHtml).join('')
-      : '<div class="empty-state">No mail to compose — the mapping table is empty.</div>';
+      ? (shown.length
+          ? shown.map(mailCardHtml).join('')
+          : '<div class="empty-state">No seller matches this filter.</div>')
+      : '<div class="empty-state">No mail to compose — no seller has a short lead time.</div>';
+
+    el('ow-shown-summary').textContent = lastMails.length
+      ? RPA.fmtInt(shown.length) + ' of ' + RPA.fmtInt(lastMails.length) + ' sellers shown'
+      : '';
 
     updateSelectionSummary();
   }
 
   function renderPrepared(data) {
     lastMails = data.mails || [];
+    lastUnmatched = data.unmatched || [];
+    lastCc = data.cc || '';
+    lastSignature = !!data.includeSignature;
+    batchId = data.batchId || '';
 
     // Everything that can be sent starts ticked: the operator's job here is to spot the row that
-    // should not go, not to tick 188 boxes to get the normal case.
+    // should not go, not to tick 250 boxes to get the normal case.
     selected = new Set(lastMails.filter(m => !m.problem).map(sellerKey));
 
-    RPA.setExportContext('Attachment folder ' + data.attachmentFolder + ' · ' + data.date);
+    // A fresh run is a fresh list: last run's open rows and typed filter would hide sellers this one
+    // has never shown the operator.
+    expanded = new Set();
+    search = '';
+    statusFilter = 'all';
+    el('ow-search').value = '';
+    el('ow-filter-status').value = 'all';
+
+    RPA.setExportContext(
+      RPA.fmtInt(data.offersInFile) + ' short-lead offers · ' +
+      RPA.fmtInt(data.offersFilteredOut) + ' other rows skipped · ' +
+      RPA.fmtInt(data.directoryRows) + ' address rows · ' + data.date);
 
     renderWarnings(data.warnings);
-
-    const problems = lastMails.filter(m => m.problem);
-    el('ow-problems').hidden = problems.length === 0;
-    el('ow-problems-summary').textContent = problems.length
-      ? RPA.fmtInt(problems.length) + ' row(s) in the table will not be mailed'
-      : '';
-    RPA.renderTable('ow-problems-wrap', problems, PROBLEM_COLUMNS, 'Every row in the table can be mailed.');
+    renderUnmatched();
 
     RPA.renderTable('ow-funnel-wrap', funnelRows(data.funnel), FUNNEL_COLUMNS, 'Nothing to report.');
     RPA.syncExportButtons();
 
     renderMails();
 
-    el('ow-folder-summary').textContent = RPA.fmtInt(data.filesInFolder) + ' file(s) in the folder';
+    el('ow-output-summary').textContent = 'This run wrote to ' + data.outputFolder;
     el('ow-prepared').hidden = false;
     RPA.stamp('ow-stamp');
   }
 
   async function prepare() {
-    const button = el('ow-prepare');
+    const offers = el('ow-offers-file').files[0];
+    const directory = el('ow-directory-file').files[0];
+
     RPA.clearError('ow-prepare-alert');
-    RPA.setBusy(button, true, 'Working…');
+
+    if (!offers) {
+      RPA.showError('ow-prepare-alert', 'Choose the offer export first.');
+      return;
+    }
+    if (!directory) {
+      RPA.showError('ow-prepare-alert', 'Choose the seller address list as well — without it no mail has a recipient.');
+      return;
+    }
+
+    const button = el('ow-prepare');
+    RPA.setBusy(button, true, 'Splitting…');
     RPA.showSkeleton('ow-prepare-skeleton', 'ow-prepared');
     try {
-      renderPrepared(await RPA.sendJson('/api/offer-warnings/prepare', {
-        subjectTemplate: el('ow-subject').value,
-        bodyTemplate: el('ow-body').value
-      }));
+      const form = new FormData();
+      form.append('offers', offers);
+      form.append('directory', directory);
+      form.append('sheetName', el('ow-sheet').value);
+      form.append('subjectTemplate', el('ow-subject').value);
+      form.append('bodyTemplate', el('ow-body').value);
+      form.append('minOfferCount', minOffers());
+
+      renderPrepared(await RPA.postJson('/api/offer-warnings/prepare', form));
     } catch (err) {
       RPA.showError('ow-prepare-alert', err.message);
     } finally {
@@ -590,8 +672,7 @@
 
   /**
    * The last checkpoint before something irreversible. It names the recipients rather than counting
-   * them, because reading an address beside its attachment is the only way to notice a wrong row —
-   * the full list is on the cards above, so a long run shows the first twelve and says so.
+   * them, because reading an address beside its attachment is the only way to notice a wrong row.
    */
   function confirmSend(mails, dryRun) {
     const shown = mails.slice(0, 12).map(m => m.sellerName + '  →  ' + m.email + '  ←  ' + m.attachmentName);
@@ -610,7 +691,17 @@
       : '\n\nThis holds the automation slot for roughly ' +
         Math.max(1, Math.round(mails.length * 3.5 / 60)) + ' minute(s).';
 
-    return window.confirm(heading + '\n\n  ' + shown.join('\n  ') + tail + slotWarning);
+    // Stated once, above the list, because it applies to every line of it — and stated at all because
+    // a CC is visible to each of these sellers.
+    const copy = lastCc
+      ? '\n\nEvery one of them also copies ' + lastCc + ', visibly.'
+      : '';
+
+    const signature = lastSignature
+      ? '\nYour Outlook signature goes under each one.'
+      : '';
+
+    return window.confirm(heading + copy + signature + '\n\n  ' + shown.join('\n  ') + tail + slotWarning);
   }
 
   async function send() {
@@ -629,9 +720,10 @@
 
     try {
       await RPA.sendJson('/api/offer-warnings/send', {
+        batchId: batchId,
         dryRun: dryRun,
         mails: mails.map(m => ({
-          sellerId: m.sellerId,
+          sellerKey: m.sellerKey,
           sellerName: m.sellerName,
           recipients: m.recipients,
           subject: m.subject,
@@ -649,7 +741,7 @@
   // Wiring
   // ---------------------------------------------------------------------------
 
-  /** RPA.sendJson is POST-only; the mapping save is a PUT. */
+  /** RPA.sendJson is POST-only; the settings save is a PUT. */
   async function sendJsonMethod(method, url, payload) {
     const response = await fetch(url, {
       method: method,
@@ -671,15 +763,20 @@
   function activate() {
     if (activated) return;
     activated = true;
-    loadMapping();
+    loadSettings();
     connect();
     refreshStatus();
   }
 
   document.addEventListener('DOMContentLoaded', function () {
+    RPA.initDropzone('ow-offers-drop', 'ow-offers-file');
+    RPA.initDropzone('ow-directory-drop', 'ow-directory-file');
+
     el('ow-prepare').addEventListener('click', prepare);
     el('ow-send').addEventListener('click', send);
-    el('ow-check-folder').addEventListener('click', checkFolder);
+    el('ow-save-settings').addEventListener('click', saveSettings);
+    el('ow-override-add').addEventListener('click', addOverrideRow);
+    el('ow-unmatched-save').addEventListener('click', saveUnmatched);
 
     el('ow-check-outlook').addEventListener('click', async function () {
       const button = el('ow-check-outlook');
@@ -696,36 +793,13 @@
       }
     });
 
-    el('ow-map-save').addEventListener('click', saveMapping);
-    el('ow-map-add').addEventListener('click', addMappingRow);
-    el('ow-map-fetch').addEventListener('click', fetchEmails);
-
-    el('ow-map-import').addEventListener('click', () => el('ow-map-file').click());
-    el('ow-map-file').addEventListener('change', function () {
-      if (this.files && this.files[0]) importMapping(this.files[0]);
-    });
-
-    el('ow-map-export').addEventListener('click', async function () {
-      const button = el('ow-map-export');
-      RPA.clearError('ow-mapping-alert');
-      RPA.setBusy(button, true, 'Building…');
-      try {
-        await RPA.postDownloadJson('/api/offer-warnings/mapping/excel',
-          { entries: collectMapping() }, 'satici-mail-eslesme.xlsx');
-      } catch (err) {
-        RPA.showError('ow-mapping-alert', err.message);
-      } finally {
-        RPA.setBusy(button, false);
-      }
-    });
-
     el('ow-mails-export').addEventListener('click', async function () {
       const button = el('ow-mails-export');
       RPA.clearError('ow-mails-alert');
       RPA.setBusy(button, true, 'Building…');
       try {
-        await RPA.postDownloadJson('/api/offer-warnings/mails/excel',
-          { mails: lastMails }, 'offer-warnings.xlsx');
+        await RPA.postDownloadJson(
+          '/api/offer-warnings/mails/excel', { mails: lastMails, cc: lastCc }, 'offer-warnings.xlsx');
       } catch (err) {
         RPA.showError('ow-mails-alert', err.message);
       } finally {
@@ -735,23 +809,48 @@
 
     // Removing a row must not silently drop unsaved edits elsewhere, so the table is never
     // re-rendered on remove — the row is taken out in place.
-    el('ow-mapping-body').addEventListener('click', function (event) {
-      const button = event.target.closest('.map-remove');
+    el('ow-overrides-body').addEventListener('click', function (event) {
+      const button = event.target.closest('.ov-remove');
       if (!button) return;
       button.closest('tr').remove();
-      updateMappingCount();
+      updateOverridesCount();
     });
 
     // Keeps the count honest while the operator is still filling rows in.
-    el('ow-mapping-body').addEventListener('input', updateMappingCount);
+    el('ow-overrides-body').addEventListener('input', updateOverridesCount);
 
     el('ow-template-reset').addEventListener('click', function () {
       el('ow-subject').value = defaultSubject;
       el('ow-body').value = defaultBody;
     });
 
+    // Both filters re-render rather than hiding nodes, so the "N of M shown" count and the card list
+    // can never disagree about what the operator is looking at.
+    el('ow-search').addEventListener('input', function () {
+      search = this.value;
+      renderMails();
+    });
+
+    el('ow-filter-status').addEventListener('change', function () {
+      statusFilter = this.value;
+      renderMails();
+    });
+
+    el('ow-expand-all').addEventListener('click', function () {
+      visibleMails().forEach(m => expanded.add(sellerKey(m)));
+      renderMails();
+    });
+
+    el('ow-collapse-all').addEventListener('click', function () {
+      expanded = new Set();
+      renderMails();
+    });
+
+    // Selects what is on screen, not the whole run: after filtering to "Not sendable" or to one seller
+    // name, "everything" means the rows the operator can actually see. It is also how a 287-seller run
+    // is split into two passes that each fit under the mail limit.
     el('ow-select-all').addEventListener('click', function () {
-      selected = new Set(lastMails.filter(m => !m.problem).map(sellerKey));
+      visibleMails().filter(m => !m.problem).forEach(m => selected.add(sellerKey(m)));
       renderMails();
     });
 
@@ -765,13 +864,32 @@
       const box = event.target.closest('.ow-pick');
       if (!box) return;
 
-      const mail = lastMails[Number(box.dataset.index)];
+      // Found by key, never by position — see mailCardHtml.
+      const mail = lastMails.find(m => sellerKey(m) === box.dataset.key);
       if (!mail) return;
 
       if (box.checked) selected.add(sellerKey(mail));
       else selected.delete(sellerKey(mail));
 
       updateSelectionSummary();
+    });
+
+    // Opening a row touches that row only. Re-rendering the list here would jump the scroll position
+    // back to the top, which in a two-hundred-row list loses the operator's place entirely.
+    el('ow-mails').addEventListener('click', function (event) {
+      const button = event.target.closest('.ow-toggle');
+      if (!button) return;
+
+      const card = button.closest('.msg-card');
+      if (!card) return;
+
+      const open = card.classList.toggle('is-collapsed') === false;
+
+      if (open) expanded.add(card.dataset.key);
+      else expanded.delete(card.dataset.key);
+
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+      button.querySelector('.btn-text').textContent = open ? 'Hide mail' : 'Show mail';
     });
 
     // app.js selects the initial module while running its own DOMContentLoaded handler, which is

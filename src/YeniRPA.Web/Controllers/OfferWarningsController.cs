@@ -9,13 +9,14 @@ using YeniRPA.Web.Services.Automation;
 namespace YeniRPA.Web.Controllers;
 
 /// <summary>
-/// Seller Offer Warnings: owns the seller → e-mail → attachment mapping, renders one warning mail
-/// per seller, and hands the approved batch to Outlook.
+/// Seller Offer Warnings: splits the Mirakl offer export into one workbook per seller listing that
+/// seller's offers with a lead time to ship of 1 or 2 days, finds each seller's address in an uploaded
+/// list, and mails every seller their own file.
 ///
-/// <para><c>prepare</c> resolves the attachments and renders the text from the saved table, so
-/// editing the template is a re-render rather than a re-upload — the same split as
-/// <c>late-orders/prepare</c> → <c>late-orders/messages</c>, minus the export, because here the
-/// mapping table <em>is</em> the input.</para>
+/// <para>The twin of <see cref="VatWarningsController"/> and structurally identical to it: the app
+/// computes the seller → address → file pairing from two uploads, holds it in
+/// <see cref="OfferBatchStore"/>, and <c>send</c> takes both the recipients and the file from there.
+/// The posted values are compared to it and a difference is named, never resolved.</para>
 ///
 /// <para>Every entry point validates synchronously and lets <c>ReportExceptionFilter</c> turn a
 /// builder's <see cref="InvalidOperationException"/> into <c>400 { error }</c>.</para>
@@ -25,72 +26,55 @@ namespace YeniRPA.Web.Controllers;
 [SupportedOSPlatform("windows")]
 public sealed class OfferWarningsController : ControllerBase
 {
+    /// <summary>What this module's runs report themselves as on the shared automation bus.</summary>
+    public const string ModuleName = OfferMailRunner.ModuleName;
+
     const string XlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-    readonly SellerMailStore _store;
+    readonly OfferMailStore _store;
+    readonly OfferBatchStore _batches;
     readonly OutlookMailSender _sender;
     readonly OfferMailRunner _runner;
     readonly AutomationJobBus _bus;
-    readonly MiraklSellerUserScraper _scraper;
 
     public OfferWarningsController(
-        SellerMailStore store,
+        OfferMailStore store,
+        OfferBatchStore batches,
         OutlookMailSender sender,
         OfferMailRunner runner,
-        AutomationJobBus bus,
-        MiraklSellerUserScraper scraper)
+        AutomationJobBus bus)
     {
         _store = store;
+        _batches = batches;
         _sender = sender;
         _runner = runner;
         _bus = bus;
-        _scraper = scraper;
     }
 
     // -----------------------------------------------------------------
     // Request shapes
     // -----------------------------------------------------------------
 
-    public sealed record MappingRequest(
-        [property: JsonPropertyName("entries")] IReadOnlyList<SellerMailEntry>? Entries,
+    public sealed record SettingsRequest(
         [property: JsonPropertyName("subjectTemplate")] string? SubjectTemplate,
         [property: JsonPropertyName("bodyTemplate")] string? BodyTemplate,
-        [property: JsonPropertyName("attachmentFolder")] string? AttachmentFolder);
-
-    /// <summary>
-    /// The table as it stands in the browser, plus whether to leave filled rows alone. The table
-    /// travels rather than being read from disk so unsaved edits are not lost by a fetch.
-    /// </summary>
-    public sealed record FetchEmailsRequest(
-        [property: JsonPropertyName("entries")] IReadOnlyList<SellerMailEntry>? Entries,
-        [property: JsonPropertyName("onlyMissing")] bool? OnlyMissing);
-
-    public sealed record MappingExcelRequest(
-        [property: JsonPropertyName("entries")] IReadOnlyList<SellerMailEntry>? Entries);
-
-    /// <summary>
-    /// Template overrides for the preview, so wording can be tried out without saving it first.
-    ///
-    /// <para>The attachment folder is deliberately <b>not</b> overridable here. It decides which file
-    /// ends up attached to which seller's mail, and <c>send</c> re-derives it from the saved table —
-    /// letting the preview run against a different folder would put those two out of step in exactly
-    /// the place where being out of step means the wrong seller gets the wrong file.</para>
-    /// </summary>
-    public sealed record PrepareRequest(
-        [property: JsonPropertyName("subjectTemplate")] string? SubjectTemplate,
-        [property: JsonPropertyName("bodyTemplate")] string? BodyTemplate);
+        [property: JsonPropertyName("outputFolder")] string? OutputFolder,
+        [property: JsonPropertyName("minOfferCount")] int? MinOfferCount,
+        [property: JsonPropertyName("ccAddresses")] string? CcAddresses,
+        [property: JsonPropertyName("includeSignature")] bool? IncludeSignature,
+        [property: JsonPropertyName("overrides")] IReadOnlyList<OfferOverrideEntry>? Overrides);
 
     public sealed record MailsExcelRequest(
-        [property: JsonPropertyName("mails")] IReadOnlyList<RenderedMail>? Mails);
+        [property: JsonPropertyName("mails")] IReadOnlyList<OfferSellerMail>? Mails,
+        [property: JsonPropertyName("cc")] string? Cc);
 
     /// <summary>
-    /// One approved mail coming back from the browser. It is keyed by <b>seller</b>, not by address:
-    /// a seller has several users who all belong on one mail, and the same address can legitimately
-    /// belong to several sellers. Recipients and attachment travel only so a mismatch against the
-    /// saved table can be caught and named — neither is used as given.
+    /// One approved mail coming back from the browser, keyed by the seller key the prepare handed out.
+    /// Recipients and the attachment name travel only so a mismatch against the held batch can be
+    /// caught and named — neither is used as given.
     /// </summary>
     public sealed record SendMail(
-        [property: JsonPropertyName("sellerId")] string? SellerId,
+        [property: JsonPropertyName("sellerKey")] string? SellerKey,
         [property: JsonPropertyName("sellerName")] string? SellerName,
         [property: JsonPropertyName("recipients")] IReadOnlyList<string>? Recipients,
         [property: JsonPropertyName("subject")] string? Subject,
@@ -98,6 +82,7 @@ public sealed class OfferWarningsController : ControllerBase
         [property: JsonPropertyName("attachmentName")] string? AttachmentName);
 
     public sealed record SendRequest(
+        [property: JsonPropertyName("batchId")] string? BatchId,
         [property: JsonPropertyName("mails")] IReadOnlyList<SendMail>? Mails,
         [property: JsonPropertyName("dryRun")] bool DryRun);
 
@@ -106,15 +91,15 @@ public sealed class OfferWarningsController : ControllerBase
     // -----------------------------------------------------------------
 
     /// <summary>
-    /// Deliberately does <b>not</b> probe Outlook. Resolving the application object starts the client
-    /// when it is not running, and a status call that silently launches Outlook every time the panel
-    /// is opened is a side effect nobody asked for. <c>check-outlook</c> is the explicit version.
+    /// Deliberately does <b>not</b> probe Outlook: resolving the application object starts the client,
+    /// and a page that launched Outlook merely by being opened would be a surprise every time.
+    /// <c>check-outlook</c> is the explicit version.
     /// </summary>
     [HttpGet("status")]
     public IActionResult Status()
     {
         var file = _store.Load();
-        var folder = _store.ResolveAttachmentFolder(file);
+        var batch = _batches.Current;
 
         return Ok(new
         {
@@ -122,9 +107,10 @@ public sealed class OfferWarningsController : ControllerBase
             outlookError = _sender.LastError,
             isRunning = _bus.IsRunning,
             runningModule = _bus.RunningModule,
-            attachmentFolder = folder,
-            folderExists = Directory.Exists(folder),
-            filesInFolder = CountFiles(folder),
+            outputFolder = _store.ResolveOutputFolder(file),
+            batchId = batch?.BatchId,
+            batchFolder = batch?.OutputFolder,
+            batchSellers = batch?.BySellerKey.Count ?? 0,
             maxMailsPerRun = OfferMailRunner.MaxMailsPerRun
         });
     }
@@ -138,174 +124,71 @@ public sealed class OfferWarningsController : ControllerBase
     });
 
     // -----------------------------------------------------------------
-    // Mapping
+    // Settings
     // -----------------------------------------------------------------
 
-    [HttpGet("mapping")]
-    public IActionResult GetMapping()
+    [HttpGet("settings")]
+    public IActionResult GetSettings()
     {
         var file = _store.Load();
 
         return Ok(new
         {
-            entries = file.Entries,
             subjectTemplate = file.SubjectTemplate ?? OfferMailBuilder.DefaultSubjectTemplate,
             bodyTemplate = file.BodyTemplate ?? OfferMailBuilder.DefaultBodyTemplate,
             defaultSubjectTemplate = OfferMailBuilder.DefaultSubjectTemplate,
             defaultBodyTemplate = OfferMailBuilder.DefaultBodyTemplate,
             placeholders = OfferMailBuilder.Placeholders,
-            attachmentFolder = _store.ResolveAttachmentFolder(file),
-            defaultAttachmentFolder = _store.DefaultAttachmentFolder,
+            outputFolder = _store.ResolveOutputFolder(file),
+            defaultOutputFolder = _store.DefaultOutputFolder,
+            minOfferCount = file.MinOfferCount ?? 0,
+            ccAddresses = file.CcAddresses ?? "",
+            includeSignature = file.IncludeSignature ?? false,
+            defaultSheetName = SellerMailDirectory.DefaultSheetName,
+            leadTimes = OfferSplitBuilder.WarnedLeadTimes,
+            maxMailsPerRun = OfferMailRunner.MaxMailsPerRun,
+            overrides = file.Overrides,
             path = _store.FilePath,
             updatedUtc = file.UpdatedUtc,
-            warnings = SellerMailStore.FindTableProblems(file.Entries)
+            warnings = OfferMailStore.FindOverrideProblems(file.Overrides)
         });
     }
 
-    [HttpPut("mapping")]
-    public IActionResult SaveMapping([FromBody] MappingRequest? request)
+    [HttpPut("settings")]
+    public IActionResult SaveSettings([FromBody] SettingsRequest? request)
     {
-        var entries = Clean(request?.Entries);
+        var overrides = Clean(request?.Overrides);
 
-        _store.Save(new SellerMailFile(
+        // Refused rather than saved and quietly ignored later: this is the moment the operator typed the
+        // address, and it is the only moment they are looking at it.
+        var (cc, ccProblem) = OfferMailStore.NormalizeCc(request?.CcAddresses);
+        if (ccProblem is not null)
+            return BadRequest(new { error = $"The CC address was not saved: {ccProblem}" });
+
+        _store.Save(new OfferMailFile(
             Version: 0,                       // stamped by the store
             UpdatedUtc: null,                 // stamped by the store
             SubjectTemplate: NullIfBlank(request?.SubjectTemplate),
             BodyTemplate: NullIfBlank(request?.BodyTemplate),
-            AttachmentFolder: NullIfBlank(request?.AttachmentFolder),
-            Entries: entries));
+            OutputFolder: NullIfBlank(request?.OutputFolder),
+            MinOfferCount: OfferMailStore.NormalizeMinimum(request?.MinOfferCount),
+            CcAddresses: cc,
+            IncludeSignature: request?.IncludeSignature ?? false,
+            Overrides: overrides));
 
+        // The cleaned list comes back so the table shows what is actually stored: Clean collapses rows
+        // that describe one seller, and a panel still rendering the pre-collapse list would post the
+        // duplicates straight back on the next save.
         return Ok(new
         {
-            saved = entries.Count,
+            saved = overrides.Count,
+            overrides,
+            minOfferCount = OfferMailStore.NormalizeMinimum(request?.MinOfferCount) ?? 0,
+            ccAddresses = cc ?? "",
+            includeSignature = request?.IncludeSignature ?? false,
             path = _store.FilePath,
-            warnings = SellerMailStore.FindTableProblems(entries)
+            warnings = OfferMailStore.FindOverrideProblems(overrides)
         });
-    }
-
-    /// <summary>
-    /// Returns the merged table for review; it does <b>not</b> save. An import that silently
-    /// overwrote a hand-built mapping from a wrong-shaped file would only be recoverable from the
-    /// backup, so the operator looks at the result and presses Save.
-    /// </summary>
-    [HttpPost("mapping/import")]
-    public async Task<IActionResult> ImportMapping(IFormFile? file, CancellationToken cancellationToken)
-    {
-        if (file is not { Length: > 0 })
-            return BadRequest(new { error = "Please upload a mapping file (.xlsx or .csv)." });
-
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
-        var imported = SellerMailStore.ReadWorkbook(stream, file.FileName);
-
-        var merged = _store.Load().Entries.ToList();
-        var added = 0;
-        var updated = 0;
-        var skipped = 0;
-
-        foreach (var entry in imported)
-        {
-            var index = FindExisting(merged, entry);
-            if (index < 0)
-            {
-                merged.Add(entry);
-                added++;
-                continue;
-            }
-
-            var existing = merged[index];
-
-            // A blank cell in the import means "not stated", not "clear this". The lead-time counts
-            // are the exception: they are a fresh measurement every month, and a 0 there is a real
-            // reading rather than a gap.
-            var next = new SellerMailEntry(
-                SellerId: entry.SellerId.Length > 0 ? entry.SellerId : existing.SellerId,
-                SellerName: entry.SellerName.Length > 0 ? entry.SellerName : existing.SellerName,
-                Email: entry.Email.Length > 0 ? entry.Email : existing.Email,
-                FileName: entry.FileName.Length > 0 ? entry.FileName : existing.FileName,
-                LeadTime0: entry.LeadTime0,
-                LeadTime1: entry.LeadTime1);
-
-            if (next == existing)
-            {
-                skipped++;
-                continue;
-            }
-
-            merged[index] = next;
-            updated++;
-        }
-
-        return Ok(new { entries = merged, added, updated, skipped });
-    }
-
-    /// <summary>
-    /// Fills the address column from the Mirakl back office, one seller page per row.
-    ///
-    /// <para>Same contract as <c>mapping/import</c>: it returns the merged table for review and
-    /// <b>does not save</b>. An endpoint that silently rewrote 190 addresses would only be
-    /// recoverable from the backup generation, and the operator would have no way to see what had
-    /// changed before it did.</para>
-    ///
-    /// <para>Synchronous rather than a background run: four pages at a time clears the whole table in
-    /// well under a minute, and the result has to land back in the table anyway — the progress bus
-    /// carries log lines, not data. It also means a scrape does not hold the automation slot that
-    /// Create Return needs.</para>
-    /// </summary>
-    [HttpPost("mapping/fetch-emails")]
-    public IActionResult FetchEmails([FromBody] FetchEmailsRequest? request)
-    {
-        var entries = Clean(request?.Entries);
-        if (entries.Count == 0)
-            return BadRequest(new { error = "The mapping table is empty. Import your matching workbook first." });
-
-        if (entries.Count > MiraklSellerUserScraper.MaxSellersPerRun)
-        {
-            return BadRequest(new
-            {
-                error = $"{entries.Count} rows is over the {MiraklSellerUserScraper.MaxSellersPerRun}-seller limit " +
-                        "for one fetch. Narrow the table and run it in batches."
-            });
-        }
-
-        if (!_scraper.TryStart(entries, request?.OnlyMissing ?? true))
-            return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });
-
-        return Ok(new { started = true, rows = entries.Count });
-    }
-
-    /// <summary>
-    /// The table the last fetch produced. Collected by the panel when the run reports done — the
-    /// progress bus streams log lines, and a 190-row table is not a log line.
-    /// </summary>
-    [HttpGet("mapping/fetch-result")]
-    public IActionResult FetchResult()
-    {
-        var result = _scraper.LastResult;
-        if (result is null)
-            return Ok(new { available = false });
-
-        return Ok(new
-        {
-            available = true,
-            result.Entries,
-            result.Filled,
-            result.Unchanged,
-            result.NoSellerId,
-            result.SkippedDisabled,
-            result.Problems,
-            result.Error,
-            result.CompletedUtc
-        });
-    }
-
-    [HttpPost("mapping/excel")]
-    public IActionResult MappingExcel([FromBody] MappingExcelRequest? request)
-    {
-        var entries = Clean(request?.Entries);
-        if (entries.Count == 0)
-            return BadRequest(new { error = "The mapping table is empty." });
-
-        return File(SellerMailStore.BuildWorkbook(entries), XlsxContentType, "satici-mail-eslesme.xlsx");
     }
 
     // -----------------------------------------------------------------
@@ -313,120 +196,259 @@ public sealed class OfferWarningsController : ControllerBase
     // -----------------------------------------------------------------
 
     /// <summary>
-    /// Renders every row and resolves its attachment. Rows that cannot be sent come back with a
-    /// <c>problem</c> rather than being dropped — a seller who silently never got warned is the
-    /// failure this module is here to prevent.
+    /// Reads both uploads, writes one workbook per seller and renders every mail.
+    ///
+    /// <para>Sellers who cannot be mailed come back with a <c>problem</c> rather than being dropped —
+    /// a seller who silently never got warned is the failure this module exists to prevent. Their
+    /// workbook is still written, so the operator can send it by hand if they want to.</para>
     /// </summary>
     [HttpPost("prepare")]
-    public IActionResult Prepare([FromBody] PrepareRequest? request)
+    public async Task<IActionResult> Prepare(
+        IFormFile? offers,
+        IFormFile? directory,
+        [FromForm] string? sheetName,
+        [FromForm] string? subjectTemplate,
+        [FromForm] string? bodyTemplate,
+        [FromForm] int? minOfferCount,
+        CancellationToken cancellationToken)
     {
-        var file = _store.Load();
-        var folder = _store.ResolveAttachmentFolder(file);
-        var entries = file.Entries;
+        if (offers is not { Length: > 0 })
+            return BadRequest(new { error = "Please upload the offer export (.xlsx or .csv)." });
 
-        var subjectTemplate = NullIfBlank(request?.SubjectTemplate) ?? file.SubjectTemplate;
-        var bodyTemplate = NullIfBlank(request?.BodyTemplate) ?? file.BodyTemplate;
+        if (directory is not { Length: > 0 })
+            return BadRequest(new { error = "Please upload the seller address list (.xlsx or .csv)." });
 
-        if (entries.Count == 0)
+        var settings = _store.Load();
+        var subject = NullIfBlank(subjectTemplate) ?? settings.SubjectTemplate;
+        var body = NullIfBlank(bodyTemplate) ?? settings.BodyTemplate;
+
+        // What the panel sent wins over what is saved, so the operator can try a threshold for one run
+        // without committing to it. 0 — and anything below it — means every seller is worth a mail.
+        var minimum = Math.Max(0, minOfferCount ?? settings.MinOfferCount ?? 0);
+
+        // Fixed into the batch here and read back at send time, like the recipients and the attachment.
+        // Editing the settings box after this point changes nothing until the mails are built again, so
+        // the address on the cards is the address that goes out.
+        //
+        // A malformed CC stops the build. Save refuses one already, so this only fires on a hand-edited
+        // settings file — and building 287 mails whose copy silently goes nowhere is worse than saying so.
+        var (cc, ccProblem) = OfferMailStore.NormalizeCc(settings.CcAddresses);
+        if (ccProblem is not null)
+            throw new InvalidOperationException($"The saved CC address cannot be used: {ccProblem}");
+
+        // Fixed into the batch alongside the CC, for the same reason.
+        var includeSignature = settings.IncludeSignature ?? false;
+
+        OfferSplitBuilder.SplitResult split;
+        using (var stream = await CopyToSeekableStreamAsync(offers, cancellationToken))
+            split = OfferSplitBuilder.Read(stream, offers.FileName);
+
+        SellerMailDirectory addresses;
+        using (var stream = await CopyToSeekableStreamAsync(directory, cancellationToken))
+        {
+            addresses = SellerMailDirectory.Read(
+                stream,
+                directory.FileName,
+                // Blank means "this file is a purpose-built single-sheet list"; the onboarding workbook
+                // needs its sheet named because its first sheet holds no addresses at all.
+                NullIfBlank(sheetName) ?? SellerMailDirectory.DefaultSheetName);
+        }
+
+        if (split.Sellers.Count == 0)
         {
             throw new InvalidOperationException(
-                "The seller/e-mail mapping is empty. Import your matching workbook or add rows above first.");
+                "No seller in the export has an offer with a lead time to ship of " +
+                $"{string.Join(" or ", OfferSplitBuilder.WarnedLeadTimes)} day(s), so there is nothing to split.");
         }
 
         var date = DateTime.Now.ToString("yyyy-MM-dd");
 
-        // Every row of a duplicated seller is flagged, not just the second one: marking one of a pair
-        // sends the operator hunting for a duplicate that is not visibly a duplicate.
-        var repeatedSellers = entries
-            .Select(SellerKey)
-            .Where(key => key.Length > 0)
-            .GroupBy(key => key, StringComparer.Ordinal)
-            .Where(g => g.Count() > 1)
-            .Select(g => g.Key)
-            .ToHashSet(StringComparer.Ordinal);
+        // A folder per run. Last month's files can then never be picked up by this month's send, and
+        // the operator can compare two runs without one having overwritten the other.
+        var folder = Path.Combine(
+            _store.ResolveOutputFolder(settings),
+            DateTime.Now.ToString("yyyy-MM-dd-HHmm"));
 
-        var mails = new List<RenderedMail>(entries.Count);
-        int noEmail = 0, invalidEmail = 0, noFileName = 0, fileNotFound = 0, duplicateSeller = 0, ready = 0;
-
-        foreach (var entry in entries)
+        try
         {
+            Directory.CreateDirectory(folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(
+                $"The output folder '{folder}' could not be created: {ex.Message}", ex);
+        }
+
+        var clashes = OfferSplitBuilder.FindFileNameClashes(split.Sellers);
+
+        var mails = new List<OfferSellerMail>(split.Sellers.Count);
+        var unmatched = new List<OfferUnmatchedSeller>();
+        var batchMails = new List<OfferBatchMail>();
+
+        int ready = 0, belowMinimum = 0, noEmail = 0, invalidEmail = 0, ambiguousEmail = 0,
+            fileNameClash = 0, writeFailed = 0;
+
+        foreach (var seller in split.Sellers)
+        {
+            var fileName = OfferSplitBuilder.FileNameFor(seller);
+
             string? problem = null;
-            var path = "";
+            var matchedBy = "";
+            IReadOnlyList<string> recipients = [];
             long size = 0;
+            var underMinimum = false;
 
-            var addresses = SellerMailStore.SplitAddresses(entry.Email);
-            var badAddress = addresses.FirstOrDefault(a => !SellerMailStore.LooksLikeEmail(a));
-
-            if (addresses.Count == 0)
+            if (clashes.Contains(seller.SellerKey))
             {
-                problem = "No e-mail address is entered for this seller.";
-                noEmail++;
+                // Neither of the two is written and neither is sent: the second write would overwrite
+                // the first, and then one of these sellers receives the other's list.
+                //
+                // Checked before the minimum on purpose: a name collision is a fault in the export and
+                // is worth naming even for a seller the threshold would have dropped anyway.
+                problem = $"'{fileName}' is also another seller's file name. Neither seller is mailed — " +
+                          "give one of them a distinct name in the export.";
+                fileNameClash++;
             }
-            else if (badAddress is not null)
+            else if (seller.Offers.Count < minimum)
             {
-                // Names the offending address rather than the whole cell: a seller with four users has
-                // a cell too long to eyeball, and "one of these is wrong" is not an actionable message.
-                problem = $"'{badAddress}' does not look like an e-mail address.";
-                invalidEmail++;
+                // Below the threshold nothing is written at all — an unsent workbook full of a seller's
+                // offers is a file that exists for no reason.
+                problem = $"{seller.Offers.Count:N0} offer(s) — under the minimum of {minimum:N0}. Not mailed.";
+                underMinimum = true;
+                belowMinimum++;
             }
-            else if (repeatedSellers.Contains(SellerKey(entry)))
+            else if (!TryWrite(folder, fileName, seller, date, out size, out var writeError))
             {
-                problem = "This seller is on more than one row. Remove one — the run cannot tell which is authoritative.";
-                duplicateSeller++;
-            }
-            else if (entry.FileName.Trim().Length == 0)
-            {
-                problem = "No attachment file name is entered for this seller.";
-                noFileName++;
+                problem = writeError;
+                writeFailed++;
             }
             else
             {
-                var match = OfferMailBuilder.ResolveAttachment(folder, entry.FileName);
-                if (match.Problem is not null)
+                // The hand-entered address wins: it is the operator's answer to a seller the uploaded
+                // list does not cover, and it must not be overruled by whatever the list says next month.
+                var overrideEmail = OfferMailStore.FindOverride(settings.Overrides, seller.SellerId, seller.SellerName);
+                string? email = null;
+
+                if (overrideEmail is not null)
                 {
-                    problem = match.Problem;
-                    fileNotFound++;
-                }
-                else if (!System.IO.File.Exists(match.Path))
-                {
-                    problem = $"'{entry.FileName.Trim()}' was not found in the attachment folder.";
-                    fileNotFound++;
+                    email = overrideEmail;
+                    matchedBy = "override";
                 }
                 else
                 {
-                    path = match.Path;
-                    size = new FileInfo(match.Path).Length;
-                    ready++;
+                    var match = addresses.Find(seller.SellerId, seller.SellerName);
+                    if (match.Email is not null)
+                    {
+                        email = match.Email;
+                        matchedBy = "directory";
+                    }
+                    else
+                    {
+                        problem = match.Problem;
+
+                        // "Two different addresses" is a different failure from "not in the list": the
+                        // first is a row to correct in the file, the second is an address to enter here.
+                        if (match.Problem is not null && match.Problem.Contains("two different", StringComparison.OrdinalIgnoreCase))
+                            ambiguousEmail++;
+                        else
+                            noEmail++;
+                    }
+                }
+
+                if (email is not null)
+                {
+                    recipients = SellerMailStore.SplitAddresses(email);
+                    var bad = recipients.FirstOrDefault(a => !SellerMailStore.LooksLikeEmail(a));
+
+                    if (recipients.Count == 0)
+                    {
+                        problem = "No e-mail address is entered for this seller.";
+                        noEmail++;
+                    }
+                    else if (bad is not null)
+                    {
+                        // Names the offending address rather than the whole cell: a seller with four
+                        // users has a cell too long to eyeball.
+                        problem = $"'{bad}' does not look like an e-mail address.";
+                        invalidEmail++;
+                    }
+                    else
+                    {
+                        ready++;
+                    }
                 }
             }
 
-            mails.Add(OfferMailBuilder.Render(
-                entry, date, subjectTemplate, bodyTemplate, path, size, problem));
+            var mail = OfferMailBuilder.Render(
+                seller, recipients, fileName, size, date, subject, body, matchedBy, problem);
+
+            mails.Add(mail);
+
+            if (problem is null)
+            {
+                batchMails.Add(new OfferBatchMail(
+                    SellerKey: seller.SellerKey,
+                    SellerId: seller.SellerId,
+                    SellerName: seller.SellerName,
+                    Recipients: recipients,
+                    AttachmentPath: Path.Combine(folder, fileName),
+                    AttachmentName: fileName));
+            }
+            else if (matchedBy.Length == 0 && !clashes.Contains(seller.SellerKey) && !underMinimum)
+            {
+                // The editable list: sellers whose file is ready and waiting on nothing but an address.
+                // A seller under the threshold is not waiting on anything, so entering an address for
+                // them would answer a question nobody asked.
+                unmatched.Add(new OfferUnmatchedSeller(
+                    SellerId: seller.SellerId,
+                    SellerName: seller.SellerName,
+                    SellerKey: seller.SellerKey,
+                    OfferCount: seller.Offers.Count,
+                    Reason: problem));
+            }
         }
 
-        var warnings = new List<string>(SellerMailStore.FindTableProblems(entries));
+        var batch = _batches.Put(folder, cc, includeSignature, batchMails);
 
-        if (!Directory.Exists(folder))
-            warnings.Add($"The attachment folder '{folder}' does not exist, so no attachment can be found.");
-
+        var warnings = new List<string>(split.Warnings);
+        warnings.AddRange(addresses.Warnings);
+        warnings.AddRange(OfferMailStore.FindOverrideProblems(settings.Overrides));
         warnings.AddRange(mails
             .SelectMany(m => m.UnknownPlaceholders)
             .Distinct(StringComparer.Ordinal)
             .Select(token => $"'{token}' is not a placeholder and was left in the text as-is."));
 
-        return Ok(new OfferMailData(
+        // Said here rather than left for the send to refuse. The export routinely produces more sellers
+        // with a short lead time than one run may mail, and finding that out after ticking every card is
+        // the wrong moment — the operator needs it while the minimum-offers box is still in front of them.
+        if (ready > OfferMailRunner.MaxMailsPerRun)
+        {
+            warnings.Add(
+                $"{ready:N0} sellers are ready, over the {OfferMailRunner.MaxMailsPerRun}-mail limit for " +
+                "one run. Raise the minimum offers and build again, or send them in two passes by " +
+                "un-ticking part of the list.");
+        }
+
+        return Ok(new OfferPrepareData(
+            BatchId: batch.BatchId,
             Date: date,
-            AttachmentFolder: folder,
-            FilesInFolder: CountFiles(folder),
+            OutputFolder: folder,
+            Cc: cc,
+            IncludeSignature: includeSignature,
+            OffersInFile: split.OffersInFile,
+            OffersFilteredOut: split.OffersFilteredOut,
+            DirectoryRows: addresses.RowCount,
             Mails: mails,
-            Funnel: new OfferMailFunnel(
-                EntriesInTable: entries.Count,
+            Unmatched: unmatched,
+            Funnel: new OfferFunnel(
+                SellersInFile: split.Sellers.Count,
                 Ready: ready,
+                BelowMinimum: belowMinimum,
                 NoEmail: noEmail,
                 InvalidEmail: invalidEmail,
-                NoFileName: noFileName,
-                FileNotFound: fileNotFound,
-                DuplicateSeller: duplicateSeller),
+                AmbiguousEmail: ambiguousEmail,
+                FileNameClash: fileNameClash,
+                WriteFailed: writeFailed),
             Warnings: warnings));
     }
 
@@ -442,7 +464,10 @@ public sealed class OfferWarningsController : ControllerBase
         if (mails.Count == 0)
             return BadRequest(new { error = "There is nothing to export." });
 
-        return File(BuildMailsWorkbook(mails), XlsxContentType, $"offer-warnings-{DateTime.Now:yyyyMMdd-HHmm}.xlsx");
+        return File(
+            BuildMailsWorkbook(mails, request?.Cc),
+            XlsxContentType,
+            $"offer-warnings-{DateTime.Now:yyyyMMdd-HHmm}.xlsx");
     }
 
     // -----------------------------------------------------------------
@@ -452,20 +477,14 @@ public sealed class OfferWarningsController : ControllerBase
     /// <summary>
     /// Runs the approved mails.
     ///
-    /// <para>The subject and body come back from the browser rather than being re-rendered here, so
-    /// the text the operator read is the text a seller receives — re-rendering server-side would
-    /// create two rendering paths that could disagree, and the one place they would disagree is
-    /// between what was approved and what was sent.</para>
+    /// <para>The subject and body come back from the browser rather than being re-rendered here, so the
+    /// text the operator read is the text a seller receives — re-rendering server-side would create two
+    /// rendering paths that could disagree, and the one place they would disagree is between what was
+    /// approved and what was sent.</para>
     ///
-    /// <para>The <b>recipients and the attachment do not</b>. Each mail names a seller; that seller is
-    /// resolved to exactly one row of the saved table, and both the To line and the file come from that
-    /// row. What the browser sent is compared to it and a difference is refused by name — it never
-    /// wins. Trusting a client-supplied address or path is how an automation ends up mailing one
-    /// seller's price list to another.</para>
-    ///
-    /// <para>Keyed by seller rather than by address because neither side is unique on its own any
-    /// more: a seller has several users on one mail, and one agency address can be a recipient for
-    /// several sellers. Only the seller identifies a mail.</para>
+    /// <para>The <b>recipients and the attachment do not</b>. Each mail names a seller key; that key is
+    /// resolved in the batch this server prepared, and both the To line and the file come from there.
+    /// What the browser sent is compared to it and a difference is refused by name — it never wins.</para>
     /// </summary>
     [HttpPost("send")]
     public IActionResult Send([FromBody] SendRequest? request)
@@ -473,6 +492,16 @@ public sealed class OfferWarningsController : ControllerBase
         var raw = request?.Mails ?? [];
         if (raw.Count == 0)
             return BadRequest(new { error = "There is nothing to send." });
+
+        var batch = _batches.Get(request?.BatchId);
+        if (batch is null)
+        {
+            return BadRequest(new
+            {
+                error = "This batch is no longer the prepared one — the files were rebuilt, or the app " +
+                        "restarted. Build the mails again and read the list before sending."
+            });
+        }
 
         if (raw.Count > OfferMailRunner.MaxMailsPerRun)
         {
@@ -484,67 +513,68 @@ public sealed class OfferWarningsController : ControllerBase
             });
         }
 
-        var file = _store.Load();
-        var folder = _store.ResolveAttachmentFolder(file);
-
         var mails = new List<OutgoingMail>(raw.Count);
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var mail in raw)
         {
             var label = Describe(mail);
+            var key = (mail.SellerKey ?? "").Trim();
 
-            // The allow-list that matters: a mail can only be built for a seller the operator entered
-            // in the mapping table by hand, and only from that row's own data.
-            var matches = FindMatches(file.Entries, mail.SellerId, mail.SellerName);
-
-            if (matches.Count == 0)
+            // The allow-list that matters: a mail can only be built for a seller this server put in the
+            // batch, and only from that entry's own data.
+            if (key.Length == 0 || !batch.BySellerKey.TryGetValue(key, out var entry))
             {
                 return BadRequest(new
                 {
-                    error = $"{label} is not in the seller/e-mail mapping. Add the seller there first — this app " +
-                            "only mails sellers you have entered by hand."
+                    error = $"{label} is not in the prepared batch. Build the mails again — this app only " +
+                            "mails sellers it resolved itself."
                 });
             }
 
-            if (matches.Count > 1)
-            {
-                return BadRequest(new
-                {
-                    error = $"{label} matches {matches.Count} rows in the mapping. Remove the duplicate — nothing " +
-                            "is guessed at when two rows could be the intended one."
-                });
-            }
-
-            var entry = matches[0];
-
-            if (!seen.Add(SellerKey(entry)))
+            if (!seen.Add(key))
                 return BadRequest(new { error = $"{label} appears twice in this run. Each seller is mailed once." });
 
-            // Recipients come from the table, exactly like the attachment. The posted list is compared
+            // Recipients come from the batch, exactly like the attachment. The posted list is compared
             // to it so a difference is named rather than silently resolved one way or the other.
-            var recipients = SellerMailStore.SplitAddresses(entry.Email);
+            var claimed = (mail.Recipients ?? []).Select(SellerMailStore.NormalizeEmail).ToList();
+            var held = entry.Recipients.Select(SellerMailStore.NormalizeEmail).ToList();
 
-            if (recipients.Count == 0)
-                return BadRequest(new { error = $"{label} has no recipient in the mapping." });
-
-            var badAddress = recipients.FirstOrDefault(a => !SellerMailStore.LooksLikeEmail(a));
-            if (badAddress is not null)
-                return BadRequest(new { error = $"'{badAddress}' on {label} does not look like an e-mail address." });
-
-            var claimedRecipients = (mail.Recipients ?? []).Select(SellerMailStore.NormalizeEmail).ToList();
-            var tableRecipients = recipients.Select(SellerMailStore.NormalizeEmail).ToList();
-
-            if (!claimedRecipients.SequenceEqual(tableRecipients, StringComparer.Ordinal))
+            if (!claimed.SequenceEqual(held, StringComparer.Ordinal))
             {
                 return BadRequest(new
                 {
-                    error = $"The recipients for {label} were approved as " +
-                            $"'{string.Join("; ", mail.Recipients ?? [])}' but the mapping now says " +
-                            $"'{SellerMailStore.JoinAddresses(recipients)}'. Build the mails again and read the " +
-                            "list before sending."
+                    error = $"The recipients for {label} were approved as '{string.Join("; ", mail.Recipients ?? [])}' " +
+                            $"but the prepared batch says '{SellerMailStore.JoinAddresses(entry.Recipients)}'. " +
+                            "Build the mails again and read the list before sending."
                 });
             }
+
+            var bad = entry.Recipients.FirstOrDefault(a => !SellerMailStore.LooksLikeEmail(a));
+            if (bad is not null)
+                return BadRequest(new { error = $"'{bad}' on {label} does not look like an e-mail address." });
+
+            // The posted attachment name is checked against the batch rather than used.
+            var expected = entry.AttachmentName.Trim();
+            var claimedName = (mail.AttachmentName ?? "").Trim();
+
+            if (!string.Equals(expected, claimedName, StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new
+                {
+                    error = $"The attachment for {label} was approved as '{claimedName}' but the prepared " +
+                            $"batch says '{expected}'. Build the mails again and read the list before sending."
+                });
+            }
+
+            // Re-derived inside the batch folder rather than taken from the entry's stored path: that is
+            // what stops any name from reaching a file outside the folder this run wrote.
+            var match = OfferMailBuilder.ResolveAttachment(batch.OutputFolder, expected);
+            if (match.Problem is not null)
+                return BadRequest(new { error = $"The attachment for {label} cannot be used: {match.Problem}" });
+
+            if (!System.IO.File.Exists(match.Path))
+                return BadRequest(new { error = $"The attachment for {label} is not in the folder: {match.Path}" });
 
             var subject = (mail.Subject ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
             var body = (mail.Body ?? "").Replace("\r\n", "\n").Replace("\r", "\n").Trim();
@@ -555,39 +585,21 @@ public sealed class OfferWarningsController : ControllerBase
             if (body.Length == 0)
                 return BadRequest(new { error = $"The mail for {label} is empty." });
 
-            // The posted attachment name is checked against the table rather than used: it exists so a
-            // mismatch is caught and named, instead of the run quietly attaching something other than
-            // what the preview showed.
-            var expected = entry.FileName.Trim();
-            var claimed = (mail.AttachmentName ?? "").Trim();
-
-            if (!string.Equals(expected, claimed, StringComparison.OrdinalIgnoreCase))
-            {
-                return BadRequest(new
-                {
-                    error = $"The attachment for {label} was approved as '{claimed}' but the mapping now says " +
-                            $"'{expected}'. Build the mails again and read the list before sending."
-                });
-            }
-
-            var match = OfferMailBuilder.ResolveAttachment(folder, expected);
-            if (match.Problem is not null)
-                return BadRequest(new { error = $"The attachment for {label} cannot be used: {match.Problem}" });
-
-            if (!System.IO.File.Exists(match.Path))
-                return BadRequest(new { error = $"The attachment for {label} is not in the folder: {match.Path}" });
-
             mails.Add(new OutgoingMail(
-                To: SellerMailStore.JoinAddresses(recipients),
+                To: SellerMailStore.JoinAddresses(entry.Recipients),
                 SellerId: entry.SellerId,
                 SellerName: entry.SellerName,
                 Subject: subject,
                 Body: body,
                 AttachmentPath: match.Path,
-                AttachmentName: expected));
+                AttachmentName: expected,
+                // From the batch, never from the request — the same rule the recipients and the
+                // attachment follow. Nothing the browser posts can add a reader to these mails.
+                Cc: batch.Cc,
+                IncludeSignature: batch.IncludeSignature));
         }
 
-        if (!_runner.TryStart(mails, request!.DryRun))
+        if (!_runner.TryStart(mails, request!.DryRun, ModuleName))
             return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });
 
         return Ok(new { count = mails.Count, dryRun = request.DryRun });
@@ -595,111 +607,110 @@ public sealed class OfferWarningsController : ControllerBase
 
     // -----------------------------------------------------------------
 
-    /// <summary>How many files sit in the attachment folder, so "0 sellers matched" can be told apart
-    /// from "you are pointing at the wrong folder".</summary>
-    static int CountFiles(string folder)
+    /// <summary>
+    /// Writes one seller's workbook. Returns false with a message rather than throwing: one seller
+    /// whose file could not be written must not stop the other 286 from being prepared.
+    /// </summary>
+    static bool TryWrite(
+        string folder, string fileName, OfferSellerGroup seller, string date, out long size, out string? error)
     {
+        size = 0;
+        error = null;
+
+        // The same containment rule the send path applies, run here too — the file name is derived
+        // from a seller name that came out of an uploaded spreadsheet.
+        var match = OfferMailBuilder.ResolveAttachment(folder, fileName);
+        if (match.Problem is not null)
+        {
+            error = $"The file for this seller could not be written: {match.Problem}";
+            return false;
+        }
+
         try
         {
-            return Directory.Exists(folder) ? Directory.EnumerateFiles(folder).Count() : 0;
+            System.IO.File.WriteAllBytes(match.Path, OfferSellerWorkbook.Build(seller, date));
+            size = new FileInfo(match.Path).Length;
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return 0;
+            error = $"'{fileName}' could not be written: {ex.Message}";
+            return false;
         }
     }
 
-    /// <summary>
-    /// What identifies a row. The seller id wins when there is one — ids are stable, while a display
-    /// name changes whenever a seller edits their storefront — and the folded name is the fallback for
-    /// rows typed in without an id. Same precedence as <see cref="SellerGroupMap.Resolve"/>.
-    /// </summary>
-    static string SellerKey(SellerMailEntry entry)
-    {
-        var id = SellerGroupMap.NormalizeSellerId(entry.SellerId);
-        return id.Length > 0 ? "id:" + id : "name:" + SellerGroupMap.FoldName(entry.SellerName);
-    }
-
-    /// <summary>
-    /// Every row a send request could be referring to. Returns all of them rather than the first:
-    /// the caller refuses an ambiguous match instead of picking one, because picking one here would
-    /// mean guessing which seller's price list to attach.
-    /// </summary>
-    static List<SellerMailEntry> FindMatches(IReadOnlyList<SellerMailEntry> entries, string? sellerId, string? sellerName)
-    {
-        var id = SellerGroupMap.NormalizeSellerId(sellerId ?? "");
-        if (id.Length > 0)
-            return [.. entries.Where(e => SellerGroupMap.NormalizeSellerId(e.SellerId) == id)];
-
-        var name = SellerGroupMap.FoldName(sellerName ?? "");
-        if (name.Length == 0)
-            return [];
-
-        // Only rows that also have no id: a row carrying an id was matched by id or not at all, so
-        // falling back to its name would let a nameless request reach it sideways.
-        return [.. entries.Where(e =>
-            SellerGroupMap.NormalizeSellerId(e.SellerId).Length == 0 &&
-            SellerGroupMap.FoldName(e.SellerName) == name)];
-    }
-
-    /// <summary>How a seller is named in an error message: the id when there is one, since that is
-    /// what the operator searches the table by.</summary>
+    /// <summary>How a seller is named in an error message.</summary>
     static string Describe(SendMail mail)
     {
-        var id = SellerGroupMap.NormalizeSellerId(mail.SellerId ?? "");
         var name = (mail.SellerName ?? "").Trim();
+        if (name.Length > 0)
+            return $"'{name}'";
 
-        if (id.Length > 0)
-            return name.Length > 0 ? $"'{name}' (id {id})" : $"seller id {id}";
-
-        return name.Length > 0 ? $"'{name}'" : "one of the mails";
+        var key = (mail.SellerKey ?? "").Trim();
+        return key.Length > 0 ? $"seller {key}" : "one of the mails";
     }
 
-    /// <summary>Matches on the normalized seller id when there is one, otherwise on the folded name —
-    /// the same precedence <see cref="SellerGroupMap.Resolve"/> applies.</summary>
-    static int FindExisting(List<SellerMailEntry> entries, SellerMailEntry candidate)
-    {
-        var id = SellerGroupMap.NormalizeSellerId(candidate.SellerId);
-        if (id.Length > 0)
-        {
-            var byId = entries.FindIndex(e => SellerGroupMap.NormalizeSellerId(e.SellerId) == id);
-            if (byId >= 0)
-                return byId;
-        }
-
-        var name = SellerGroupMap.FoldName(candidate.SellerName);
-        if (name.Length == 0)
-            return -1;
-
-        return entries.FindIndex(e => SellerGroupMap.FoldName(e.SellerName) == name);
-    }
-
-    /// <summary>Trims every field and drops rows with nothing identifying a seller. A row with a
-    /// seller but no address is kept — that is "seen but not finished", not junk.</summary>
-    static List<SellerMailEntry> Clean(IReadOnlyList<SellerMailEntry>? entries)
+    /// <summary>
+    /// Trims every field, drops rows with nothing identifying a seller, and collapses rows that
+    /// describe the same seller.
+    ///
+    /// <para>The collapsing is what lets the browser stay out of the key rule. The unmatched-seller
+    /// card appends whatever was typed and posts the whole list; deduplicating there would mean
+    /// recomputing <see cref="OfferSplitBuilder.SellerKey"/> in JavaScript, and a browser-side fold that
+    /// disagreed with this one by a single character would append a second row for a seller instead of
+    /// replacing the first — leaving a stale address in front of the one just entered.</para>
+    ///
+    /// <para>The later row wins and keeps the earlier one's position: later is the one the operator
+    /// just typed, and a stable position keeps the table from reshuffling under them on every save.</para>
+    /// </summary>
+    static List<OfferOverrideEntry> Clean(IReadOnlyList<OfferOverrideEntry>? entries)
     {
         if (entries is null)
             return [];
 
-        return [.. entries
-            .Select(e => new SellerMailEntry(
-                SellerGroupMap.NormalizeSellerId(e.SellerId ?? ""),
-                (e.SellerName ?? "").Trim(),
+        var cleaned = new List<OfferOverrideEntry>();
+        var positionOf = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var raw in entries)
+        {
+            var entry = new OfferOverrideEntry(
+                SellerGroupMap.NormalizeSellerId(raw.SellerId ?? ""),
+                (raw.SellerName ?? "").Trim(),
                 // Canonicalised on the way in, so the stored cell always uses one separator and holds
-                // no repeats — whatever the operator pasted or the fetch wrote.
-                SellerMailStore.JoinAddresses(SellerMailStore.SplitAddresses(e.Email)),
-                (e.FileName ?? "").Trim(),
-                Math.Max(0, e.LeadTime0),
-                Math.Max(0, e.LeadTime1)))
-            .Where(e => e.SellerId.Length > 0 || e.SellerName.Length > 0)];
+                // no repeats — whatever the operator pasted.
+                SellerMailStore.JoinAddresses(SellerMailStore.SplitAddresses(raw.Email)));
+
+            // A row with a seller but no address is kept — that is "seen but not finished", not junk.
+            if (entry.SellerId.Length == 0 && entry.SellerName.Length == 0)
+                continue;
+
+            var key = OfferSplitBuilder.SellerKey(entry.SellerId, entry.SellerName);
+
+            if (positionOf.TryGetValue(key, out var index))
+                cleaned[index] = entry;
+            else
+            {
+                positionOf[key] = cleaned.Count;
+                cleaned.Add(entry);
+            }
+        }
+
+        return cleaned;
     }
 
-    static byte[] BuildMailsWorkbook(IReadOnlyList<RenderedMail> mails)
+    static byte[] BuildMailsWorkbook(IReadOnlyList<OfferSellerMail> mails, string? cc)
     {
         using var workbook = new XLWorkbook();
         var sheet = workbook.AddWorksheet("Mails");
 
-        string[] headers = ["Seller ID", "Seller", "E-mail", "Attachment", "Lead time 0", "Lead time 1", "Problem", "Subject", "Body"];
+        // CC is one value for the whole run, but it is repeated on every row: this sheet is the record
+        // of what was sent, and a reader filtering it down to one seller still has to see who was copied.
+        string[] headers =
+        [
+            "Seller ID", "Seller", "E-mail", "CC", "Attachment", "Offers", "Lead 1", "Lead 2",
+            "Address from", "Problem", "Subject", "Body"
+        ];
+
         for (var c = 0; c < headers.Length; c++)
             sheet.Cell(1, c + 1).Value = headers[c];
         sheet.Row(1).Style.Font.Bold = true;
@@ -712,21 +723,24 @@ public sealed class OfferWarningsController : ControllerBase
             sheet.Cell(row, 1).SetValue(mail.SellerId);
             sheet.Cell(row, 2).SetValue(mail.SellerName);
             sheet.Cell(row, 3).SetValue(mail.Email);
-            sheet.Cell(row, 4).SetValue(mail.AttachmentName);
-            sheet.Cell(row, 5).SetValue(mail.LeadTime0);
-            sheet.Cell(row, 6).SetValue(mail.LeadTime1);
-            sheet.Cell(row, 7).SetValue(mail.Problem ?? "");
-            sheet.Cell(row, 8).SetValue(mail.Subject);
-            sheet.Cell(row, 9).SetValue(mail.Body);
+            sheet.Cell(row, 4).SetValue(mail.Problem is null ? cc ?? "" : "");
+            sheet.Cell(row, 5).SetValue(mail.AttachmentName);
+            sheet.Cell(row, 6).SetValue(mail.OfferCount);
+            sheet.Cell(row, 7).SetValue(mail.LeadTime1);
+            sheet.Cell(row, 8).SetValue(mail.LeadTime2);
+            sheet.Cell(row, 9).SetValue(mail.MatchedBy);
+            sheet.Cell(row, 10).SetValue(mail.Problem ?? "");
+            sheet.Cell(row, 11).SetValue(mail.Subject);
+            sheet.Cell(row, 12).SetValue(mail.Body);
         }
 
         // Ids and the body are text: an id loses its leading zeros as a number, and the body has to
         // keep the line breaks that make it a message rather than a paragraph.
         sheet.Column(1).Style.NumberFormat.Format = "@";
-        sheet.Column(9).Style.NumberFormat.Format = "@";
-        sheet.Column(9).Style.Alignment.WrapText = true;
-        sheet.Column(9).Width = 80;
-        sheet.Columns(1, 8).AdjustToContents();
+        sheet.Column(12).Style.NumberFormat.Format = "@";
+        sheet.Column(12).Style.Alignment.WrapText = true;
+        sheet.Column(12).Width = 80;
+        sheet.Columns(1, 11).AdjustToContents();
 
         using var buffer = new MemoryStream();
         workbook.SaveAs(buffer);
@@ -735,7 +749,7 @@ public sealed class OfferWarningsController : ControllerBase
 
     static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
+    /// <summary>The readers need a seekable stream; the raw request body is not one.</summary>
     static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
     {
         var stream = new MemoryStream();

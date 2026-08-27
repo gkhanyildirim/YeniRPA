@@ -59,27 +59,29 @@ builder.Services.AddSingleton<SellerGroupStore>();
 builder.Services.AddSingleton<WhatsAppBrowser>();
 builder.Services.AddSingleton<LateOrderWhatsAppRunner>();
 
-// Seller Offer Warnings. The store owns the seller → e-mail → attachment mapping and the mail
-// templates; like the WhatsApp mapping it holds no credentials, so it is not encrypted.
+// The two Outlook warning modules — Seller Offer Warnings and Seller VAT Warnings. They share the
+// sender and the runner and differ only in what they split out of the export.
 //
 // OutlookMailSender is a singleton because it owns a long-lived STA thread — Outlook's object model
 // is apartment-threaded and driving it from ASP.NET's MTA request threads fails intermittently, so
 // every COM call is marshalled onto that one thread. A per-request instance would spawn a thread and
 // a COM connection per call.
 //
-// Guarded rather than registered unconditionally: both types are Windows-only, and the guard is what
-// tells the platform analyser so instead of us suppressing it.
+// Each module owns two singletons: the settings file (templates plus the addresses entered by hand
+// for sellers the uploaded list does not cover) and the prepared batch. The batch is a singleton
+// because it is the server's copy of which address and which file belong to which seller, and the
+// send endpoint reads it instead of trusting the browser.
 //
-// Seller VAT Warnings shares the sender and the runner. Its own two singletons are the settings file
-// (templates plus the addresses entered by hand for sellers the uploaded list does not cover) and the
-// prepared batch — the latter is a singleton because it is the server's copy of which address and
-// which file belong to which seller, and the send endpoint reads it instead of trusting the browser.
-// Both sit inside this guard because the module cannot work without Outlook anyway.
+// Guarded rather than registered unconditionally: these types are Windows-only, and the guard is what
+// tells the platform analyser so instead of us suppressing it. Everything here sits inside it because
+// neither module can work without Outlook anyway.
 if (OperatingSystem.IsWindows())
 {
-    builder.Services.AddSingleton<SellerMailStore>();
     builder.Services.AddSingleton<OutlookMailSender>();
     builder.Services.AddSingleton<OfferMailRunner>();
+
+    builder.Services.AddSingleton<OfferMailStore>();
+    builder.Services.AddSingleton<OfferBatchStore>();
 
     builder.Services.AddSingleton<VatMailStore>();
     builder.Services.AddSingleton<VatBatchStore>();
@@ -90,11 +92,6 @@ if (OperatingSystem.IsWindows())
 // interleave across the several controller actions that reach it — the rule sets are hand-built and
 // exist nowhere else, so a torn write has nothing to be rebuilt from.
 builder.Services.AddSingleton<TitleRuleStore>();
-
-// Fills the mapping table's address column from the Mirakl back office. Not Windows-only and not an
-// automation runner — it reads operator pages over plain HTTP under the saved Mirakl session, so it
-// launches no browser and holds no run slot.
-builder.Services.AddSingleton<MiraklSellerUserScraper>();
 
 var app = builder.Build();
 
