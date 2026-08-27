@@ -147,6 +147,44 @@ public class TitleRuleStoreTests
         Assert.True(set.AttributeList[0].Correct);
     }
 
+    /// <summary>
+    /// A sheet exported before the Alias type was relabelled — "Eşanlamlı" in the Tip cell, its
+    /// groups under an "Eşanlamlılar" header. Both are optional columns, so a rename with no fallback
+    /// would read this file without complaining and hand back a Text rule with an empty catalogue:
+    /// every rule still there, every rule silently unable to see a conflict.
+    /// </summary>
+    [Fact]
+    public void ASheetWrittenUnderTheOldAliasNamesStillReads()
+    {
+        var csv = new StringBuilder()
+            .AppendLine("Kural Seti;Başlık Kolonu;Kolon;Tip;Eşanlamlılar")
+            .AppendLine("Laptop;Başlık;İşletim Sistemi;Eşanlamlı;W11P|Windows 11 Pro")
+            .ToString();
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+        var rule = TitleRuleStore.ReadWorkbook(stream, "kurallar.csv").Single().AttributeList.Single();
+
+        Assert.Equal(TitleAttributeKind.Alias, rule.Kind);
+        Assert.Equal(["W11P", "Windows 11 Pro"], rule.AliasGroups.Single());
+    }
+
+    /// <summary>The Tip cell is written in English and read back through the Turkish label the editor
+    /// shows, so a sheet a category owner typed by hand reads the same as one the app exported.</summary>
+    [Fact]
+    public void TheTipCellAcceptsTheLabelTheEditorShows()
+    {
+        var csv = new StringBuilder()
+            .AppendLine("Kural Seti;Başlık Kolonu;Kolon;Tip;Değerler")
+            .AppendLine("Laptop;Başlık;İşletim Sistemi;Değer Listesi;W11P|Windows 11 Pro")
+            .ToString();
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+        var rule = TitleRuleStore.ReadWorkbook(stream, "kurallar.csv").Single().AttributeList.Single();
+
+        Assert.Equal(TitleAttributeKind.Alias, rule.Kind);
+        Assert.Equal(["W11P", "Windows 11 Pro"], rule.AliasGroups.Single());
+    }
+
     [Fact]
     public void AFileWithoutTheColumnColumnSaysWhichColumnIsMissing()
     {

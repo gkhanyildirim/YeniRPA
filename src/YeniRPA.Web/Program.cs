@@ -51,6 +51,12 @@ builder.Services.AddSingleton<MiraklBrowser>();
 builder.Services.AddSingleton<CreateReturnRunner>();
 builder.Services.AddSingleton<MarkAsReceivedRunner>();
 
+// Product Status reads rather than writes, so its own singleton is the result table: the scrape takes
+// minutes and the progress stream carries only log lines, so the table has to outlive the run for the
+// page to be able to ask for it — including after a reload.
+builder.Services.AddSingleton<ProductStatusStore>();
+builder.Services.AddSingleton<ProductStatusRunner>();
+
 // Late Order Warnings. The store owns the seller → WhatsApp group mapping and the message templates;
 // group names are not credentials, so unlike the Mirakl session it is not encrypted. WhatsAppBrowser
 // keeps its login in a persistent Chrome profile instead of a storage-state file — the class doc

@@ -878,6 +878,9 @@ window.RPA = window.RPA || {};
     'create-return': { tab: 'tab-create-return', panel: 'panel-create-return' },
     // Also drives Mirakl, but the input is nothing more than a list of order IDs.
     'mark-received': { tab: 'tab-mark-received', panel: 'panel-mark-received' },
+    // The only Mirakl module that reads instead of writing: it comes back with a table rather than
+    // having changed anything on the marketplace.
+    'product-status': { tab: 'tab-product-status', panel: 'panel-product-status' },
     // Reads an export like the reports do, but its output is messages to external parties.
     'late-orders': { tab: 'tab-late-orders', panel: 'panel-late-orders' },
     // Also messages external parties, but its input is the mapping table itself rather than an

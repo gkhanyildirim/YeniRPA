@@ -102,7 +102,8 @@ public sealed class CreateReturnRunner
                 failed.Add(row.OrderId);
                 _logger.LogWarning(ex, "Create Return failed for order {OrderId}.", row.OrderId);
 
-                var screenshotPath = await TryCaptureFailureScreenshotAsync(page, row.OrderId);
+                var screenshotPath = await AutomationArtifacts.TryCaptureFailureScreenshotAsync(
+                    _bus, page, ModuleName, row.OrderId);
                 var suffix = screenshotPath is null ? string.Empty : $" | screenshot: {screenshotPath}";
                 _bus.Log($"Failed: {row.OrderId} - {ex.Message}{suffix}");
             }
@@ -263,35 +264,4 @@ public sealed class CreateReturnRunner
     static ILocator QuantityInput(IPage page) =>
         page.Locator("xpath=//label[contains(normalize-space(),'Quantity')]/following::input[1]").First;
 
-    // ---------------------------------------------------------------------------
-
-    /// <summary>
-    /// A screenshot of the page as it was left is usually the only way to tell a missing button from
-    /// an expired session, so failing to take one must not itself fail the row.
-    /// </summary>
-    async Task<string?> TryCaptureFailureScreenshotAsync(IPage page, string orderId)
-    {
-        try
-        {
-            var directory = Path.Combine(AppContext.BaseDirectory, "artifacts", ModuleName);
-            Directory.CreateDirectory(directory);
-
-            var path = Path.Combine(directory, $"{SanitizeFileName(orderId)}-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.png");
-            await page.ScreenshotAsync(new PageScreenshotOptions { Path = path, FullPage = true });
-            return path;
-        }
-        catch (Exception ex)
-        {
-            _bus.Log($"Screenshot failed: {orderId} - {ex.Message}");
-            return null;
-        }
-    }
-
-    static string SanitizeFileName(string value)
-    {
-        foreach (var invalidChar in Path.GetInvalidFileNameChars())
-            value = value.Replace(invalidChar, '_');
-
-        return value;
-    }
 }

@@ -232,8 +232,13 @@ public sealed class TitleRuleStore
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
-        "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Eşanlamlılar",
+        "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler",
     ];
+
+    /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
+    /// it, and the column is optional — without this they would import silently, keeping every rule
+    /// but losing its whole catalogue.</summary>
+    const string LegacyAliasHeader = "Eşanlamlılar";
 
     /// <summary>
     /// A plain sheet, one row per attribute, deliberately <b>not</b> built through
@@ -306,7 +311,7 @@ public sealed class TitleRuleStore
         var cCorrect = Optional(header, Headers[CorrectColumn - 1]);
         var cFill = Optional(header, Headers[FillColumn - 1]);
         var cUnits = Optional(header, Headers[UnitsColumn - 1]);
-        var cAlias = Optional(header, Headers[AliasColumn - 1]);
+        var cAlias = OptionalAny(header, Headers[AliasColumn - 1], LegacyAliasHeader);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
@@ -358,6 +363,19 @@ public sealed class TitleRuleStore
     static int? Optional(Dictionary<string, int> header, string name) =>
         header.TryGetValue(name, out var index) ? index : null;
 
+    /// <summary>The first of these headers the file carries, so a column that has been renamed can
+    /// still be read out of a workbook exported under its old name.</summary>
+    static int? OptionalAny(Dictionary<string, int> header, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (header.TryGetValue(name, out var index))
+                return index;
+        }
+
+        return null;
+    }
+
     // ---------------------------------------------------------------------
     // Cell encoding
     // ---------------------------------------------------------------------
@@ -365,8 +383,8 @@ public sealed class TitleRuleStore
     // Units and alias groups are lists of lists, and a spreadsheet cell holds one string. The
     // encoding is deliberately plain enough to edit by hand:
     //
-    //   Birimler      GB=gb|gbyte|gigabayt@1 ; TB=tb|terabayt@1024
-    //   Eşanlamlılar  W11P|Windows 11 Pro|Win 11 Pro ; W11H|Windows 11 Home
+    //   Birimler   GB=gb|gbyte|gigabayt@1 ; TB=tb|terabayt@1024
+    //   Değerler   W11P|Windows 11 Pro|Win 11 Pro ; W11H|Windows 11 Home
     //
     // In both, ";" separates entries and "|" separates spellings. For a unit, what precedes "="
     // is the canonical spelling and what follows "@" is its size in the base unit.
@@ -387,10 +405,15 @@ public sealed class TitleRuleStore
         };
     }
 
+    /// <summary>The older spellings are kept alongside the current label so a workbook exported
+    /// before the type was renamed still reads back as the same kind — an unrecognised word falls
+    /// through to <see cref="TitleAttributeKind.Text"/> without complaining, which would quietly
+    /// disable the rule's conflict detection.</summary>
     static TitleAttributeKind ParseKind(string raw) => FoldedTitle.Fold(raw) switch
     {
         "measure" or "olcu" or "olculu" or "birim" => TitleAttributeKind.Measure,
-        "alias" or "esanlamli" or "katalog" => TitleAttributeKind.Alias,
+        "alias" or "deger listesi" or "degerler" or "esanlamli" or "katalog"
+            => TitleAttributeKind.Alias,
         _ => TitleAttributeKind.Text,
     };
 

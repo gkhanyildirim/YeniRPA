@@ -7,7 +7,9 @@ namespace YeniRPA.Web.Models;
 /// <list type="bullet">
 ///   <item><see cref="Text"/> searches for the row's own cell value and nothing else, so it can only
 ///   report found / not found. A brand column of this kind cannot notice that the title names a
-///   <em>different</em> brand — there is no catalogue to notice it against.</item>
+///   <em>different</em> brand — there is no catalogue to notice it against. It also has nothing to
+///   correct towards: the match it finds is by construction spelled the way the cell already is, so
+///   <see cref="TitleAttributeRule.Correct"/> can never fire on it.</item>
 ///   <item><see cref="Alias"/> searches for every spelling in the rule's catalogue, so a title
 ///   carrying a different known value is reported as a conflict.</item>
 ///   <item><see cref="Measure"/> searches for "number + unit" in the attribute's unit family, so a
@@ -42,7 +44,9 @@ public sealed record MeasureUnit(string Canonical, IReadOnlyList<string> Spellin
 /// unflagged is why "RTXPRO2000" stays in the reference title — the cleaner does not need to
 /// recognise it, only to be told nothing about it.</param>
 /// <param name="Correct">Whether a cell whose value agrees with the title but is written differently
-/// ("16" against a title's "16GB") is rewritten into canonical form.</param>
+/// ("16" against a title's "16GB") is rewritten into canonical form. Has no effect on a
+/// <see cref="TitleAttributeKind.Text"/> attribute, which searches for the cell's own value and so
+/// never finds a spelling to correct towards — the editor locks the box on those rows.</param>
 /// <param name="FillFromTitle">Whether an empty cell may be filled from the title. Off by default:
 /// it writes in the opposite direction from everything else here, so it is enabled per attribute
 /// rather than assumed.</param>

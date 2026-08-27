@@ -394,7 +394,7 @@ public static class TitleCleanBuilder
             // that claims the longer phrase around it and is not allowed to remove it.
             var message =
                 $"{rule.Column}: \"{found}\" başlıkta {hits.Count} kez geçiyor, hangisinin bu özellik " +
-                $"olduğu belirsiz. Diğerini sahiplenen bir kural ekleyin: o kolonu Eşanlamlı yapıp " +
+                $"olduğu belirsiz. Diğerini sahiplenen bir kural ekleyin: o kolonu Değer Listesi yapıp " +
                 $"başlıktaki uzun yazımı ekleyin (ör. \"RTX 5070 {found}\") ve o satırda Çıkar ile " +
                 "Düzelt'i kapalı bırakın — böylece o metin korunur, buradaki değer temizlenir";
             errors.Add(message);

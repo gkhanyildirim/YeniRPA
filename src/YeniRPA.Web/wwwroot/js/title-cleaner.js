@@ -77,8 +77,11 @@
   const KINDS = [
     ['Text', 'Metin'],
     ['Measure', 'Ölçü'],
-    ['Alias', 'Eşanlamlı']
+    ['Alias', 'Değer Listesi']
   ];
+
+  /** The same labels keyed by wire value, for tables that render a kind the server sent. */
+  const KIND_LABEL = Object.fromEntries(KINDS);
 
   const STATUS_LABEL = {
     Ok: 'OK',
@@ -111,29 +114,35 @@
   }
 
   /**
-   * Locks the box that this row's type does not use.
+   * Locks the boxes that this row's type does not use.
    *
-   * Only one of the two ever applies — a measured attribute has units and no catalogue, a catalogue
-   * attribute the other way round, and a plain text one neither. Leaving both open, both empty and
-   * both showing an example was the whole reason the table could not be read: the examples looked
-   * exactly like real values, on every row, including the rows where the box does nothing.
+   * Only one of Birimler/Değerler ever applies — a measured attribute has units and no catalogue, a
+   * catalogue attribute the other way round, and a plain text one neither. Leaving both open, both
+   * empty and both showing an example was the whole reason the table could not be read: the examples
+   * looked exactly like real values, on every row, including the rows where the box does nothing.
    *
-   * A locked box keeps whatever was typed in it. Someone who switches type to look at something and
-   * switches back does not lose their work, and collectRuleSet still reads it.
+   * "Düzelt" is locked on a Text row for the same reason. A Text rule searches the title for the
+   * cell's own value, so the match it finds is by construction spelled the way the cell already is
+   * and the correction branch in TitleCleanBuilder.Judge can never fire. The box was clickable and
+   * inert, which reads as a setting that does nothing rather than one that does not apply.
+   *
+   * A locked box keeps whatever was in it. Someone who switches type to look at something and
+   * switches back does not lose their work, and collectRuleSet still reads it — a disabled checkbox
+   * still reports its own checked state.
    */
   function applyKindLock(row) {
     const kind = row.querySelector('.tc-kind').value;
-    const units = row.querySelector('.tc-units');
-    const aliases = row.querySelector('.tc-aliases');
 
     const lock = (input, active, hint) => {
       input.disabled = !active;
-      input.placeholder = active ? hint : '';
+      if (input.type !== 'checkbox')
+        input.placeholder = active ? hint : '';
       input.closest('td').classList.toggle('is-locked', !active);
     };
 
-    lock(units, kind === 'Measure', 'örn: GB=gb@1 ; TB=tb@1024');
-    lock(aliases, kind === 'Alias', 'örn: W11P|Windows 11 Pro');
+    lock(row.querySelector('.tc-units'), kind === 'Measure', 'örn: GB=gb@1 ; TB=tb@1024');
+    lock(row.querySelector('.tc-aliases'), kind === 'Alias', 'örn: W11P|Windows 11 Pro');
+    lock(row.querySelector('.tc-correct'), kind !== 'Text');
   }
 
   function ruleRowHtml(rule) {
@@ -160,7 +169,7 @@
       '<td><input type="text" class="tc-units" value="' + RPA.escapeHtml(r.units || '') +
         '" aria-label="Birimler" /></td>' +
       '<td><input type="text" class="tc-aliases" value="' + RPA.escapeHtml(r.aliases || '') +
-        '" aria-label="Eşanlamlılar" /></td>' +
+        '" aria-label="Değerler" /></td>' +
       '<td class="num"><button type="button" class="btn btn-ghost btn-sm tc-rule-remove" ' +
         'aria-label="Satırı sil">Sil</button></td>' +
       '</tr>';
@@ -332,7 +341,7 @@
 
   const attrColumns = [
     { label: 'Kolon', render: a => RPA.escapeHtml(a.column) },
-    { label: 'Tip', render: a => RPA.escapeHtml(a.kind), filter: 'select' },
+    { label: 'Tip', render: a => RPA.escapeHtml(KIND_LABEL[a.kind] || a.kind), filter: 'select' },
     { label: 'Çıkar', render: a => a.remove ? '<span class="badge green">Evet</span>' : '<span class="badge">Hayır</span>' },
     { label: 'OK', render: a => RPA.fmtInt(a.ok), numeric: true },
     { label: 'Düzeltildi', render: a => RPA.fmtInt(a.corrected), numeric: true },

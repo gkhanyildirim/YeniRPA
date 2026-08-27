@@ -57,6 +57,12 @@
                 <span>Mark as Received</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-product-status"
+                    aria-controls="panel-product-status" aria-selected="false" data-module="product-status" tabindex="-1">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Product Status</span>
+            </button>
+
             <button type="button" class="nav-item" role="tab" id="tab-late-orders"
                     aria-controls="panel-late-orders" aria-selected="false" data-module="late-orders" tabindex="-1">
                 <span class="dot" aria-hidden="true"></span>
@@ -742,10 +748,10 @@
                                 <th style="width: 20%" title="Excel dosyanızdaki kolonun adı — birebir aynı yazılmalı">Kolon</th>
                                 <th style="width: 9%" title="Bu kolonun başlıkta nasıl aranacağı">Tip</th>
                                 <th style="width: 6%" title="Bulunca başlıktan silinsin mi. Kapalıysa metin korunur.">Çıkar</th>
-                                <th style="width: 6%" title="Hücredeki yazım standarda çevrilsin mi (16 → 16 GB)">Düzelt</th>
+                                <th style="width: 6%" title="Hücredeki yazım standarda çevrilsin mi (16 → 16 GB). Tip = Metin olan satırlarda kullanılmaz.">Düzelt</th>
                                 <th style="width: 10%" title="Son taramada bu kural kaç satırda karşılık buldu">Eşleşme</th>
                                 <th style="width: 22%" title="Yalnızca Tip = Ölçü olan satırlarda kullanılır">Birimler</th>
-                                <th style="width: 22%" title="Yalnızca Tip = Eşanlamlı olan satırlarda kullanılır">Eşanlamlılar</th>
+                                <th style="width: 22%" title="Yalnızca Tip = Değer Listesi olan satırlarda kullanılır">Değerler</th>
                                 <th style="width: 5%"></th>
                             </tr>
                         </thead>
@@ -1187,6 +1193,108 @@
             </div>
 
             <footer class="page-foot">Marketplace Reporting &middot; Mark as Received</footer>
+        </section>
+
+        @* ================= PRODUCT STATUS ================= *@
+        <section class="panel" id="panel-product-status" role="tabpanel" aria-labelledby="tab-product-status" hidden>
+
+            <header class="page-head">
+                <div>
+                    <h1 data-eyebrow="Mirakl &middot; Automation">Product Status</h1>
+                    <p class="lede">
+                        Reads how many products each seller has in each catalogue status on Mirakl. Read-only
+                        &mdash; nothing is written to the marketplace.
+                    </p>
+                </div>
+                <span class="stamp" id="ps-stamp"></span>
+            </header>
+
+            <div class="section-title">Mirakl session</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="ps-session-badge">Checking&hellip;</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="ps-login">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Open login window</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="ps-save-session" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Save session</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="ps-clear-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Clear session</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">Sellers</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="ps-drop">
+                            <span class="drop-step">Input</span>
+                            <span class="drop-title">Seller list</span>
+                            <span class="drop-hint">.xlsx or .csv &mdash; names in the first column</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="ps-file" accept=".xlsx,.csv" aria-label="Seller list (.xlsx or .csv)" />
+                        </label>
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="ps-sellers-text">Or paste seller names directly</label>
+                        <textarea id="ps-sellers-text" rows="8" spellcheck="false"
+                                  placeholder="Seller A&#10;Seller B"></textarea>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="ps-start" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Start reading statuses</span>
+                        </button>
+                        <span class="filter-summary" id="ps-seller-count"></span>
+                    </div>
+
+                    <div class="alert" id="ps-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+                <p class="note">
+                    The file's first row is skipped as a header. Names have to match Mirakl's spelling exactly.
+                </p>
+            </div>
+
+            <div class="results" id="ps-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span>Sellers read</span>
+                        <span class="mono" id="ps-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="ps-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Product Status progress">
+                        <span class="progress-fill" id="ps-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="ps-console"></pre>
+                </div>
+            </div>
+
+            <div class="results" id="ps-results" hidden>
+                <div class="section-title">
+                    Product status by seller
+                    <partial name="_ExportButton" model='new ExportButton("ps-table", "Product Status", "Automation")' />
+                </div>
+                <div class="card">
+                    <div class="table-scroll" id="ps-table"></div>
+                    <p class="table-note" id="ps-failed-note" hidden></p>
+                </div>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Product Status</footer>
         </section>
 
         @* ================= LATE ORDER WARNINGS ================= *@
@@ -2599,6 +2707,7 @@
     <script src="~/js/title-cleaner.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>
     <script src="~/js/mark-received.js" asp-append-version="true"></script>
+    <script src="~/js/product-status.js" asp-append-version="true"></script>
     <script src="~/js/late-orders.js" asp-append-version="true"></script>
     <script src="~/js/offer-warnings.js" asp-append-version="true"></script>
     <script src="~/js/vat-warnings.js" asp-append-version="true"></script>

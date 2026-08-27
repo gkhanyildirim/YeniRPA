@@ -179,7 +179,8 @@ public sealed class LateOrderWhatsAppRunner
                 failed.Add(message.GroupName);
                 _logger.LogWarning(ex, "WhatsApp send failed for group {GroupName}.", message.GroupName);
 
-                var screenshotPath = await TryCaptureFailureScreenshotAsync(page, message.GroupName);
+                var screenshotPath = await AutomationArtifacts.TryCaptureFailureScreenshotAsync(
+                    _bus, page, ModuleName, message.GroupName);
                 var suffix = screenshotPath is null ? string.Empty : $" | screenshot: {screenshotPath}";
                 _bus.Log($"Failed: {message.GroupName} - {ex.Message}{suffix}");
             }
@@ -773,33 +774,4 @@ public sealed class LateOrderWhatsAppRunner
         return string.Join("\n", lines).Trim().Normalize(NormalizationForm.FormC);
     }
 
-    /// <summary>
-    /// A screenshot of the page as it was left is usually the only way to tell a renamed group from an
-    /// expired session, so failing to take one must not itself fail the row.
-    /// </summary>
-    async Task<string?> TryCaptureFailureScreenshotAsync(IPage page, string groupName)
-    {
-        try
-        {
-            var directory = Path.Combine(AppContext.BaseDirectory, "artifacts", ModuleName);
-            Directory.CreateDirectory(directory);
-
-            var path = Path.Combine(directory, $"{SanitizeFileName(groupName)}-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.png");
-            await page.ScreenshotAsync(new PageScreenshotOptions { Path = path, FullPage = true });
-            return path;
-        }
-        catch (Exception ex)
-        {
-            _bus.Log($"Screenshot failed: {groupName} - {ex.Message}");
-            return null;
-        }
-    }
-
-    static string SanitizeFileName(string value)
-    {
-        foreach (var invalidChar in Path.GetInvalidFileNameChars())
-            value = value.Replace(invalidChar, '_');
-
-        return value;
-    }
 }

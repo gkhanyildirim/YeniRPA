@@ -132,7 +132,7 @@ public static class TitleFixSuggester
             rules, scenario, rule.Column,
             TitleFixKind.MergeAlias,
             $"{rule.Column}: başlıkta \"{said}\", özellikte \"{attribute.OriginalValue}\"",
-            "Aynı şeyin iki yazımı — eşanlamlı olarak birleştir",
+            "Aynı şeyin iki yazımı — değer listesinde birleştir",
             said,
             ApplyMerge);
     }
@@ -189,7 +189,7 @@ public static class TitleFixSuggester
             phrase,
             ApplyAdopt,
             warning: rule.Kind != TitleAttributeKind.Alias
-                ? $"{rule.Column} kolonunun tipi Eşanlamlı olarak değişir."
+                ? $"{rule.Column} kolonunun tipi Değer Listesi olarak değişir."
                 : null);
     }
 

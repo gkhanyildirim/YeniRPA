@@ -105,7 +105,8 @@ public sealed class MarkAsReceivedRunner
                 failed.Add(orderId);
                 _logger.LogWarning(ex, "Mark as Received failed for order {OrderId}.", orderId);
 
-                var screenshotPath = await TryCaptureFailureScreenshotAsync(page, orderId);
+                var screenshotPath = await AutomationArtifacts.TryCaptureFailureScreenshotAsync(
+                    _bus, page, ModuleName, orderId);
                 var suffix = screenshotPath is null ? string.Empty : $" | screenshot: {screenshotPath}";
                 _bus.Log($"Failed: {orderId} - {ex.Message}{suffix}");
             }
@@ -158,33 +159,4 @@ public sealed class MarkAsReceivedRunner
         _bus.Log($"  [{orderId}] Clicked 'Mark as received' {clicked} time(s)");
     }
 
-    /// <summary>
-    /// A screenshot of the page as it was left is usually the only way to tell a missing button from
-    /// an expired session, so failing to take one must not itself fail the row.
-    /// </summary>
-    async Task<string?> TryCaptureFailureScreenshotAsync(IPage page, string orderId)
-    {
-        try
-        {
-            var directory = Path.Combine(AppContext.BaseDirectory, "artifacts", ModuleName);
-            Directory.CreateDirectory(directory);
-
-            var path = Path.Combine(directory, $"{SanitizeFileName(orderId)}-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.png");
-            await page.ScreenshotAsync(new PageScreenshotOptions { Path = path, FullPage = true });
-            return path;
-        }
-        catch (Exception ex)
-        {
-            _bus.Log($"Screenshot failed: {orderId} - {ex.Message}");
-            return null;
-        }
-    }
-
-    static string SanitizeFileName(string value)
-    {
-        foreach (var invalidChar in Path.GetInvalidFileNameChars())
-            value = value.Replace(invalidChar, '_');
-
-        return value;
-    }
 }
