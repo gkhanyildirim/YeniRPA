@@ -229,9 +229,16 @@
       '</tr>';
   }
 
+  /** The search box and "no e-mail yet" toggle over the table. Set up on DOMContentLoaded. */
+  let overridesFilter = null;
+
   function renderOverrides() {
     el('ow-overrides-body').innerHTML = overrides.map(overrideRowHtml).join('');
-    updateOverridesCount();
+
+    // Re-applied rather than reset: a list arriving from the server must not silently drop the
+    // filter the operator is working under. This calls updateOverridesCount through onChange.
+    if (overridesFilter) overridesFilter.apply();
+    else updateOverridesCount();
   }
 
   /** Reads the table back out. Rows with no seller are dropped; a half-filled row is kept. */
@@ -248,10 +255,21 @@
   function updateOverridesCount() {
     const entries = collectOverrides();
     const withAddress = entries.filter(e => e.email).length;
+    const body = el('ow-overrides-body');
+    const shown = body.querySelectorAll('tr:not(.is-filtered-out)').length;
+    const hidden = body.querySelectorAll('tr').length - shown;
 
-    el('ow-overrides-count').textContent = entries.length
-      ? RPA.fmtInt(entries.length) + ' seller(s) · ' + RPA.fmtInt(withAddress) + ' with an address'
-      : 'No addresses entered by hand yet';
+    if (!entries.length) {
+      el('ow-overrides-count').textContent = 'No addresses entered by hand yet';
+      return;
+    }
+
+    // The hidden count is spelled out because saving still covers those rows. A filtered table that
+    // only said "3 sellers" would read as a list that had lost the rest.
+    el('ow-overrides-count').textContent =
+      RPA.fmtInt(entries.length) + ' seller(s) · ' + RPA.fmtInt(withAddress) + ' with an address' +
+      (hidden ? ' · ' + RPA.fmtInt(shown) + ' shown' : '') +
+      (hidden && !shown ? ' — no rows match' : '');
   }
 
   function renderSettingsWarnings(warnings) {
@@ -352,8 +370,14 @@
   }
 
   function addOverrideRow() {
+    // A blank row matches no search term, so it would be added and hidden in the same breath. The
+    // "no e-mail yet" toggle is left alone — a new row satisfies it.
+    if (overridesFilter) overridesFilter.clearSearch();
+
     el('ow-overrides-body').insertAdjacentHTML('beforeend', overrideRowHtml({}));
-    updateOverridesCount();
+
+    if (overridesFilter) overridesFilter.apply();
+    else updateOverridesCount();
 
     const rows = el('ow-overrides-body').querySelectorAll('tr');
     const added = rows[rows.length - 1];
@@ -805,6 +829,13 @@
       } finally {
         RPA.setBusy(button, false);
       }
+    });
+
+    overridesFilter = RPA.initRowFilter('ow-overrides-body', {
+      searchId: 'ow-override-search',
+      pendingId: 'ow-override-pending',
+      pendingSelector: '.ov-email',
+      onChange: updateOverridesCount
     });
 
     // Removing a row must not silently drop unsaved edits elsewhere, so the table is never

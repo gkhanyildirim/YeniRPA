@@ -102,8 +102,50 @@ public static class TitleFixSuggester
             TitleAttributeReason.Disagreement => ProposeMerge(rules, scenario, rule),
             TitleAttributeReason.ValueRepeated => ProposeProtect(rules, scenario, rule),
             TitleAttributeReason.BareNumber => ProposeAdopt(rules, scenario, rule),
+            TitleAttributeReason.SpellingUnknown => ProposeAdoptSpelling(rules, scenario, rule),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// The title names this value under a spelling the rule does not carry. Adopt the title's phrase
+    /// into the cell value's group, which both cuts it out of the title and lets Düzelt rewrite the
+    /// cell to the canonical spelling.
+    ///
+    /// <para>This one arrives from a row that reported <em>nothing wrong</em> — every attribute the
+    /// title simply does not mention comes through here — so the narrowing is what makes it a
+    /// decision rather than a second review table. Two filters do it: the title has to share a word
+    /// with the cell (<see cref="PhraseSharingAWord"/>), and the change has to actually alter what
+    /// this row's title becomes. A coincidental shared word earns no card.</para>
+    /// </summary>
+    static TitleFix? ProposeAdoptSpelling(CompiledRuleSet rules, Scenario scenario, TitleAttributeRule rule)
+    {
+        // A unit family is not a catalogue: a measured attribute is matched by number and unit, and a
+        // phrase has nowhere to live on it.
+        if (rule.Kind == TitleAttributeKind.Measure)
+            return null;
+
+        var phrase = PhraseSharingAWord(rules, scenario);
+        if (phrase is null)
+            return null;
+
+        var fix = Build(
+            rules, scenario, rule.Column,
+            TitleFixKind.AdoptPhrase,
+            $"{rule.Column}: özellikte \"{scenario.Attribute.OriginalValue}\", başlıkta bu yazımla geçmiyor",
+            "Başlıktaki ifadeyi bu değerin yazımı olarak ekle",
+            phrase,
+            ApplyAdopt,
+            warning: rule.Kind != TitleAttributeKind.Alias
+                ? $"{rule.Column} kolonunun tipi Değer Listesi olarak değişir."
+                : null);
+
+        // Offered only when it changes the outcome. Compared against what this row's title already
+        // becomes, not against the raw title — other rules have their own effect on it.
+        return fix is not null &&
+               !string.Equals(fix.SampleAfter, scenario.Sample.CleanTitle, StringComparison.Ordinal)
+            ? fix
+            : null;
     }
 
     /// <summary>
@@ -210,19 +252,22 @@ public static class TitleFixSuggester
         string value,
         Func<TitleRuleSet, TitleFix, TitleRuleSet> apply,
         bool needsColumnChoice = false,
-        string? warning = null)
+        string? warning = null,
+        bool preselected = true,
+        string? cellValue = null)
     {
         var id = Identify(scenario.Key, kind);
 
         // A protector's phrase is its own canonical — it is not standing in for a cell value, it is
-        // a piece of the title being kept whole.
-        var cellValue = kind == TitleFixKind.ProtectPhrase
-            ? ""
-            : scenario.Attribute.OriginalValue.Trim();
+        // a piece of the title being kept whole. A category-type card passes its own, because the
+        // group it joins is headed by the RuleSet's canonical rather than by whatever this row's
+        // cell happens to say.
+        var cell = cellValue
+            ?? (kind == TitleFixKind.ProtectPhrase ? "" : scenario.Attribute.OriginalValue.Trim());
 
         var draft = new TitleFix(
-            id, kind, scenario.Attribute.Column, targetColumn, problem, action, value, cellValue,
-            scenario.Rows, scenario.Sample.OriginalTitle, "", needsColumnChoice, warning);
+            id, kind, scenario.Attribute.Column, targetColumn, problem, action, value, cell,
+            scenario.Rows, scenario.Sample.OriginalTitle, "", needsColumnChoice, warning, preselected);
 
         var after = scenario.Sample.CleanTitle;
 
@@ -269,6 +314,197 @@ public static class TitleFixSuggester
     }
 
     // ---------------------------------------------------------------------
+    // The marketplace's own category rules
+    // ---------------------------------------------------------------------
+
+    /// <summary>How a product-type column is recognised in the operator's rule set, folded. Matched
+    /// as a prefix, because a product file names the column for its locale: "Ürün Tipi (tr_TR)".</summary>
+    const string TypeColumnPrefix = "urun tipi";
+
+    /// <summary>
+    /// Cards drawn from the RuleSet workbook: a product type the title names and the marketplace
+    /// defines, offered as a group for the product-type column's catalogue.
+    ///
+    /// <para>Kept apart from <see cref="Suggest"/> because it starts somewhere else. Every other card
+    /// begins with a row that reported a problem; these begin with the RuleSet, and would be found
+    /// even on a file where nothing is wrong — the column simply does not know the vocabulary yet.</para>
+    ///
+    /// <para><b>Category is checked, never corrected.</b> Where the RuleSet files a type under a
+    /// different category from the one the file declares, the card still appears — that is how the
+    /// operator learns of it — but it arrives unticked and says so. Which of the two is right is not
+    /// something a title cleaner can know.</para>
+    /// </summary>
+    public static IReadOnlyList<TitleFix> SuggestCategoryTypes(
+        CompiledRuleSet rules,
+        IReadOnlyList<TitleCleanRow> rows,
+        IReadOnlyList<CategoryTypeRule>? categoryRules,
+        string? fileCategory)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        ArgumentNullException.ThrowIfNull(rows);
+
+        if (categoryRules is null || categoryRules.Count == 0)
+            return [];
+
+        var target = rules.Attributes.FirstOrDefault(a =>
+            FoldedTitle.Fold(a.Rule.Column).StartsWith(TypeColumnPrefix, StringComparison.Ordinal))?.Rule;
+
+        if (target is null)
+            return [];
+
+        var known = target.AliasGroups
+            .Where(g => g.Count > 0)
+            .Select(g => FoldedTitle.Fold(g[0]))
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Longest first, so a title carrying "Tekli İndüksiyon Ocak" is not claimed by a rule that
+        // only knows "İndüksiyon Ocak" — the same precedence the alias matcher uses.
+        var spellings = categoryRules
+            .SelectMany(rule => rule.Types.Select(type => (Folded: FoldedTitle.Fold(type), Type: type, Rule: rule)))
+            .Where(s => s.Folded.Length > 0 && !known.Contains(FoldedTitle.Fold(s.Rule.Types[0])))
+            .OrderByDescending(s => s.Folded.Length)
+            .ToList();
+
+        if (spellings.Count == 0)
+            return [];
+
+        var scenarios = new Dictionary<string, (Scenario Scenario, string Spelling, CategoryTypeRule Rule)>(
+            StringComparer.Ordinal);
+
+        foreach (var row in rows)
+        {
+            var attribute = row.Attributes.FirstOrDefault(a =>
+                string.Equals(a.Column, target.Column, StringComparison.Ordinal));
+
+            if (attribute is null)
+                continue;
+
+            var folded = FoldedTitle.Fold(row.OriginalTitle);
+            if (folded.Length == 0)
+                continue;
+
+            var hit = spellings.FirstOrDefault(s => folded.Contains(s.Folded, StringComparison.Ordinal));
+            if (hit.Rule is null)
+                continue;
+
+            // Keyed on the rule's own canonical and category rather than on the spelling that was
+            // found: two titles writing the same type two ways are one decision, not two.
+            var key = string.Join('', TypeColumnPrefix, hit.Rule.Types[0], hit.Rule.CategoryTr);
+
+            if (scenarios.TryGetValue(key, out var existing))
+                existing.Scenario.Rows++;
+            else
+                scenarios[key] = (new Scenario(attribute, row, key) { Rows = 1 }, hit.Type, hit.Rule);
+        }
+
+        var fixes = new List<TitleFix>();
+
+        foreach (var (scenario, spelling, rule) in scenarios.Values.OrderByDescending(s => s.Scenario.Rows))
+        {
+            var proposed = ProposeCategoryType(rules, scenario, target, spelling, rule, fileCategory);
+            if (proposed is not null)
+                fixes.Add(proposed);
+
+            if (fixes.Count >= MaxFixes)
+                break;
+        }
+
+        return fixes;
+    }
+
+    static TitleFix? ProposeCategoryType(
+        CompiledRuleSet rules,
+        Scenario scenario,
+        TitleAttributeRule target,
+        string spelling,
+        CategoryTypeRule rule,
+        string? fileCategory)
+    {
+        var covers = CategoryRuleStore.Covers(rule, fileCategory);
+
+        var warnings = new List<string>();
+
+        if (!covers)
+        {
+            warnings.Add(
+                $"Bu tip RuleSet'te \"{rule.CategoryTr}\" altında tanımlı" +
+                (string.IsNullOrWhiteSpace(fileCategory)
+                    ? ", dosyanın kategorisi okunamadı."
+                    : $", dosyanın kategorisi \"{fileCategory}\"."));
+        }
+
+        if (target.Kind != TitleAttributeKind.Alias)
+            warnings.Add($"{target.Column} kolonunun tipi Değer Listesi olarak değişir.");
+
+        // Spellings that only differ by case or by a Turkish i fold to one thing for the matcher, so
+        // listing both would show the operator a proposal half of which does nothing.
+        var spellings = Distinct(rule.Types);
+
+        var fix = Build(
+            rules, scenario, target.Column,
+            TitleFixKind.AdoptCategoryType,
+            $"{target.Column}: başlıkta \"{spelling}\" — RuleSet bunu \"{rule.CategoryTr}\" altında tanıyor",
+            spellings.Count > 1
+                ? $"RuleSet'teki {spellings.Count} yazımı Değer Listesi'ne ekle"
+                : "Değer Listesi'ne ekle",
+            // The cell format the operator already reads in the Değerler box, so trimming a spelling
+            // off the proposal here works the same way as editing that box.
+            string.Join("|", spellings),
+            ApplyCategoryType,
+            warning: warnings.Count > 0 ? string.Join(" ", warnings) : null,
+            preselected: covers,
+            cellValue: spellings[0]);
+
+        return fix is not null && Changes(rules, scenario, target.Column, fix) ? fix : null;
+    }
+
+    /// <summary>
+    /// Whether taking this card would change anything on its sample row.
+    ///
+    /// <para>Both halves count. The title is the obvious one, but a card can be worth taking for the
+    /// cell alone — a text column that already cuts "Ankastre Ocak" out of the title still writes
+    /// "Ankastre ocak" back into the catalogue until the marketplace's own spelling is adopted.</para>
+    /// </summary>
+    static bool Changes(CompiledRuleSet rules, Scenario scenario, string column, TitleFix fix)
+    {
+        TitleCleanRow after;
+        try
+        {
+            after = Rerun(CompiledRuleSet.Compile(ApplyCategoryType(rules.Source, fix)), scenario.Sample);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+
+        if (!string.Equals(after.CleanTitle, scenario.Sample.CleanTitle, StringComparison.Ordinal))
+            return true;
+
+        var before = Value(scenario.Sample, column);
+        return !string.Equals(Value(after, column), before, StringComparison.Ordinal);
+    }
+
+    static string Value(TitleCleanRow row, string column) =>
+        row.Attributes
+            .FirstOrDefault(a => string.Equals(a.Column, column, StringComparison.Ordinal))?.Value ?? "";
+
+    /// <summary>The spellings that are distinct once folded, first occurrence kept — so the group's
+    /// canonical stays at its head.</summary>
+    static List<string> Distinct(IReadOnlyList<string> spellings)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var kept = new List<string>();
+
+        foreach (var spelling in spellings)
+        {
+            if (spelling.Trim().Length > 0 && seen.Add(FoldedTitle.Fold(spelling)))
+                kept.Add(spelling.Trim());
+        }
+
+        return kept;
+    }
+
+    // ---------------------------------------------------------------------
     // Reading a phrase out of the title
     // ---------------------------------------------------------------------
 
@@ -291,35 +527,7 @@ public static class TitleFixSuggester
 
         var words = SplitWords(title);
         var folded = FoldedTitle.Fold(needle);
-
-        // Words another rule is going to cut out. The phrase stops at them, because a phrase built
-        // over text that gets removed would never match again once the rule set runs.
-        //
-        // Only rules that actually matched this row *and* are allowed to remove count. Taking it from
-        // the cell values instead would treat a value the title never carried as claimed — which is
-        // what stopped "RTX 5070 8GB" being proposed, since the graphics card's cell reads
-        // "GeForce RTX 5070" and that phrase is not in the title at all.
-        var claimed = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var other in scenario.Sample.Attributes)
-        {
-            if (string.Equals(other.Column, scenario.Attribute.Column, StringComparison.Ordinal))
-                continue;
-
-            if (other.Status is not (TitleAttributeStatus.Ok or TitleAttributeStatus.Corrected
-                or TitleAttributeStatus.Filled))
-            {
-                continue;
-            }
-
-            var otherRule = rules.Attributes.FirstOrDefault(a =>
-                string.Equals(a.Rule.Column, other.Column, StringComparison.Ordinal))?.Rule;
-
-            if (otherRule is null || !otherRule.Remove)
-                continue;
-
-            foreach (var word in SplitWords(other.OriginalValue.Trim()).Concat(SplitWords(other.TitleSaid ?? "")))
-                claimed.Add(FoldedTitle.Fold(word));
-        }
+        var claimed = ClaimedWords(rules, scenario);
 
         // Compared with the spaces taken out. A cell writes "8 GB" and the title writes "8GB"; they
         // are the same value, and the gap is not what decides whether the phrase can be found. The
@@ -361,6 +569,111 @@ public static class TitleFixSuggester
         }
 
         return from == at ? null : string.Join(' ', words.Skip(from).Take(end - from + 1));
+    }
+
+    /// <summary>
+    /// Words another rule is going to cut out of this title. A proposed phrase stops at them, because
+    /// a phrase built over text that gets removed would never match again once the rule set runs.
+    ///
+    /// <para>Only rules that actually matched this row <em>and</em> are allowed to remove count.
+    /// Taking it from the cell values instead would treat a value the title never carried as claimed
+    /// — which is what stopped "RTX 5070 8GB" being proposed, since the graphics card's cell reads
+    /// "GeForce RTX 5070" and that phrase is not in the title at all.</para>
+    /// </summary>
+    static HashSet<string> ClaimedWords(CompiledRuleSet rules, Scenario scenario)
+    {
+        var claimed = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var other in scenario.Sample.Attributes)
+        {
+            if (string.Equals(other.Column, scenario.Attribute.Column, StringComparison.Ordinal))
+                continue;
+
+            if (other.Status is not (TitleAttributeStatus.Ok or TitleAttributeStatus.Corrected
+                or TitleAttributeStatus.Filled))
+            {
+                continue;
+            }
+
+            var otherRule = rules.Attributes.FirstOrDefault(a =>
+                string.Equals(a.Rule.Column, other.Column, StringComparison.Ordinal))?.Rule;
+
+            if (otherRule is null || !otherRule.Remove)
+                continue;
+
+            foreach (var word in SplitWords(other.OriginalValue.Trim()).Concat(SplitWords(other.TitleSaid ?? "")))
+                claimed.Add(FoldedTitle.Fold(word));
+        }
+
+        return claimed;
+    }
+
+    /// <summary>
+    /// The phrase in the title that appears to be this cell value written another way — "İndüksiyon
+    /// Ocak" against a cell reading "İndüksiyonlu ocak".
+    ///
+    /// <para><b>Nothing here is approximate.</b> The ban on fuzzy matching in
+    /// <see cref="AttributeMatcher"/> applies just as much to a proposal, because an approved
+    /// proposal becomes a catalogue spelling that deletes title text forever after. So the phrase is
+    /// pinned by two exact rules rather than guessed at:</para>
+    ///
+    /// <list type="number">
+    ///   <item>The anchor is the <em>last</em> title word that equals one of the cell's own words,
+    ///   character for character once folded. Turkish builds these phrases toward their noun, so the
+    ///   shared word ends the phrase rather than starting it.</item>
+    ///   <item>The length is the cell value's own word count. Reaching until something stops it would
+    ///   be a guess; taking the shape of the value it stands in for is not.</item>
+    /// </list>
+    ///
+    /// <para>A wrong phrase is still cheap — the card shows it in an editable box beside a before and
+    /// after computed by running the real engine.</para>
+    /// </summary>
+    static string? PhraseSharingAWord(CompiledRuleSet rules, Scenario scenario)
+    {
+        var title = scenario.Sample.OriginalTitle;
+        var value = scenario.Attribute.OriginalValue.Trim();
+        if (value.Length == 0 || title.Length == 0)
+            return null;
+
+        var valueWords = SplitWords(value);
+
+        // Two characters and under carry no identity of their own — "cm", "ve", "8" — and anchoring
+        // on one would propose a phrase assembled around a coincidence.
+        var shared = valueWords
+            .Select(FoldedTitle.Fold)
+            .Where(w => w.Length > 2)
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (shared.Count == 0)
+            return null;
+
+        var words = SplitWords(title);
+
+        var anchor = -1;
+        for (var i = 0; i < words.Count; i++)
+        {
+            if (shared.Contains(FoldedTitle.Fold(words[i])))
+                anchor = i;
+        }
+
+        if (anchor < 0)
+            return null;
+
+        var claimed = ClaimedWords(rules, scenario);
+        if (claimed.Contains(FoldedTitle.Fold(words[anchor])))
+            return null;
+
+        var from = Math.Max(0, anchor - Math.Min(valueWords.Count, MaxPhraseWords) + 1);
+        while (from < anchor && claimed.Contains(FoldedTitle.Fold(words[from])))
+            from++;
+
+        var phrase = string.Join(' ', words.Skip(from).Take(anchor - from + 1));
+
+        // The same thing the cell already says is not a spelling worth adding — and it would not have
+        // reached here as "not in the title" if it were.
+        return string.Equals(FoldedTitle.Fold(phrase), FoldedTitle.Fold(value), StringComparison.Ordinal)
+            ? null
+            : phrase;
     }
 
     static List<string> SplitWords(string text) =>
@@ -421,6 +734,7 @@ public static class TitleFixSuggester
                 TitleFixKind.MergeAlias => ApplyMerge(result, candidate),
                 TitleFixKind.ProtectPhrase => ApplyProtect(result, candidate),
                 TitleFixKind.AdoptPhrase => ApplyAdopt(result, candidate),
+                TitleFixKind.AdoptCategoryType => ApplyCategoryType(result, candidate),
                 _ => result,
             };
         }
@@ -433,6 +747,35 @@ public static class TitleFixSuggester
         {
             Kind = TitleAttributeKind.Alias,
             Aliases = AddSpelling(rule.AliasGroups, fix.CellValue, fix.Value),
+        });
+
+    /// <summary>
+    /// The RuleSet's whole group joins the column's catalogue, headed by the marketplace's own
+    /// canonical spelling. <c>Correct</c> is turned on with it: adopting the vocabulary and then not
+    /// pulling the cells onto it would leave the column disagreeing with a title the same rule had
+    /// just edited.
+    ///
+    /// <para><c>FillFromTitle</c> is deliberately left alone. It writes in the opposite direction
+    /// from everything else here, and turning it on is a decision of its own rather than a rider on
+    /// a card about spellings.</para>
+    /// </summary>
+    static TitleRuleSet ApplyCategoryType(TitleRuleSet set, TitleFix fix) =>
+        WithRule(set, fix.TargetColumn, rule =>
+        {
+            // The spellings ride in one string in the same "|" format the Değerler box uses, so an
+            // operator who trimmed one off the card gets exactly what they left behind.
+            var spellings = fix.Value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var groups = rule.AliasGroups;
+
+            foreach (var spelling in spellings)
+                groups = AddSpelling(groups, fix.CellValue, spelling);
+
+            return rule with
+            {
+                Kind = TitleAttributeKind.Alias,
+                Correct = true,
+                Aliases = groups,
+            };
         });
 
     static TitleRuleSet ApplyAdopt(TitleRuleSet set, TitleFix fix) =>

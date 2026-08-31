@@ -864,7 +864,8 @@ textarea::placeholder {
 /* A box the current row does not use. Kept readable rather than hidden: the value typed into it
    survives a change of mind about the row's type. */
 input:disabled,
-textarea:disabled {
+textarea:disabled,
+select:disabled {
   background: var(--surface-2);
   color: var(--ink-3);
   border-style: dashed;
@@ -872,6 +873,15 @@ textarea:disabled {
 }
 
 td.is-locked { opacity: .5; }
+
+/* The ready-made unit sets, above the Birimler box rather than beside it: the rule table is already
+   eight columns wide, and the picker only fills the box in — what gets saved is the text below it,
+   which stays visible so a family can be trimmed to the units a column really uses. */
+.tc-unit-preset {
+  width: 100%;
+  max-width: none;
+  margin-bottom: 6px;
+}
 
 /* ---------------------------------------------------------------------------
    Title Cleaner — suggested fixes
@@ -1345,6 +1355,10 @@ tbody td {
   vertical-align: middle;
 }
 tbody tr:last-child td { border-bottom: 0; }
+
+/* Filtered out of view by RPA.initRowFilter, not removed from the table: every collect* function
+   reads all <tr> elements, so a row hidden here is still saved and still exported. */
+tbody tr.is-filtered-out { display: none; }
 /* No zebra: hairlines separate the rows and the hover wash is the only fill, which keeps long
    tables quiet and makes the row under the cursor unmistakable. */
 tbody tr:hover td { background: var(--surface-2); }

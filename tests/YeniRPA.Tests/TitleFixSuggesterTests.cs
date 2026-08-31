@@ -268,6 +268,123 @@ public class TitleFixSuggesterTests
             updated.AttributeList.Single().AliasGroups.Select(g => string.Join("|", g)));
     }
 
+    // -----------------------------------------------------------------
+    // D — adopting a spelling the catalogue does not have
+    // -----------------------------------------------------------------
+    //
+    // The real case: a title reading "İndüksiyon Ocak" against a cell reading "İndüksiyonlu ocak".
+    // Nothing about that row is wrong — it reports "not in the title", the way any attribute a title
+    // leaves out does — so the whole feature is the narrowing that tells the two apart.
+
+    static TitleRuleSet Hobs(TitleAttributeKind kind = TitleAttributeKind.Alias) =>
+        new("Test", "Başlık",
+            [new TitleAttributeRule("Ürün Tipi", kind, Aliases: [["İndüksiyonlu Ocak"]])]);
+
+    static List<List<string>> HobTable() =>
+    [
+        ["Başlık", "Ürün Tipi"],
+        ["Teka IR 8430 5 Zone 80 cm Siyah İndüksiyon Ocak", "İndüksiyonlu ocak"],
+    ];
+
+    /// <summary>
+    /// The phrase is pinned, not guessed: the anchor is the title word that equals one of the cell's
+    /// own words ("Ocak"), and the length is the cell's own word count — two, so "Siyah" is left out
+    /// even though nothing else claims it.
+    /// </summary>
+    [Fact]
+    public void ATitleSpellingTheCatalogueLacksIsOfferedAsASpelling()
+    {
+        var fix = Assert.Single(Fixes(Hobs(), HobTable()));
+
+        Assert.Equal(TitleFixKind.AdoptPhrase, fix.Kind);
+        Assert.Equal("İndüksiyon Ocak", fix.Value);
+        Assert.Equal("İndüksiyonlu ocak", fix.CellValue);
+        Assert.Null(fix.Warning);
+    }
+
+    /// <summary>Applying it both cuts the phrase out of the title and rewrites the cell — the two
+    /// things the operator wanted, from one decision.</summary>
+    [Fact]
+    public void AdoptingTheSpellingRemovesItFromTheTitleAndCorrectsTheCell()
+    {
+        var set = Hobs();
+        var table = HobTable();
+
+        var fixes = Fixes(set, table);
+        var updated = TitleFixSuggester.Apply(set, fixes, [fixes[0].Id]);
+
+        Assert.Equal(
+            ["İndüksiyonlu Ocak", "İndüksiyon Ocak"],
+            updated.AttributeList.Single().AliasGroups.Single());
+
+        var row = Run(updated, table).Rows.Single();
+        var attribute = row.Attributes.Single();
+
+        Assert.Equal("Teka IR 8430 5 Zone 80 cm Siyah", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.Corrected, attribute.Status);
+        Assert.Equal("İndüksiyonlu Ocak", attribute.Value);
+    }
+
+    /// <summary>
+    /// The filter that keeps this from becoming a second review table. Every attribute a title does
+    /// not mention arrives here, and most of them are simply absent — no shared word, no card.
+    /// </summary>
+    [Fact]
+    public void AValueTheTitleSharesNoWordWithIsNotOffered()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias, Aliases: [["Ankastre Fırın"]])]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "Ürün Tipi"],
+            ["Teka IR 8430 5 Zone 80 cm Siyah İndüksiyon Ocak", "Ankastre Fırın"],
+        ];
+
+        Assert.Empty(Fixes(set, table));
+    }
+
+    /// <summary>A word too short to carry an identity of its own cannot anchor a phrase: "80 cm" in
+    /// the title against a cell reading "60 cm" would otherwise propose deleting the wrong width.</summary>
+    [Fact]
+    public void ATwoLetterWordCannotAnchorAPhrase()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Genişlik", TitleAttributeKind.Alias, Aliases: [["60 cm"]])]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "Genişlik"],
+            ["Teka IR 8430 5 Zone 80 cm Siyah İndüksiyon Ocak", "60 cm"],
+        ];
+
+        Assert.Empty(Fixes(set, table));
+    }
+
+    /// <summary>A card that would not change the title is not a decision. The column may not remove,
+    /// so adopting the spelling leaves the title exactly as it was.</summary>
+    [Fact]
+    public void ASpellingThatWouldChangeNothingIsNotOffered()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias, Remove: false,
+                Aliases: [["İndüksiyonlu Ocak"]])]);
+
+        Assert.Empty(Fixes(set, HobTable()));
+    }
+
+    /// <summary>A plain text column has nowhere to put a second spelling, so the fix changes its type
+    /// — an effect beyond the rows on the card, which is what the warning is for.</summary>
+    [Fact]
+    public void AdoptingOnATextColumnWarnsThatTheTypeChanges()
+    {
+        var fix = Assert.Single(Fixes(Hobs(TitleAttributeKind.Text), HobTable()));
+
+        Assert.Equal("İndüksiyon Ocak", fix.Value);
+        Assert.NotNull(fix.Warning);
+        Assert.Contains("Değer Listesi", fix.Warning, StringComparison.Ordinal);
+    }
+
     /// <summary>The preview on a card is produced by the real engine, so what the operator is shown
     /// is what they get.</summary>
     [Fact]

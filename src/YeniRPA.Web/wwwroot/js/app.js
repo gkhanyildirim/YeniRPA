@@ -202,6 +202,67 @@ window.RPA = window.RPA || {};
   };
 
   /**
+   * Live search and a "only the unfinished ones" toggle over an editable table body — the mapping
+   * tables the operator fills in by hand, which grow to hundreds of rows.
+   *
+   * <b>Rows are hidden, never removed or re-rendered.</b> Every collect* function in this app reads
+   * the table back with querySelectorAll('tr') and never looks at visibility, so a hidden row is
+   * still saved and still exported. Filtering any other way would mean a full search box silently
+   * deleting the rest of the mapping on the next Save.
+   *
+   * Matching goes through RPA.fold, so typing "firsat" finds "Fırsat Dünyası" — the same fold the
+   * server matches seller names with. A multi-word query requires every word, in any column.
+   *
+   * @param bodyId  the <tbody> holding the rows
+   * @param options searchId, pendingId, pendingSelector (a row is "pending" when that input is
+   *                blank), onChange (called after every pass, to refresh the row count)
+   * @returns {{apply: function, clearSearch: function}}
+   */
+  RPA.initRowFilter = function (bodyId, options) {
+    const body = document.getElementById(bodyId);
+    const opts = options || {};
+    const search = opts.searchId ? document.getElementById(opts.searchId) : null;
+    const pending = opts.pendingId ? document.getElementById(opts.pendingId) : null;
+
+    function apply() {
+      if (!body) return;
+
+      const words = RPA.fold(search ? search.value : '').split(' ').filter(Boolean);
+      const onlyPending = !!(pending && pending.checked);
+
+      Array.from(body.querySelectorAll('tr')).forEach(function (row) {
+        let show = true;
+
+        if (onlyPending && opts.pendingSelector) {
+          const cell = row.querySelector(opts.pendingSelector);
+          show = !!cell && cell.value.trim() === '';
+        }
+
+        if (show && words.length) {
+          const haystack = RPA.fold(
+            Array.from(row.querySelectorAll('input[type="text"]'))
+              .map(i => i.value).join(' '));
+
+          show = words.every(w => haystack.indexOf(w) >= 0);
+        }
+
+        row.classList.toggle('is-filtered-out', !show);
+      });
+
+      if (opts.onChange) opts.onChange();
+    }
+
+    function clearSearch() {
+      if (search) search.value = '';
+    }
+
+    if (search) search.addEventListener('input', apply);
+    if (pending) pending.addEventListener('change', apply);
+
+    return { apply: apply, clearSearch: clearSearch };
+  };
+
+  /**
    * Renders a table into a stable wrapper element. The empty state replaces the
    * wrapper's *contents*, never the wrapper itself — the original report swapped
    * the <table> for a <div> via outerHTML, after which re-filtering back to a

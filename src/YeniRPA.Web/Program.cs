@@ -99,6 +99,10 @@ if (OperatingSystem.IsWindows())
 // exist nowhere else, so a torn write has nothing to be rebuilt from.
 builder.Services.AddSingleton<TitleRuleStore>();
 
+// The marketplace's RuleSet, parsed once at upload. A singleton for the same reason, though this one
+// is derived data: it can always be rebuilt by uploading the workbook again.
+builder.Services.AddSingleton<CategoryRuleStore>();
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())

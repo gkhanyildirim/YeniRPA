@@ -24,6 +24,7 @@ public class TitleRuleStoreTests
             new TitleAttributeRule("RAM", TitleAttributeKind.Measure, FillFromTitle: true, Units: [Gb]),
             new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
                 Correct: false,
+                AllowSuffix: true,
                 Aliases: [["W11P", "Windows 11 Pro"], ["W11H", "Windows 11 Home"]]),
         ],
         DecimalSeparator: ",");
@@ -168,6 +169,22 @@ public class TitleRuleStoreTests
         Assert.Equal(["W11P", "Windows 11 Pro"], rule.AliasGroups.Single());
     }
 
+    /// <summary>A sheet exported before the "Ek" column existed reads with the permission off — which
+    /// is the safe default, and the behaviour that sheet was written under.</summary>
+    [Fact]
+    public void ASheetWithoutTheSuffixColumnReadsWithItOff()
+    {
+        var csv = new StringBuilder()
+            .AppendLine("Kural Seti;Başlık Kolonu;Kolon;Tip")
+            .AppendLine("Laptop;Başlık;Ürün Tipi;Değer Listesi")
+            .ToString();
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+        var rule = TitleRuleStore.ReadWorkbook(stream, "kurallar.csv").Single().AttributeList.Single();
+
+        Assert.False(rule.AllowSuffix);
+    }
+
     /// <summary>The Tip cell is written in English and read back through the Turkish label the editor
     /// shows, so a sheet a category owner typed by hand reads the same as one the app exported.</summary>
     [Fact]
@@ -195,6 +212,46 @@ public class TitleRuleStoreTests
             () => TitleRuleStore.ReadWorkbook(stream, "kurallar.csv"));
 
         Assert.Contains("Kolon", error.Message, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
+    // Ready-made unit sets
+    // -----------------------------------------------------------------
+
+    public static TheoryData<string> UnitFamilies()
+    {
+        var data = new TheoryData<string>();
+        foreach (var family in TitleRuleSuggester.Families)
+            data.Add(family.Label);
+
+        return data;
+    }
+
+    /// <summary>
+    /// Every family the editor offers has to survive being encoded into a cell and read back out.
+    /// Encoding and parsing are two separate functions, and the picker hands the operator a string
+    /// it did not write itself — if one drifts from the other, choosing a set from the list produces
+    /// a rule that cannot be saved, or worse, one that saves with the wrong factors.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UnitFamilies))]
+    public void EveryReadyMadeUnitSetSurvivesTheCellFormat(string label)
+    {
+        var family = TitleRuleSuggester.Families.Single(f => f.Label == label);
+
+        var set = TitleRuleStore.FromForm(new TitleRuleSetForm(
+            "Test", "Başlık",
+            [new TitleAttributeForm("Ölçü", "Measure", Units: TitleRuleStore.EncodeUnits(family.Units))]));
+
+        // Compiling is what the editor does before it lets the set be saved, and it is what throws
+        // "names no unit" on a measured rule whose units did not survive the round trip.
+        CompiledRuleSet.Compile(set);
+
+        var read = set.AttributeList.Single().UnitList;
+
+        Assert.Equal(family.Units.Select(u => u.Canonical), read.Select(u => u.Canonical));
+        Assert.Equal(family.Units.Select(u => u.Factor), read.Select(u => u.Factor));
+        Assert.Equal(family.Units.Select(u => u.Spellings), read.Select(u => u.Spellings));
     }
 
     // -----------------------------------------------------------------
@@ -277,6 +334,7 @@ public class TitleRuleStoreTests
             Assert.Equal(want.Remove, got.Remove);
             Assert.Equal(want.Correct, got.Correct);
             Assert.Equal(want.FillFromTitle, got.FillFromTitle);
+            Assert.Equal(want.AllowSuffix, got.AllowSuffix);
 
             Assert.Equal(
                 want.UnitList.Select(u => (u.Canonical, u.Factor)),

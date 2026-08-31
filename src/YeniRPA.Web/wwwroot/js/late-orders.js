@@ -196,10 +196,17 @@
       '</tr>';
   }
 
+  /** The search box and "no group yet" toggle over the table. Set up on DOMContentLoaded. */
+  let mappingFilter = null;
+
   function renderMapping(entries) {
     const body = el('lo-mapping-body');
     body.innerHTML = (entries || []).map(mappingRowHtml).join('');
-    updateMappingCount();
+
+    // Re-applied rather than reset: a list arriving from the server must not silently drop the
+    // filter the operator is working under. This calls updateMappingCount through onChange.
+    if (mappingFilter) mappingFilter.apply();
+    else updateMappingCount();
   }
 
   /**
@@ -210,11 +217,23 @@
   function updateMappingCount() {
     const entries = collectMapping();
     const withGroup = entries.filter(e => e.groupName).length;
+    const body = el('lo-mapping-body');
+    const shown = body.querySelectorAll('tr:not(.is-filtered-out)').length;
+    const hidden = body.querySelectorAll('tr').length - shown;
 
-    el('lo-mapping-count').textContent = entries.length
-      ? entries.length.toLocaleString('en-US') + ' seller(s) · ' +
-        withGroup.toLocaleString('en-US') + ' with a group'
-      : 'No sellers mapped yet';
+    if (!entries.length) {
+      el('lo-mapping-count').textContent = 'No sellers mapped yet';
+      return;
+    }
+
+    // The hidden count is spelled out because everything else on this card — the save, the export —
+    // still covers those rows. A filtered table that only said "12 sellers" would read as a mapping
+    // that had lost the rest.
+    el('lo-mapping-count').textContent =
+      entries.length.toLocaleString('en-US') + ' seller(s) · ' +
+      withGroup.toLocaleString('en-US') + ' with a group' +
+      (hidden ? ' · ' + shown.toLocaleString('en-US') + ' shown' : '') +
+      (hidden && !shown ? ' — no rows match' : '');
   }
 
   /** Reads the table back out. Blank rows are dropped; a seller with no group is kept. */
@@ -242,12 +261,18 @@
   }
 
   function addMappingRow(sellerId, sellerName, groupName) {
+    // A blank row matches no search term, so it would be added and hidden in the same breath. The
+    // "no group yet" toggle is left alone — a new row satisfies it.
+    if (mappingFilter) mappingFilter.clearSearch();
+
     el('lo-mapping-body').insertAdjacentHTML('beforeend', mappingRowHtml({
       sellerId: sellerId || '',
       sellerName: sellerName || '',
       groupName: groupName || ''
     }));
-    updateMappingCount();
+
+    if (mappingFilter) mappingFilter.apply();
+    else updateMappingCount();
 
     const rows = el('lo-mapping-body').querySelectorAll('tr');
     const added = rows[rows.length - 1];
@@ -680,6 +705,13 @@
     });
     el('lo-map-save').addEventListener('click', saveMapping);
     el('lo-map-add').addEventListener('click', () => addMappingRow('', '', ''));
+
+    mappingFilter = RPA.initRowFilter('lo-mapping-body', {
+      searchId: 'lo-map-search',
+      pendingId: 'lo-map-pending',
+      pendingSelector: '.map-group',
+      onChange: updateMappingCount
+    });
 
     el('lo-map-import').addEventListener('click', () => el('lo-map-file').click());
     el('lo-map-file').addEventListener('change', function () {

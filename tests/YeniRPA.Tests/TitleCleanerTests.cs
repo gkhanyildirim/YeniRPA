@@ -690,6 +690,194 @@ public class TitleCleanerTests
 
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// A group's second spelling is what a catalogue is for: the title writes "İndüksiyon Ocak", the
+    /// cell writes "İndüksiyonlu ocak", and one group makes them one value. The phrase leaves the
+    /// title and the cell is rewritten to the head of the group.
+    ///
+    /// <para>Written down because it is the whole of the answer to a case the team hit, and because
+    /// both halves have to hold together: a group that removed the phrase without correcting the cell
+    /// would leave the catalogue disagreeing with a title it had just edited.</para>
+    /// </summary>
+    [Fact]
+    public void ASecondSpellingInAGroupLeavesTheTitleAndPullsTheCellToTheCanonicalOne()
+    {
+        var set = new TitleRuleSet("Ocak", "Başlık",
+            [new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias,
+                Aliases: [["İndüksiyonlu Ocak", "İndüksiyon Ocak"]])]);
+
+        var row = Run(
+            set,
+            "Teka IR 8430 5 Zone 80 cm Siyah İndüksiyon Ocak",
+            ("Ürün Tipi", "İndüksiyonlu ocak"));
+
+        Assert.Equal("Teka IR 8430 5 Zone 80 cm Siyah", row.CleanTitle);
+
+        var attribute = Attr(row, "Ürün Tipi");
+        Assert.Equal(TitleAttributeStatus.Corrected, attribute.Status);
+        Assert.Equal("İndüksiyonlu Ocak", attribute.Value);
+    }
+
+    // -----------------------------------------------------------------
+    // A value the title writes in pieces
+    // -----------------------------------------------------------------
+
+    const string SplitTitle = "GL General GLO 022SARS Rustik 60 cm Siyah Emaye Ankastre Ocak";
+
+    static readonly MeasureUnit Cm = new("cm", ["cm"], 1);
+    static readonly MeasureUnit Mm = new("mm", ["mm"], 0.1);
+
+    /// <summary>
+    /// The real case. "Rustik siyah" is one colour that the title splits in half with the width, and
+    /// the width is itself a rule that removes what it finds — so the two words really are one value
+    /// with another value inserted into it.
+    /// </summary>
+    [Fact]
+    public void AValueTheTitleSplitsIsMatchedWhenSomebodyOwnsWhatSplitsIt()
+    {
+        var set = new TitleRuleSet("Ocak", "Başlık",
+        [
+            new TitleAttributeRule("Renk", TitleAttributeKind.Alias, Aliases: [["Rustik siyah"]]),
+            new TitleAttributeRule("Genişlik", TitleAttributeKind.Measure, Units: [Cm, Mm]),
+        ]);
+
+        var row = Run(set, SplitTitle, ("Renk", "Rustik siyah"), ("Genişlik", "600 mm"));
+
+        Assert.Equal("GL General GLO 022SARS Emaye Ankastre Ocak", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "Renk").Status);
+    }
+
+    /// <summary>
+    /// The safety case, and the reason the rule above is allowed to exist at all. Take the width rule
+    /// away and the same two words are just two words with unclaimed text between them — reading them
+    /// as one colour would delete "Rustik" and "Siyah" out of a title nobody had accounted for.
+    /// </summary>
+    [Fact]
+    public void TheSameTwoWordsDoNotMatchWhenNothingOwnsWhatIsBetweenThem()
+    {
+        var set = new TitleRuleSet("Ocak", "Başlık",
+            [new TitleAttributeRule("Renk", TitleAttributeKind.Alias, Aliases: [["Rustik siyah"]])]);
+
+        var row = Run(set, SplitTitle, ("Renk", "Rustik siyah"));
+
+        Assert.Equal(SplitTitle, row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Renk").Status);
+    }
+
+    /// <summary>A rule that recognises the gap but may not cut it leaves that text in the title, and
+    /// a value cannot be said to span text that stays.</summary>
+    [Fact]
+    public void AGapHeldByARuleThatMayNotRemoveDoesNotCount()
+    {
+        var set = new TitleRuleSet("Ocak", "Başlık",
+        [
+            new TitleAttributeRule("Renk", TitleAttributeKind.Alias, Aliases: [["Rustik siyah"]]),
+            new TitleAttributeRule("Genişlik", TitleAttributeKind.Measure, Remove: false, Units: [Cm, Mm]),
+        ]);
+
+        var row = Run(set, SplitTitle, ("Renk", "Rustik siyah"), ("Genişlik", "600 mm"));
+
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Renk").Status);
+        Assert.Contains("Rustik 60 cm Siyah", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>Order is part of the value. Two words of a colour found back to front are not that
+    /// colour.</summary>
+    [Fact]
+    public void TheWordsHaveToAppearInTheOrderTheValueWritesThem()
+    {
+        var set = new TitleRuleSet("Ocak", "Başlık",
+        [
+            new TitleAttributeRule("Renk", TitleAttributeKind.Alias, Aliases: [["Rustik siyah"]]),
+            new TitleAttributeRule("Genişlik", TitleAttributeKind.Measure, Units: [Cm, Mm]),
+        ]);
+
+        var row = Run(set, "GL General Siyah 60 cm Rustik Emaye", ("Renk", "Rustik siyah"), ("Genişlik", "600 mm"));
+
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Renk").Status);
+    }
+
+    /// <summary>A value the title writes as one stretch takes the ordinary path — the scattered
+    /// search only runs where the contiguous one found nothing.</summary>
+    [Fact]
+    public void AContiguousValueIsStillMatchedTheOrdinaryWay()
+    {
+        var set = new TitleRuleSet("Ocak", "Başlık",
+            [new TitleAttributeRule("Renk", TitleAttributeKind.Alias, Aliases: [["Rustik siyah"]])]);
+
+        var row = Run(set, "GL General Rustik Siyah Emaye", ("Renk", "Rustik siyah"));
+
+        Assert.Equal("GL General Emaye", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "Renk").Status);
+    }
+
+    // -----------------------------------------------------------------
+    // Turkish inflections
+    // -----------------------------------------------------------------
+
+    const string PluralTitle = "Çetintaş Evii CSA VE 222 Seramik Siyah 2 Gözlü Elektrikli Ankastre Ocaklar";
+
+    static TitleRuleSet Hobs(bool allowSuffix) => new("Ocak", "Başlık",
+        [new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias, AllowSuffix: allowSuffix,
+            Aliases: [["Ankastre Ocak"]])]);
+
+    /// <summary>
+    /// "Ankastre Ocaklar" answers a cell reading "Ankastre ocak" once the column allows it, and the
+    /// whole word goes — leaving "lar" behind is exactly what the boundary rule refuses to do, and
+    /// this must not become a way of doing it.
+    /// </summary>
+    [Fact]
+    public void AnInflectedWordIsMatchedWholeWhenTheColumnAllowsIt()
+    {
+        var row = Run(Hobs(allowSuffix: true), PluralTitle, ("Ürün Tipi", "Ankastre ocak"));
+
+        Assert.Equal("Çetintaş Evii CSA VE 222 Seramik Siyah 2 Gözlü Elektrikli", row.CleanTitle);
+        Assert.DoesNotContain("lar", row.CleanTitle, StringComparison.Ordinal);
+        Assert.Equal(TitleAttributeStatus.Corrected, Attr(row, "Ürün Tipi").Status);
+        Assert.Equal("Ankastre Ocak", Attr(row, "Ürün Tipi").Value);
+    }
+
+    /// <summary>Off by default, and off means the behaviour this module had before.</summary>
+    [Fact]
+    public void WithoutThatPermissionTheInflectedWordIsLeftAlone()
+    {
+        var row = Run(Hobs(allowSuffix: false), PluralTitle, ("Ürün Tipi", "Ankastre ocak"));
+
+        Assert.Equal(PluralTitle, row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Ürün Tipi").Status);
+    }
+
+    /// <summary>
+    /// The list is closed, and that is the whole of its safety. "Ocakçı" is a different word, not an
+    /// inflection of "Ocak", and no permission may turn one into the other.
+    /// </summary>
+    [Fact]
+    public void AWordEndingThatIsNotAnInflectionIsNotSwallowed()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Meslek", TitleAttributeKind.Alias, AllowSuffix: true,
+                Aliases: [["Ocak"]])]);
+
+        var row = Run(set, "Acme Ocakçı Seti", ("Meslek", "Ocak"));
+
+        Assert.Equal("Acme Ocakçı Seti", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Meslek").Status);
+    }
+
+    /// <summary>A model code is why this is opt-in. Even with the permission on, a code is not a word
+    /// and its tail is not a suffix.</summary>
+    [Fact]
+    public void AModelCodeIsNotTreatedAsAnInflectedWord()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Seri", TitleAttributeKind.Alias, AllowSuffix: true,
+                Aliases: [["GLO 022"]])]);
+
+        var row = Run(set, "GL General GLO 022SARS Rustik", ("Seri", "GLO 022"));
+
+        Assert.Contains("022SARS", row.CleanTitle, StringComparison.Ordinal);
+    }
+
     static TitleCleanRow Run(TitleRuleSet set, string title, params (string Column, string Value)[] cells)
     {
         var map = cells.ToDictionary(c => c.Column, c => c.Value, StringComparer.OrdinalIgnoreCase);

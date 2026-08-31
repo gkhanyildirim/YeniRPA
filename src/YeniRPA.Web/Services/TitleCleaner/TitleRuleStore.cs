@@ -137,6 +137,7 @@ public sealed class TitleRuleStore
             rule.Remove,
             rule.Correct,
             rule.FillFromTitle,
+            rule.AllowSuffix,
             EncodeUnits(rule.UnitList),
             EncodeAliases(rule.AliasGroups))).ToList(),
         set.DecimalSeparator == "," ? "," : ".");
@@ -156,6 +157,7 @@ public sealed class TitleRuleStore
                     a.Remove,
                     a.Correct,
                     a.FillFromTitle,
+                    a.AllowSuffix,
                     ParseUnits(a.Units),
                     ParseAliases(a.Aliases)))
                 .ToList(),
@@ -229,10 +231,14 @@ public sealed class TitleRuleStore
     const int UnitsColumn = 9;
     const int AliasColumn = 10;
 
+    /// <summary>Last on purpose. Putting a new column where it reads best would shift every constant
+    /// above, and those decide which cell each value is written into.</summary>
+    const int SuffixColumn = 11;
+
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
-        "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler",
+        "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek",
     ];
 
     /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
@@ -259,7 +265,7 @@ public sealed class TitleRuleStore
 
         // Text throughout: a unit spelling of "11" or a set named "2024" must not come back as a
         // number, and the encoded unit/alias cells must survive verbatim.
-        sheet.Columns(SetColumn, AliasColumn).Style.NumberFormat.Format = "@";
+        sheet.Columns(SetColumn, SuffixColumn).Style.NumberFormat.Format = "@";
 
         var row = 2;
         foreach (var set in sets)
@@ -276,11 +282,12 @@ public sealed class TitleRuleStore
                 sheet.Cell(row, FillColumn).SetValue(Yes(rule.FillFromTitle));
                 sheet.Cell(row, UnitsColumn).SetValue(EncodeUnits(rule.UnitList));
                 sheet.Cell(row, AliasColumn).SetValue(EncodeAliases(rule.AliasGroups));
+                sheet.Cell(row, SuffixColumn).SetValue(Yes(rule.AllowSuffix));
                 row++;
             }
         }
 
-        sheet.Columns(SetColumn, AliasColumn).AdjustToContents();
+        sheet.Columns(SetColumn, SuffixColumn).AdjustToContents();
         foreach (var column in sheet.ColumnsUsed())
             column.Width = Math.Clamp(column.Width, 10, 52);
 
@@ -312,6 +319,7 @@ public sealed class TitleRuleStore
         var cFill = Optional(header, Headers[FillColumn - 1]);
         var cUnits = Optional(header, Headers[UnitsColumn - 1]);
         var cAlias = OptionalAny(header, Headers[AliasColumn - 1], LegacyAliasHeader);
+        var cSuffix = Optional(header, Headers[SuffixColumn - 1]);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
@@ -343,6 +351,7 @@ public sealed class TitleRuleStore
                 ParseBool(TabularFile.GetCell(row, cRemove), fallback: true),
                 ParseBool(TabularFile.GetCell(row, cCorrect), fallback: true),
                 ParseBool(TabularFile.GetCell(row, cFill), fallback: false),
+                ParseBool(TabularFile.GetCell(row, cSuffix), fallback: false),
                 ParseUnits(TabularFile.GetCell(row, cUnits)),
                 ParseAliases(TabularFile.GetCell(row, cAlias))));
         }

@@ -16,10 +16,23 @@ namespace YeniRPA.Web.Services.TitleCleaner;
 /// <param name="Quantity">The number this match carries, for a measured value. Kept apart from the
 /// key because a cell holding a bare "16" has to be compared on the number alone — the unit is what
 /// the title is being asked for.</param>
+/// <param name="Parts">
+/// Where the match actually sits, when the title does not write it as one stretch — "Rustik siyah"
+/// against a title reading "Rustik 60 cm Siyah".
+///
+/// <para>Null for the ordinary case, where <paramref name="Start"/>..<paramref name="End"/> is the
+/// whole of it. Where it is set those two are the outer reach — what the match <em>occupies</em>,
+/// for deciding overlap — while <see cref="Parts"/> is what may be cut. The two differ precisely
+/// because the text in between belongs to some other attribute.</para>
+/// </param>
 public sealed record TitleMatch(
-    int Start, int End, string Text, string Canonical, string Key, double? Quantity = null)
+    int Start, int End, string Text, string Canonical, string Key, double? Quantity = null,
+    IReadOnlyList<(int Start, int End)>? Parts = null)
 {
     public int Length => End - Start;
+
+    /// <summary>The stretches this match is made of: its parts, or itself.</summary>
+    public IReadOnlyList<(int Start, int End)> Spans => Parts ?? [(Start, End)];
 }
 
 /// <summary>What one attribute cell holds, read through its rule.</summary>
@@ -324,12 +337,16 @@ public static class AttributeMatcher
 
             case TitleAttributeKind.Alias:
                 foreach (var (spelling, canonical, key) in attr.AliasSpellings)
-                    AddLiteral(matches, title, spelling, canonical, key);
+                    AddLiteral(matches, title, spelling, canonical, key, attr.Rule.AllowSuffix);
                 break;
 
             default:
                 if (value is not null)
-                    AddLiteral(matches, title, FoldedTitle.Fold(value.Canonical), value.Canonical, value.Key);
+                {
+                    AddLiteral(
+                        matches, title, FoldedTitle.Fold(value.Canonical), value.Canonical, value.Key,
+                        attr.Rule.AllowSuffix);
+                }
                 break;
         }
 
@@ -337,23 +354,149 @@ public static class AttributeMatcher
     }
 
     static void AddLiteral(
-        List<TitleMatch> matches, FoldedTitle title, string folded, string canonical, string key)
+        List<TitleMatch> matches, FoldedTitle title, string folded, string canonical, string key,
+        bool allowSuffix = false)
     {
         if (folded.Length == 0)
             return;
 
+        var found = 0;
         var from = 0;
+
         while (from < title.Folded.Length)
         {
             var at = IndexOfLoose(title.Folded, folded, from, out var length);
             if (at < 0)
                 break;
 
+            length = ExtendOverSuffix(title.Folded, at, length, allowSuffix);
+
             var (start, end) = title.ToOriginal(at, at + length);
             matches.Add(new TitleMatch(start, end, title.Original[start..end], canonical, key));
 
+            found++;
             from = at + 1;
         }
+
+        // Only where the title writes it as one stretch nowhere at all. A value that was found is
+        // found; going on to also match its words scattered about would turn one honest match into
+        // several noisy ones.
+        if (found == 0)
+            AddScattered(matches, title, folded, canonical, key, allowSuffix);
+    }
+
+    /// <summary>
+    /// Turkish inflections a match may run to the end of a word over. A closed list, deliberately:
+    /// this is the one place where a span is allowed to cover characters the value does not contain,
+    /// and it earns that only by being enumerable and short. Written folded, the form
+    /// <see cref="FoldedTitle"/> produces.
+    /// </summary>
+    static readonly HashSet<string> Suffixes = new(StringComparer.Ordinal)
+    {
+        "lar", "ler", "la", "le", "lari", "leri", "larin", "lerin",
+        "i", "u", "a", "e", "si", "su", "in", "un", "nin", "nun",
+        "da", "de", "ta", "te", "dan", "den", "tan", "ten",
+        "ya", "ye", "yi", "yla", "yle",
+    };
+
+    /// <summary>
+    /// Stretches a match to the end of its word when what follows is an inflection — so "Ocaklar"
+    /// goes whole rather than leaving "lar" behind, which is what the boundary rule would otherwise
+    /// (rightly) refuse to do.
+    /// </summary>
+    static int ExtendOverSuffix(string folded, int at, int length, bool allowSuffix)
+    {
+        if (!allowSuffix || length == 0)
+            return length;
+
+        var end = at + length;
+        if (end >= folded.Length || !char.IsLetterOrDigit(folded[end]))
+            return length;
+
+        var wordEnd = end;
+        while (wordEnd < folded.Length && char.IsLetterOrDigit(folded[wordEnd]))
+            wordEnd++;
+
+        return Suffixes.Contains(folded[end..wordEnd]) ? wordEnd - at : length;
+    }
+
+    /// <summary>
+    /// A multi-word value whose words the title separates — "Rustik siyah" against "Rustik 60 cm
+    /// Siyah". Each word has to be there, whole and in order; the match then carries them as its
+    /// parts and reaches across the gap only for the purpose of claiming it.
+    ///
+    /// <para><b>Nothing here decides that the gap is ignorable.</b> That is settled afterwards, in
+    /// <c>TitleCleanBuilder</c>, which accepts this match only where every gap is covered by other
+    /// attributes that are removing what is in it. Two words with unclaimed text between them are
+    /// two words, not a value.</para>
+    /// </summary>
+    static void AddScattered(
+        List<TitleMatch> matches, FoldedTitle title, string folded, string canonical, string key,
+        bool allowSuffix)
+    {
+        var needles = folded.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (needles.Length < 2)
+            return;
+
+        var words = Words(title.Folded);
+        var parts = new List<(int Start, int End)>(needles.Length);
+        var next = 0;
+
+        foreach (var needle in needles)
+        {
+            var hit = -1;
+
+            for (var w = next; w < words.Count; w++)
+            {
+                var (start, end) = words[w];
+                var text = title.Folded[start..end];
+
+                if (string.Equals(text, needle, StringComparison.Ordinal) ||
+                    ExtendOverSuffix(title.Folded, start, needle.Length, allowSuffix) == end - start &&
+                    text.StartsWith(needle, StringComparison.Ordinal))
+                {
+                    hit = w;
+                    break;
+                }
+            }
+
+            if (hit < 0)
+                return;
+
+            var (from, to) = title.ToOriginal(words[hit].Start, words[hit].End);
+            parts.Add((from, to));
+            next = hit + 1;
+        }
+
+        matches.Add(new TitleMatch(
+            parts[0].Start,
+            parts[^1].End,
+            title.Original[parts[0].Start..parts[^1].End],
+            canonical,
+            key,
+            Parts: parts));
+    }
+
+    /// <summary>Where each word of a folded title begins and ends.</summary>
+    static List<(int Start, int End)> Words(string folded)
+    {
+        var words = new List<(int, int)>();
+        var at = 0;
+
+        while (at < folded.Length)
+        {
+            while (at < folded.Length && char.IsWhiteSpace(folded[at]))
+                at++;
+
+            var start = at;
+            while (at < folded.Length && !char.IsWhiteSpace(folded[at]))
+                at++;
+
+            if (at > start)
+                words.Add((start, at));
+        }
+
+        return words;
     }
 
     /// <summary>

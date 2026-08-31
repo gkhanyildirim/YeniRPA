@@ -745,19 +745,33 @@
                     <table>
                         <thead>
                             <tr>
-                                <th style="width: 20%" title="Excel dosyanızdaki kolonun adı — birebir aynı yazılmalı">Kolon</th>
+                                <th style="width: 18%" title="Excel dosyanızdaki kolonun adı — birebir aynı yazılmalı">Kolon</th>
                                 <th style="width: 9%" title="Bu kolonun başlıkta nasıl aranacağı">Tip</th>
                                 <th style="width: 6%" title="Bulunca başlıktan silinsin mi. Kapalıysa metin korunur.">Çıkar</th>
                                 <th style="width: 6%" title="Hücredeki yazım standarda çevrilsin mi (16 → 16 GB). Tip = Metin olan satırlarda kullanılmaz.">Düzelt</th>
-                                <th style="width: 10%" title="Son taramada bu kural kaç satırda karşılık buldu">Eşleşme</th>
-                                <th style="width: 22%" title="Yalnızca Tip = Ölçü olan satırlarda kullanılır">Birimler</th>
-                                <th style="width: 22%" title="Yalnızca Tip = Değer Listesi olan satırlarda kullanılır">Değerler</th>
+                                <th style="width: 6%" title="Başlıktaki &quot;Ocaklar&quot; kelimesi &quot;Ocak&quot; değerini karşılasın mı — Türkçe çekim ekli yazımlar. Model kodu taşıyan kolonlarda kapalı bırakın.">Ek</th>
+                                <th style="width: 9%" title="Son taramada bu kural kaç satırda karşılık buldu">Eşleşme</th>
+                                <th style="width: 21%" title="Yalnızca Tip = Ölçü olan satırlarda kullanılır. Hazır bir set seçip düzenleyebilirsiniz.">Birimler</th>
+                                <th style="width: 20%" title="Yalnızca Tip = Değer Listesi olan satırlarda kullanılır">Değerler</th>
                                 <th style="width: 5%"></th>
                             </tr>
                         </thead>
                         <tbody id="tc-rules-body"></tbody>
                     </table>
                 </div>
+
+                @* The ready-made sets cover the common units; this is for the columns they do not,
+                   so the format is written down somewhere other than a placeholder. *@
+                <p class="note">
+                    <strong>Birimler:</strong> &quot;=&quot; öncesi standart yazım,
+                    &quot;|&quot; kabul edilen diğer yazımlar,
+                    &quot;@@&quot; taban birime göre katsayı (1 TB = 1024 GB),
+                    &quot;;&quot; birimleri ayırır.
+                    <strong>Değerler:</strong> &quot;|&quot; aynı şeyin yazımlarını,
+                    &quot;;&quot; farklı değerleri ayırır; her grubun ilki standart yazımdır.
+                    <br />
+                    <strong>RuleSet:</strong> <span id="tc-ruleset-status">yüklenmedi</span>
+                </p>
 
                 <div class="actions">
                     <button type="button" class="btn btn-ghost" id="tc-rule-add">
@@ -776,6 +790,13 @@
                         <span class="spinner" aria-hidden="true"></span>
                         <span class="btn-text">Excel'e aktar</span>
                     </button>
+                    <button type="button" class="btn btn-ghost" id="tc-ruleset-import"
+                            title="Pazaryerinin RuleSet çalışma kitabı — kategori başına hangi ürün tiplerinin geçerli olduğunu tanımlar">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">RuleSet yükle</span>
+                    </button>
+                    <input type="file" id="tc-ruleset-file" accept=".xlsx,.xls" hidden
+                           aria-label="RuleSet çalışma kitabı" />
                     <button type="button" class="btn btn-ghost" id="tc-rule-delete" disabled
                             title="Açılır listeden seçili kural setini siler">
                         <span class="spinner" aria-hidden="true"></span>
@@ -1303,14 +1324,6 @@
             <header class="page-head">
                 <div>
                     <h1 data-eyebrow="WhatsApp &middot; Automation">Late Order Warnings</h1>
-                    <p class="lede">
-                        Finds the orders that are <strong>overdue right now</strong> &mdash; not shipped, and past
-                        their shipping deadline &mdash; groups them by seller, and composes one warning message per
-                        seller for that seller's WhatsApp group. This is a different question from the Order
-                        Report's late-shipment rate, which looks back at orders that <em>did</em> ship, late.
-                        Messages to sellers cannot be recalled, so every one of them is shown in full below before
-                        it goes anywhere.
-                    </p>
                 </div>
                 <span class="stamp" id="lo-stamp"></span>
             </header>
@@ -1340,32 +1353,29 @@
                     <span class="msg"></span>
                 </div>
 
-                <p class="note">
-                    <strong>Open WhatsApp</strong> launches a Chrome window on <code>web.whatsapp.com</code>. Scan
-                    the QR code there once &mdash; there is deliberately <em>no</em> &ldquo;save session&rdquo;
-                    button, because the profile keeps the login by itself and a button implying otherwise would be
-                    a lie you would click and trust. Chrome starts on demand, so the first click takes a few
-                    seconds.
-                    <br /><br />
-                    The profile lives at <code id="lo-profile-path"></code>. Unlike the Mirakl session this app
-                    does not encrypt it &mdash; Chrome protects its own credential material against your Windows
-                    account. Treat that folder as a credential: a live session can read and send in
-                    <strong>every chat you are in</strong>, not only the seller groups.
-                    <strong>Clear session</strong> deletes it and signs you out.
-                </p>
+                @* The prose is gone; this one carries a live value late-orders.js writes into. *@
+                <p class="note"><code id="lo-profile-path"></code></p>
             </div>
 
             <div class="section-title">Seller &rarr; WhatsApp group</div>
             <div class="card">
                 <h3>Which group each seller gets messaged in</h3>
-                <p class="sub">
-                    Set this up once. The seller ID wins over the name when both are filled in &mdash; a seller can
-                    rename their storefront, but their ID does not change
-                </p>
 
                 <div id="lo-mapping-warnings" hidden></div>
 
-                <div class="table-scroll is-full">
+                <div class="filter-bar">
+                    <div class="field" style="flex: 1 1 320px">
+                        <label for="lo-map-search">Search</label>
+                        <input type="search" id="lo-map-search" spellcheck="false"
+                               placeholder="Seller ID, name or group" />
+                    </div>
+                    <label class="check" for="lo-map-pending">
+                        <input type="checkbox" id="lo-map-pending" />
+                        <span>Only sellers with no group</span>
+                    </label>
+                </div>
+
+                <div class="table-scroll">
                     <table>
                         <thead>
                             <tr>
@@ -1406,13 +1416,8 @@
                     <span class="msg"></span>
                 </div>
 
-                <p class="note">
-                    The group name must match the WhatsApp group <strong>exactly</strong> &mdash; it is compared
-                    character for character, and nothing is ever matched approximately. A near-match would post one
-                    seller's order list into a different seller's group, which is why an ambiguous row is reported
-                    rather than guessed at. A seller row with the group left blank counts as unmapped.
-                    Stored at <code id="lo-mapping-path"></code> &mdash; <span id="lo-mapping-updated"></span>.
-                </p>
+                @* The prose is gone; these two carry live values late-orders.js writes into. *@
+                <p class="note"><code id="lo-mapping-path"></code> &mdash; <span id="lo-mapping-updated"></span></p>
             </div>
 
             <div class="section-title">Find the overdue orders</div>
@@ -1446,20 +1451,6 @@
                         <span class="msg"></span>
                     </div>
                 </div>
-                <p class="note">
-                    An order counts as overdue when its <code>Shipping date</code> is empty, its status is one the
-                    seller can still act on (<code>Awaiting shipment</code> or <code>Pending acceptance</code>), and
-                    its <code>Shipping deadline</code> has passed. Anything else is set aside for review rather than
-                    messaged.
-                    <br /><br />
-                    <strong>About the offset:</strong> every deadline in the sample export lands at
-                    <code>21:59:59</code>, which is <code>23:59:59</code> at UTC+2 &mdash; end of day in Berlin,
-                    exported in UTC. If that holds, the offset for Turkish local time is <code>+3</code>. This field
-                    is <em>temporary scaffolding</em>: open one overdue order in the Mirakl back office, compare the
-                    deadline it shows against the file, set the offset to the difference, and once a second export
-                    confirms it the value moves into the code and this field goes away. Nothing is uploaded anywhere
-                    and nothing is stored &mdash; leaving this page discards it.
-                </p>
             </div>
 
             <div class="skeleton" id="lo-prepare-skeleton">
@@ -1480,10 +1471,6 @@
                     </div>
                     <div class="card accent-amber">
                         <h3>These sellers are overdue and cannot be messaged</h3>
-                        <p class="sub">
-                            No message is composed for them and none is skipped silently &mdash; add the group above,
-                            then run this again
-                        </p>
                         <div class="table-scroll" id="lo-unmapped-wrap"></div>
                         <p class="note" id="lo-unmapped-summary"></p>
                     </div>
@@ -1495,10 +1482,6 @@
                 </div>
                 <div class="card accent-red">
                     <h3>Every order past its deadline and still unshipped</h3>
-                    <p class="sub">
-                        The exported deadline and the offset deadline sit side by side so the offset's effect is
-                        visible on every row rather than taken on trust
-                    </p>
                     <div class="table-scroll" id="lo-orders-wrap"></div>
                 </div>
 
@@ -1508,7 +1491,6 @@
                 </div>
                 <div class="card">
                     <h3>Every row in the file, accounted for</h3>
-                    <p class="sub">The first six buckets are terminal and add up to the row count</p>
                     <div class="table-scroll is-full" id="lo-funnel-wrap"></div>
                 </div>
 
@@ -1518,20 +1500,12 @@
                 </div>
                 <div class="card accent-amber">
                     <h3>Unshipped rows that were not turned into a warning</h3>
-                    <p class="sub">
-                        An unfamiliar status or an unreadable deadline lands here instead of defaulting into
-                        &ldquo;chase the seller&rdquo;
-                    </p>
                     <div class="table-scroll" id="lo-review-wrap"></div>
                 </div>
 
                 <div class="section-title">Message wording</div>
                 <div class="card">
                     <h3>What each seller is sent</h3>
-                    <p class="sub">
-                        Two templates: the envelope is rendered once per seller, the order line once per overdue
-                        order. Edits are saved with the mapping above
-                    </p>
 
                     <div class="field">
                         <label for="lo-template">Message</label>
@@ -1559,11 +1533,6 @@
                 <div class="section-title">Messages</div>
                 <div class="card accent-green">
                     <h3>One message per WhatsApp group, exactly as it will be sent</h3>
-                    <p class="sub">
-                        Read the group name on each card before you copy it &mdash; that is the last chance to catch
-                        a wrong mapping. Seller accounts mapped to the same group are merged into one message, with
-                        each account's orders listed under its own name
-                    </p>
 
                     <div id="lo-messages"></div>
 
@@ -1588,12 +1557,6 @@
                         <span class="msg"></span>
                     </div>
 
-                    <p class="note">
-                        A dry run opens every group, checks the title matches, types the message and reads it back
-                        &mdash; then clears the box without sending. It exercises the whole path against real
-                        production data with no outward effect, and it is the routine to run before every live send.
-                        You can also still copy a message by hand from its card.
-                    </p>
                 </div>
             </div>
 
@@ -1611,41 +1574,6 @@
                     </div>
                     <pre class="console" id="lo-console"></pre>
                 </div>
-                <p class="note">
-                    A group that fails is screenshotted to <code>artifacts/late-orders</code> beside the executable
-                    and the run moves on. The one exception is a lost session: if WhatsApp drops back to the QR
-                    code the whole run aborts, because every remaining group would fail identically.
-                </p>
-            </div>
-
-            <div class="section-title">What happens when you send</div>
-            <div class="card">
-                <h3>The sequence, per group</h3>
-                <p class="sub">
-                    Three checks stand between a mapping row and a message a seller can read &mdash; a WhatsApp
-                    message cannot be recalled
-                </p>
-                <div class="table-scroll is-full">
-                    <table>
-                        <thead><tr><th>Step</th><th>What it does</th><th>If it fails</th></tr></thead>
-                        <tbody>
-                            <tr><td>Search</td><td>Clears the box, types the group name, waits for results to settle</td><td>Skips this seller</td></tr>
-                            <tr><td><strong>Exact title match</strong></td><td>Matches the chat name character for character; requires exactly one hit</td><td>Skips &mdash; never picks one of two</td></tr>
-                            <tr><td><strong>Header re-check</strong></td><td>Reads the opened chat's title back and compares again, after the click</td><td>Skips before typing anything</td></tr>
-                            <tr><td>Type</td><td>Whole lines at once, with Shift+Enter for the breaks (Enter would send)</td><td>Retypes key by key, then skips</td></tr>
-                            <tr><td><strong>Read back</strong></td><td>Reads the composed text out of the box and compares it to what you approved</td><td>Clears the box, skips &mdash; names the differing line</td></tr>
-                            <tr><td>Send</td><td>Presses Enter, waits for the box to empty</td><td>Warns that it may have gone out</td></tr>
-                            <tr><td>Pause</td><td>6&ndash;12 s randomised on a live run; 0.7 s on a dry run, which sends nothing to pace</td><td>&mdash;</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <p class="note">
-                    At most <strong>40 groups per run</strong>; over that the run is refused rather than truncated.
-                    Messages are capped at 4,000 characters. A run holds the app-wide automation slot for its whole
-                    duration &mdash; roughly 5&ndash;8 minutes for a full batch &mdash; so Create Return cannot run
-                    at the same time. The window stays visible on purpose: it is your only way to watch automation
-                    touching your own WhatsApp account.
-                </p>
             </div>
 
             <footer class="page-foot">Marketplace Reporting &middot; Late Order Warnings</footer>
@@ -1740,7 +1668,19 @@
 
                 <div id="ow-settings-warnings" hidden></div>
 
-                <div class="table-scroll is-full">
+                <div class="filter-bar">
+                    <div class="field" style="flex: 1 1 320px">
+                        <label for="ow-override-search">Search</label>
+                        <input type="search" id="ow-override-search" spellcheck="false"
+                               placeholder="Seller ID, name or e-mail" />
+                    </div>
+                    <label class="check" for="ow-override-pending">
+                        <input type="checkbox" id="ow-override-pending" />
+                        <span>Only sellers with no e-mail</span>
+                    </label>
+                </div>
+
+                <div class="table-scroll">
                     <table>
                         <thead>
                             <tr>
@@ -2040,7 +1980,19 @@
 
                 <div id="vw-settings-warnings" hidden></div>
 
-                <div class="table-scroll is-full">
+                <div class="filter-bar">
+                    <div class="field" style="flex: 1 1 320px">
+                        <label for="vw-override-search">Search</label>
+                        <input type="search" id="vw-override-search" spellcheck="false"
+                               placeholder="Seller ID, name or e-mail" />
+                    </div>
+                    <label class="check" for="vw-override-pending">
+                        <input type="checkbox" id="vw-override-pending" />
+                        <span>Only sellers with no e-mail</span>
+                    </label>
+                </div>
+
+                <div class="table-scroll">
                     <table>
                         <thead>
                             <tr>

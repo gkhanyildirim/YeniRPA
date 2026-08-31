@@ -76,16 +76,27 @@ public static class TitleRuleSuggester
         new("MHz", ["mhz"], 0.001),
     ];
 
-    static readonly MeasureUnit[][] Families =
+    /// <summary>
+    /// The unit families this module knows. Two readers: <see cref="DetectKnownUnits"/> matches a
+    /// column's values against them, and the rule editor offers them as ready-made choices so the
+    /// cell format does not have to be typed from memory.
+    ///
+    /// <para>Order and contents are load-bearing — <see cref="DetectKnownUnits"/> works by index, and
+    /// each family's declaration order is what keeps its canonical spellings and factors as written.
+    /// Adding a family at the end is safe; reordering one is not.</para>
+    /// </summary>
+    public static readonly IReadOnlyList<MeasureFamily> Families =
     [
-        DataUnits,
-        InchUnits,
-        ClockUnits,
-        [new("mAh", ["mah"])],
-        [new("W", ["w", "watt"], 1), new("kW", ["kw"], 1000)],
-        [new("kg", ["kg"], 1), new("g", ["g", "gr", "gram"], 0.001)],
-        [new("cm", ["cm"], 1), new("mm", ["mm"], 0.1), new("m", ["m", "metre"], 100)],
-        [new("L", ["l", "lt", "litre", "liter"], 1), new("ml", ["ml"], 0.001)],
+        new("Veri boyutu (GB / TB / MB)", DataUnits),
+        new("Ekran boyutu (inç)", InchUnits),
+        new("Frekans (GHz / MHz)", ClockUnits),
+        new("Batarya (mAh)", [new("mAh", ["mah"])]),
+        new("Güç (W / kW)", [new("W", ["w", "watt"], 1), new("kW", ["kw"], 1000)]),
+        new("Ağırlık (kg / g)", [new("kg", ["kg"], 1), new("g", ["g", "gr", "gram"], 0.001)]),
+        new("Uzunluk (cm / mm / m)",
+            [new("cm", ["cm"], 1), new("mm", ["mm"], 0.1), new("m", ["m", "metre"], 100)]),
+        new("Hacim (L / ml)",
+            [new("L", ["l", "lt", "litre", "liter"], 1), new("ml", ["ml"], 0.001)]),
     ];
 
     static readonly Regex NumberThenUnit = new(
@@ -409,8 +420,9 @@ public static class TitleRuleSuggester
             return null;
 
         // Family order is kept, so the factors and the canonical spellings stay as declared.
-        var observed = Families[bestIndex].Where(u => seen.Contains(u.Canonical)).ToArray();
-        return observed.Length > 0 ? observed : Families[bestIndex];
+        var family = Families[bestIndex].Units;
+        var observed = family.Where(u => seen.Contains(u.Canonical)).ToArray();
+        return observed.Length > 0 ? observed : [.. family];
     }
 
     static int FamilyIndexOf(string value, out MeasureUnit? unit)
@@ -423,9 +435,9 @@ public static class TitleRuleSuggester
 
         var token = match.Groups["u"].Value.Trim();
 
-        for (var f = 0; f < Families.Length; f++)
+        for (var f = 0; f < Families.Count; f++)
         {
-            foreach (var candidate in Families[f])
+            foreach (var candidate in Families[f].Units)
             {
                 if (string.Equals(FoldedTitle.Fold(candidate.Canonical), token, StringComparison.Ordinal))
                 {
@@ -551,15 +563,15 @@ public static class TitleRuleSuggester
     {
         foreach (var family in Families)
         {
-            foreach (var unit in family)
+            foreach (var unit in family.Units)
             {
                 if (string.Equals(FoldedTitle.Fold(unit.Canonical), foldedToken, StringComparison.Ordinal))
-                    return family;
+                    return [.. family.Units];
 
                 foreach (var spelling in unit.Spellings ?? [])
                 {
                     if (string.Equals(FoldedTitle.Fold(spelling), foldedToken, StringComparison.Ordinal))
-                        return family;
+                        return [.. family.Units];
                 }
             }
         }

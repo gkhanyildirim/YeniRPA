@@ -129,9 +129,19 @@ public static class TitleCleanBuilder
     static readonly Regex BareNumber = new(
         @"^\d+(?:[.,]\d+)?$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    /// <summary>Runs a rule set and summarises the result for the dashboard.</summary>
+    /// <summary>
+    /// Runs a rule set and summarises the result for the dashboard.
+    /// </summary>
+    /// <param name="categoryRules">The marketplace's RuleSet, when one has been uploaded. Null leaves
+    /// the result exactly as it was before that feature existed.</param>
+    /// <param name="fileCategory">Which category the uploaded file declares, for checking the RuleSet
+    /// against.</param>
     public static TitleCleanData BuildData(
-        CompiledRuleSet rules, List<List<string>> table, IReadOnlyList<string>? notes = null)
+        CompiledRuleSet rules,
+        List<List<string>> table,
+        IReadOnlyList<string>? notes = null,
+        IReadOnlyList<CategoryTypeRule>? categoryRules = null,
+        string? fileCategory = null)
     {
         var rows = Clean(rules, table, out var skippedFieldCodes);
 
@@ -179,7 +189,10 @@ public static class TitleCleanBuilder
             allNotes,
             // Computed over every row, not just the ones the preview tables show: a scenario's row
             // count is the reason to act on it, and a truncated count would understate it.
-            TitleFixSuggester.Suggest(rules, rows));
+            [
+                .. TitleFixSuggester.Suggest(rules, rows),
+                .. TitleFixSuggester.SuggestCategoryTypes(rules, rows, categoryRules, fileCategory),
+            ]);
     }
 
     /// <summary>
@@ -293,6 +306,11 @@ public static class TitleCleanBuilder
         return pool
             .Where(c => ReferenceEquals(c.Attr, attr))
             .Where(c => BoundaryOk(c, accepted, title))
+            // A scattered match nobody owns the gap of is not a sighting of the value at all, so it
+            // is no more evidence than it was a match. Without this the two words of a colour found
+            // either side of unclaimed text are reported as the title "saying" that colour — against
+            // a cell that says the same thing, which reads as a conflict between a value and itself.
+            .Where(c => GapsClaimed(c, accepted, title))
             .Where(c => !claimed.Any(v =>
                 !ReferenceEquals(v.Attr, attr) && v.Start < c.End && c.Start < v.End))
             .ToList();
@@ -342,8 +360,16 @@ public static class TitleCleanBuilder
         {
             var said = evidence.Select(c => c.Match.Canonical).Distinct(StringComparer.Ordinal).ToList();
 
+            // Nothing added to `errors`: a cell whose value the title never mentions is ordinary, not
+            // a problem, and this row keeps its place outside the review list. The reason is carried
+            // only so the fix suggester can check whether the title names this value under a spelling
+            // the rule does not know — see TitleAttributeReason.SpellingUnknown.
             if (said.Count == 0)
-                return new TitleAttributeResult(rule.Column, TitleAttributeStatus.NotInTitle, original, original);
+            {
+                return new TitleAttributeResult(
+                    rule.Column, TitleAttributeStatus.NotInTitle, original, original,
+                    Reason: TitleAttributeReason.SpellingUnknown);
+            }
 
             var joined = string.Join(", ", said);
             var message = $"{rule.Column}: başlıkta \"{joined}\", özellikte \"{original}\"";
@@ -408,8 +434,10 @@ public static class TitleCleanBuilder
         var differs = !string.Equals(original, canonical, StringComparison.Ordinal);
         var status = differs && rule.Correct ? TitleAttributeStatus.Corrected : TitleAttributeStatus.Ok;
 
+        // The pieces, not the reach: a scattered match spans text that belongs to another attribute,
+        // and cutting the whole stretch would take that with it.
         if (rule.Remove)
-            removals.AddRange(hits.Select(c => (c.Start, c.End)));
+            removals.AddRange(hits.SelectMany(c => c.Match.Spans));
 
         return new TitleAttributeResult(
             rule.Column,
@@ -484,13 +512,54 @@ public static class TitleCleanBuilder
         while (true)
         {
             var accepted = Greedy(live);
-            var invalid = accepted.Where(c => !BoundaryOk(c, accepted, title)).ToList();
+            var invalid = accepted
+                .Where(c => !BoundaryOk(c, accepted, title) || !GapsClaimed(c, accepted, title))
+                .ToList();
 
             if (invalid.Count == 0)
                 return accepted;
 
             live = live.Where(c => !invalid.Contains(c)).ToList();
         }
+    }
+
+    /// <summary>
+    /// For a value the title writes in pieces, whether the text between them belongs to somebody.
+    ///
+    /// <para>This is the whole of the safety case for scattered matching. "Rustik siyah" may answer
+    /// "Rustik 60 cm Siyah" because a width rule is removing the "60 cm" in between — the two words
+    /// really are one value with another value inserted into it. The same two words either side of
+    /// text no rule claims are just two words, and reading them as a colour would delete a word the
+    /// operator never accounted for.</para>
+    ///
+    /// <para>Only <em>removing</em> matches count. A rule that recognises the gap but is not allowed
+    /// to cut it leaves that text in the title, and a value cannot be said to span text that stays.</para>
+    /// </summary>
+    static bool GapsClaimed(Candidate candidate, List<Candidate> accepted, FoldedTitle title)
+    {
+        var parts = candidate.Match.Parts;
+        if (parts is null || parts.Count < 2)
+            return true;
+
+        for (var i = 1; i < parts.Count; i++)
+        {
+            for (var at = parts[i - 1].End; at < parts[i].Start; at++)
+            {
+                if (!char.IsLetterOrDigit(title.Original[at]))
+                    continue;
+
+                var covered = accepted.Any(o =>
+                    !ReferenceEquals(o, candidate) &&
+                    o.IsValueMatch &&
+                    o.Attr.Rule.Remove &&
+                    o.Match.Spans.Any(s => s.Start <= at && at < s.End));
+
+                if (!covered)
+                    return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -541,8 +610,17 @@ public static class TitleCleanBuilder
         return accepted;
     }
 
+    /// <summary>
+    /// Whether two matches want the same characters — compared piece by piece.
+    ///
+    /// <para>The outer reach of a scattered match deliberately covers text it does not claim: the
+    /// "60 cm" sitting inside "Rustik 60 cm Siyah" belongs to the width rule. Comparing outer reaches
+    /// would make those two candidates rivals, and the longer one would evict the other — leaving the
+    /// width in the title with nobody left to remove it.</para>
+    /// </summary>
     static bool Overlaps(List<Candidate> accepted, Candidate candidate) =>
-        accepted.Any(a => a.Start < candidate.End && candidate.Start < a.End);
+        accepted.Any(a => a.Match.Spans.Any(x =>
+            candidate.Match.Spans.Any(y => x.Start < y.End && y.Start < x.End)));
 
     /// <summary>
     /// A span may cut into a word only where another accepted span continues from it. "1TBSSD" is

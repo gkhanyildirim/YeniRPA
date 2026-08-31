@@ -37,6 +37,15 @@ public enum TitleAttributeKind
 /// "1TB". With no factor the unit must match exactly.</param>
 public sealed record MeasureUnit(string Canonical, IReadOnlyList<string> Spellings, double Factor = 0);
 
+/// <summary>
+/// A named group of units that measure the same thing — what the editor offers as one ready-made
+/// choice, and what the suggester recognises a column's values against.
+/// </summary>
+/// <param name="Label">What the operator picks from.</param>
+/// <param name="Units">Declaration order is load-bearing: the suggester keeps it so canonical
+/// spellings and factors stay as written here.</param>
+public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Units);
+
 /// <summary>One attribute column and what the cleaner may do with it.</summary>
 /// <param name="Column">Header text of the column in the uploaded file.</param>
 /// <param name="Remove">Whether a confirmed match is cut out of the title. This is the whole of the
@@ -50,12 +59,22 @@ public sealed record MeasureUnit(string Canonical, IReadOnlyList<string> Spellin
 /// <param name="FillFromTitle">Whether an empty cell may be filled from the title. Off by default:
 /// it writes in the opposite direction from everything else here, so it is enabled per attribute
 /// rather than assumed.</param>
+/// <param name="AllowSuffix">
+/// Whether a match may run to the end of a word carrying a Turkish inflection — the title's
+/// "Ankastre Ocaklar" answering a cell reading "Ankastre ocak". The whole word goes; no "lar" is
+/// left behind.
+///
+/// <para>Off by default and enabled per attribute, because it is only safe where the values are
+/// words. A column of model codes must never have it: "GLO 022SARS" ends in letters that a suffix
+/// rule has no business reading, and a wrong extension here deletes part of a model name.</para>
+/// </param>
 public sealed record TitleAttributeRule(
     string Column,
     TitleAttributeKind Kind = TitleAttributeKind.Text,
     bool Remove = true,
     bool Correct = true,
     bool FillFromTitle = false,
+    bool AllowSuffix = false,
     IReadOnlyList<MeasureUnit>? Units = null,
     IReadOnlyList<IReadOnlyList<string>>? Aliases = null)
 {
@@ -91,6 +110,49 @@ public sealed record TitleRuleFile(
     IReadOnlyList<TitleRuleSet> Sets);
 
 // ---------------------------------------------------------------------
+// The marketplace's own category rules
+// ---------------------------------------------------------------------
+//
+// The RuleSet workbook the marketplace publishes carries, among much else, one line per rule reading
+// "Ürün Tipi = A OR B OR C" against a category. Read that way it is a ready-made catalogue: for each
+// category, every product type it accepts and every spelling it accepts it under. That is the same
+// shape as a TitleAttributeRule's alias groups, which is what makes it usable here at all.
+
+/// <summary>
+/// One rule out of the RuleSet workbook: the product types it accepts, and the category they belong
+/// to.
+/// </summary>
+/// <param name="Category">The marketplace's own code, e.g. <c>HOBS</c>.</param>
+/// <param name="CategoryTr">What the operator sees on a product file, e.g. <c>OCAKLAR</c>. Falls
+/// back to <paramref name="Category"/> where the sheet has no Turkish label.</param>
+/// <param name="Types">Spellings as the sheet wrote them, in its order. The first is canonical —
+/// it is what a cell gets rewritten to once the group is adopted.</param>
+public sealed record CategoryTypeRule(
+    string Category,
+    string CategoryTr,
+    IReadOnlyList<string> Types);
+
+/// <summary>The file <c>CategoryRuleStore</c> owns: the RuleSet workbook, parsed once at upload.</summary>
+/// <param name="SourceName">The workbook this came out of. The marketplace versions it in the file
+/// name ("RuleSet 35 1.xlsx"), so it is the only record of which edition is loaded.</param>
+public sealed record CategoryRuleFile(
+    int Version,
+    string? UpdatedUtc,
+    string? SourceName,
+    IReadOnlyList<CategoryTypeRule> Rules)
+{
+    public IReadOnlyList<CategoryTypeRule> RuleList => Rules ?? [];
+}
+
+/// <summary>What the editor shows about the loaded RuleSet.</summary>
+public sealed record CategoryRuleStatus(
+    string? SourceName,
+    string? UpdatedUtc,
+    int Rules,
+    int Categories,
+    string Path);
+
+// ---------------------------------------------------------------------
 // The editor's shape
 // ---------------------------------------------------------------------
 //
@@ -110,8 +172,15 @@ public sealed record TitleAttributeForm(
     bool Remove = true,
     bool Correct = true,
     bool FillFromTitle = false,
+    bool AllowSuffix = false,
     string Units = "",
     string Aliases = "");
+
+/// <summary>One ready-made unit set the editor offers, on its way to the browser.</summary>
+/// <param name="Units">Already encoded into the cell format by <c>TitleRuleStore</c>. The browser
+/// writes this into the Birimler box verbatim — it never builds the string itself, for the reason
+/// on <see cref="TitleAttributeForm"/>.</param>
+public sealed record MeasureFamilyDto(string Label, string Units);
 
 public sealed record TitleRuleSetForm(
     string Name,
@@ -179,11 +248,16 @@ public enum TitleAttributeStatus
 }
 
 /// <summary>
-/// Why a row needs a human. <see cref="TitleAttributeStatus.Ambiguous"/> has three separate causes
-/// and they need different fixes, so the status alone is not enough to act on — and two of them are
-/// indistinguishable from the rest of the result, because both can leave
+/// What <see cref="TitleFixSuggester"/> may be able to do something about.
+///
+/// <para>Mostly this is why a row needs a human: <see cref="TitleAttributeStatus.Ambiguous"/> has
+/// three separate causes and they need different fixes, so the status alone is not enough to act on
+/// — and two of them are indistinguishable from the rest of the result, because both can leave
 /// <see cref="TitleAttributeResult.TitleSaid"/> equal to the cell. Recorded here rather than
-/// recovered by parsing the Turkish message, which would break the moment the wording changed.
+/// recovered by parsing the Turkish message, which would break the moment the wording changed.</para>
+///
+/// <para><see cref="SpellingUnknown"/> is the exception: it marks an opportunity rather than a
+/// problem, on a row that reported nothing wrong at all.</para>
 /// </summary>
 public enum TitleAttributeReason
 {
@@ -202,6 +276,17 @@ public enum TitleAttributeReason
     /// <summary>A text or catalogue cell holding nothing but a number, which has no identity to
     /// delete a title by.</summary>
     BareNumber,
+
+    /// <summary>
+    /// The cell's value is not in the title under any spelling the rule knows — "İndüksiyonlu ocak"
+    /// against a title reading "İndüksiyon Ocak".
+    ///
+    /// <para>Not an error, and not reported as one. A cell whose value the title never mentions is
+    /// ordinary, so this rides along on every <see cref="TitleAttributeStatus.NotInTitle"/> result
+    /// purely so <see cref="TitleFixSuggester"/> gets a look at it; whether there is anything worth
+    /// offering is decided there, not here.</para>
+    /// </summary>
+    SpellingUnknown,
 }
 
 /// <param name="TitleSaid">What the title carried, when that differs from the cell — the other half
@@ -243,6 +328,10 @@ public enum TitleFixKind
 
     /// <summary>A bare number in the cell: treat the title's full phrase as that value's spelling.</summary>
     AdoptPhrase,
+
+    /// <summary>The title names a product type the marketplace's own RuleSet defines: take that
+    /// rule's whole group — canonical plus every spelling it accepts — into the column's catalogue.</summary>
+    AdoptCategoryType,
 }
 
 /// <summary>
@@ -261,6 +350,10 @@ public enum TitleFixKind
 /// protected phrase instead, which may need choosing.</param>
 /// <param name="Warning">Set when applying this has an effect beyond the reviewed rows — changing a
 /// column's type, say.</param>
+/// <param name="Preselected">Whether the card arrives ticked. Off for a proposal the operator should
+/// look at before taking — a product type the RuleSet files under a <em>different</em> category from
+/// the one the uploaded file declares. Distinct from <paramref name="NeedsColumnChoice"/>, which also
+/// leaves a card unticked but does so because it is incomplete rather than because it is doubtful.</param>
 /// <param name="CellValue">The attribute value the scenario was about — the canonical spelling a
 /// merged group keeps at its head. Carried as a field rather than recovered from
 /// <paramref name="Problem"/>, which is display prose and would tie the rule edit to its wording.</param>
@@ -277,7 +370,8 @@ public sealed record TitleFix(
     string SampleBefore,
     string SampleAfter,
     bool NeedsColumnChoice = false,
-    string? Warning = null);
+    string? Warning = null,
+    bool Preselected = true);
 
 /// <summary>How one attribute fared across the whole file — the table the team tunes rules against.</summary>
 public sealed record TitleAttributeSummary(

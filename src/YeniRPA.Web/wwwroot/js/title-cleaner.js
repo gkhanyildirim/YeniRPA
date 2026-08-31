@@ -65,6 +65,14 @@
   let HINTS = {};
 
   /**
+   * The ready-made unit sets, each already encoded by the server.
+   *
+   * Empty until the fetch lands, and it may never land — the list is a convenience and the Birimler
+   * box works without it, so a failure here leaves the picker empty rather than stopping the editor.
+   */
+  let UNIT_PRESETS = [];
+
+  /**
    * Whether the editor holds anything the server has not been told about.
    *
    * Importing a workbook and suggesting from a file both fill the table without saving — the same
@@ -141,8 +149,52 @@
     };
 
     lock(row.querySelector('.tc-units'), kind === 'Measure', 'örn: GB=gb@1 ; TB=tb@1024');
+    lock(row.querySelector('.tc-unit-preset'), kind === 'Measure');
     lock(row.querySelector('.tc-aliases'), kind === 'Alias', 'örn: W11P|Windows 11 Pro');
     lock(row.querySelector('.tc-correct'), kind !== 'Text');
+
+    // A measured value is matched as a number and its unit, so a word ending has nothing to say
+    // about it.
+    lock(row.querySelector('.tc-suffix'), kind !== 'Measure');
+  }
+
+  /**
+   * Fills one row's ready-made unit picker.
+   *
+   * The options are written here rather than into the row template because the presets arrive from
+   * the server asynchronously and a rule set can be rendered before they land. Every path that puts
+   * a row on screen calls this, and so does the fetch when it resolves.
+   */
+  function fillUnitPresets(row) {
+    const select = row.querySelector('.tc-unit-preset');
+
+    // The value IS the encoded cell text — the browser picks one, it never builds one.
+    select.innerHTML = '<option value="">— Hazır set —</option>' +
+      UNIT_PRESETS.map(p => '<option value="' + RPA.escapeHtml(p.units) + '">' +
+        RPA.escapeHtml(p.label) + '</option>').join('');
+
+    syncUnitPreset(row);
+  }
+
+  /**
+   * Points the picker at whatever the Birimler box currently holds.
+   *
+   * Matched on the exact string, so trimming a family down to the one unit a column really uses —
+   * which is what stops a cache column reporting a false conflict against every "8GB" in a title —
+   * drops the picker back to its blank option. That is the honest reading: the cell is no longer a
+   * ready-made set.
+   */
+  function syncUnitPreset(row) {
+    const select = row.querySelector('.tc-unit-preset');
+    const units = row.querySelector('.tc-units').value.trim();
+
+    select.value = UNIT_PRESETS.some(p => p.units === units) ? units : '';
+  }
+
+  /** Puts a row on screen: the locks its type implies, and its unit picker. */
+  function dressRuleRow(row) {
+    applyKindLock(row);
+    fillUnitPresets(row);
   }
 
   function ruleRowHtml(rule) {
@@ -165,8 +217,10 @@
       '<td><select class="tc-kind" aria-label="Tip">' + options + '</select></td>' +
       checkbox('tc-remove', r.remove !== false, 'Çıkar') +
       checkbox('tc-correct', r.correct !== false, 'Düzelt') +
+      checkbox('tc-suffix', r.allowSuffix === true, 'Ek') +
       matchCell(r.column) +
-      '<td><input type="text" class="tc-units" value="' + RPA.escapeHtml(r.units || '') +
+      '<td><select class="tc-unit-preset" aria-label="Hazır birim seti"></select>' +
+        '<input type="text" class="tc-units" value="' + RPA.escapeHtml(r.units || '') +
         '" aria-label="Birimler" /></td>' +
       '<td><input type="text" class="tc-aliases" value="' + RPA.escapeHtml(r.aliases || '') +
         '" aria-label="Değerler" /></td>' +
@@ -184,7 +238,7 @@
     el('tc-decimal').value = s.decimalSeparator === ',' ? ',' : '.';
     el('tc-rules-body').innerHTML = (s.attributes || []).map(ruleRowHtml).join('');
 
-    Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(applyKindLock);
+    Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(dressRuleRow);
     DIRTY = dirty === true;
     updateRuleCount();
   }
@@ -197,6 +251,7 @@
       kind: row.querySelector('.tc-kind').value,
       remove: row.querySelector('.tc-remove').checked,
       correct: row.querySelector('.tc-correct').checked,
+      allowSuffix: row.querySelector('.tc-suffix').checked,
       fillFromTitle: row.querySelector('.tc-fill').value === 'true',
       units: row.querySelector('.tc-units').value.trim(),
       aliases: row.querySelector('.tc-aliases').value.trim()
@@ -302,6 +357,71 @@
     }
   }
 
+  /**
+   * Reads the ready-made unit sets and refills every picker on screen.
+   *
+   * The failure is swallowed on purpose. This list only saves typing — the Birimler box takes the
+   * same text either way — so a request that fails must not put an error banner over a rule editor
+   * that is working perfectly well.
+   */
+  async function loadUnitPresets() {
+    try {
+      UNIT_PRESETS = await sendJsonMethod('GET', '/api/title-cleaner/unit-presets') || [];
+    } catch (ignored) {
+      return;
+    }
+
+    Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(fillUnitPresets);
+  }
+
+  // ---------------------------------------------------------------------------
+  // The marketplace's RuleSet
+  // ---------------------------------------------------------------------------
+
+  function renderRuleSetStatus(status) {
+    const box = el('tc-ruleset-status');
+
+    if (!status || !status.rules) {
+      box.textContent = 'yüklenmedi — kategori doğrulaması yapılmıyor';
+      return;
+    }
+
+    box.textContent = (status.sourceName || 'yüklendi') + ' · ' +
+      RPA.fmtInt(status.rules) + ' kural · ' +
+      RPA.fmtInt(status.categories) + ' kategori' +
+      (status.updatedUtc ? ' · ' + status.updatedUtc : '');
+  }
+
+  /** The status only decorates the editor, so a failure here says so quietly and changes nothing. */
+  async function loadRuleSetStatus() {
+    try {
+      renderRuleSetStatus(await sendJsonMethod('GET', '/api/title-cleaner/category-rules'));
+    } catch (ignored) {
+      renderRuleSetStatus(null);
+    }
+  }
+
+  async function importCategoryRules(file) {
+    const button = el('tc-ruleset-import');
+    RPA.clearError('tc-rule-alert');
+    RPA.setBusy(button, true, 'Okunuyor…');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+
+      const status = await RPA.postJson('/api/title-cleaner/category-rules', form);
+      renderRuleSetStatus(status);
+      renderNotes([
+        'RuleSet alındı: ' + RPA.fmtInt(status.rules) + ' kural, ' +
+        RPA.fmtInt(status.categories) + ' kategori. Önizlemeyi tekrar alın.'
+      ]);
+    } catch (err) {
+      RPA.showError('tc-rule-alert', err.message);
+    } finally {
+      RPA.setBusy(button, false);
+    }
+  }
+
   async function loadSets(selected) {
     try {
       const file = await sendJsonMethod('GET', '/api/title-cleaner/rules');
@@ -372,7 +492,10 @@
 
     return '<div class="tc-fix" data-id="' + RPA.escapeHtml(fix.id) + '">' +
       '<label class="tc-fix-pick">' +
-        '<input type="checkbox" class="tc-fix-on"' + (fix.needsColumnChoice ? '' : ' checked') + ' />' +
+        // Unticked when the card is incomplete (a column still to choose) or doubtful (the RuleSet
+        // files this type under a different category than the file declares).
+        '<input type="checkbox" class="tc-fix-on"' +
+          (fix.needsColumnChoice || fix.preselected === false ? '' : ' checked') + ' />' +
         '<span class="badge amber">' + RPA.fmtInt(fix.rows) + ' satır</span>' +
       '</label>' +
       '<div class="tc-fix-body">' +
@@ -700,6 +823,8 @@
     RPA.initDropzone('tc-drop', 'tc-file');
     renderRuleSet(null);
     loadSets('');
+    loadUnitPresets();
+    loadRuleSetStatus();
 
     el('tc-suggest').addEventListener('click', suggest);
     el('tc-preview').addEventListener('click', preview);
@@ -733,7 +858,7 @@
     el('tc-rule-add').addEventListener('click', function () {
       const body = el('tc-rules-body');
       body.insertAdjacentHTML('beforeend', ruleRowHtml(null));
-      applyKindLock(body.lastElementChild);
+      dressRuleRow(body.lastElementChild);
       body.lastElementChild.querySelector('.tc-col').focus();
       markDirty();
     });
@@ -744,12 +869,23 @@
       markDirty();
     });
 
-    el('tc-rules-body').addEventListener('input', markDirty);
+    el('tc-rules-body').addEventListener('input', function (event) {
+      // Typing over a ready-made set means it is no longer that set, so the picker lets go of it.
+      if (event.target.classList.contains('tc-units'))
+        syncUnitPreset(event.target.closest('tr'));
+
+      markDirty();
+    });
 
     el('tc-rules-body').addEventListener('change', function (event) {
       // Changing the type changes which box that row uses, so the locks follow immediately.
       if (event.target.classList.contains('tc-kind'))
         applyKindLock(event.target.closest('tr'));
+
+      // The picker writes the server's own encoding into the visible box rather than replacing it.
+      // The box is where the operator trims the family down to the units their column really uses.
+      if (event.target.classList.contains('tc-unit-preset') && event.target.value)
+        event.target.closest('tr').querySelector('.tc-units').value = event.target.value;
 
       markDirty();
     });
@@ -762,6 +898,12 @@
     el('tc-rule-import').addEventListener('click', () => el('tc-rule-file').click());
     el('tc-rule-file').addEventListener('change', function () {
       if (this.files[0]) importRules(this.files[0]);
+      this.value = '';
+    });
+
+    el('tc-ruleset-import').addEventListener('click', () => el('tc-ruleset-file').click());
+    el('tc-ruleset-file').addEventListener('change', function () {
+      if (this.files[0]) importCategoryRules(this.files[0]);
       this.value = '';
     });
 

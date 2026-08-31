@@ -22,7 +22,7 @@ namespace YeniRPA.Web.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/title-cleaner")]
-public sealed class TitleCleanerController(TitleRuleStore store) : ControllerBase
+public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleStore categories) : ControllerBase
 {
     // [FromForm] is not optional on the string parameters below. Under [ApiController] a simple type
     // binds from the route or query string by default — only IFormFile is taken from the multipart
@@ -53,6 +53,48 @@ public sealed class TitleCleanerController(TitleRuleStore store) : ControllerBas
 
     [HttpGet("rules")]
     public IActionResult GetRules() => Ok(TitleRuleStore.ToForm(store.Load()));
+
+    // ---------------------------------------------------------------------
+    // The marketplace's RuleSet
+    // ---------------------------------------------------------------------
+
+    [HttpGet("category-rules")]
+    public IActionResult GetCategoryRules() => Ok(categories.Status());
+
+    /// <summary>
+    /// Takes the marketplace's RuleSet workbook and keeps what this module can act on: which product
+    /// types each category accepts, and under which spellings.
+    ///
+    /// <para>Parsed here rather than on every preview — the workbook only changes when the
+    /// marketplace publishes a new edition, and the file name is the only place its version is
+    /// recorded, so it is kept.</para>
+    /// </summary>
+    [HttpPost("category-rules")]
+    public async Task<IActionResult> PutCategoryRules(IFormFile? file, CancellationToken cancellationToken)
+    {
+        if (file is not { Length: > 0 })
+            return BadRequest(new { error = "Please upload the RuleSet workbook (.xlsx)." });
+
+        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        var rules = CategoryRuleStore.ReadWorkbook(stream, file.FileName);
+
+        categories.Save(new CategoryRuleFile(1, null, file.FileName, rules));
+        return Ok(categories.Status());
+    }
+
+    /// <summary>
+    /// The unit families the rule editor offers as ready-made choices, each already encoded in the
+    /// cell format.
+    ///
+    /// <para>Encoded here rather than in the browser for the reason written out on
+    /// <see cref="TitleAttributeForm"/>: one implementation of the format, not two. The page writes
+    /// what this returns straight into the Birimler box.</para>
+    /// </summary>
+    [HttpGet("unit-presets")]
+    public IActionResult GetUnitPresets() => Ok(
+        TitleRuleSuggester.Families
+            .Select(f => new MeasureFamilyDto(f.Label, TitleRuleStore.EncodeUnits(f.Units)))
+            .ToList());
 
     [HttpPut("rules")]
     public IActionResult PutRules([FromBody] JsonElement body)
@@ -150,7 +192,8 @@ public sealed class TitleCleanerController(TitleRuleStore store) : ControllerBas
         var rules = Resolve(ruleSet, ruleSetName);
         var table = await ReadTableAsync(file, cancellationToken);
 
-        return Ok(TitleCleanBuilder.BuildData(rules, table));
+        return Ok(TitleCleanBuilder.BuildData(
+            rules, table, null, categories.Load().RuleList, CategoryRuleStore.FileCategory(table)));
     }
 
     /// <summary>
@@ -186,7 +229,14 @@ public sealed class TitleCleanerController(TitleRuleStore store) : ControllerBas
         var rules = Resolve(ruleSet, ruleSetName);
         var table = await ReadTableAsync(file, cancellationToken);
 
-        var suggested = TitleFixSuggester.Suggest(rules, TitleCleanBuilder.Clean(rules, table));
+        // Recomputed with the same inputs the preview had, RuleSet included. A card is matched by an
+        // id derived from its scenario, so leaving the category rules out here would simply lose
+        // every category-type card the operator had just ticked.
+        var cleaned = TitleCleanBuilder.Clean(rules, table);
+        var suggested = TitleFixSuggester.Suggest(rules, cleaned)
+            .Concat(TitleFixSuggester.SuggestCategoryTypes(
+                rules, cleaned, categories.Load().RuleList, CategoryRuleStore.FileCategory(table)))
+            .ToList();
 
         // Where the operator had to choose the owning column, or corrected the proposed phrase, that
         // is the one thing the browser legitimately supplies — as a value against a known id, never
