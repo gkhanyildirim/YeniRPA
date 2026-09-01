@@ -326,6 +326,279 @@ public class TitleCleanerTests
         Assert.Equal("16 GB", Attr(row, "RAM").Value);
     }
 
+    /// <summary>
+    /// A real export writes "512SSD": the capacity with no unit at all, glued onto the disk type. The
+    /// number is readable as the cell's value only because the confirmed disk type continues straight
+    /// from it — which is the same evidence "1TBSSD" always relied on, minus the unit.
+    /// </summary>
+    [Fact]
+    public void ABareMeasureIsAcceptedOnlyWhenGluedToAnAcceptedValue()
+    {
+        var row = Run(
+            LaptopRules(),
+            "Lenovo ThinkPad E16 21ST0058TX003 512SSD 16\" WUXGA",
+            ("Marka", "Lenovo"),
+            ("Sabit Disk Kapasitesi", "512 GB"),
+            ("Sabit Disk Tipi", "SSD"),
+            ("Ekran Boyutu", "16\""));
+
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "Sabit Disk Kapasitesi").Status);
+        Assert.Equal("ThinkPad E16 21ST0058TX003 WUXGA", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// The mirror case, and the one that makes the rule worth having. The screen really is 16 inches
+    /// and the title really does carry a "16" — but it is the model name's, it has nothing glued to
+    /// it, and taking it would write "Pro Max" back to the marketplace.
+    /// </summary>
+    [Fact]
+    public void ABareMeasureStandingAloneIsStillRefused()
+    {
+        var row = Run(
+            LaptopRules(),
+            "Dell Pro Max 16 MC16250_3 Notebook",
+            ("Marka", "Dell"),
+            ("Ekran Boyutu", "16\""));
+
+        Assert.Equal("Pro Max 16 MC16250_3 Notebook", row.CleanTitle);
+    }
+
+    /// <summary>A bare number inside a model code has a letter on its left that nothing accounts for,
+    /// and is refused there too — on a row whose RAM really is 16 GB.</summary>
+    [Fact]
+    public void ABareMeasureInsideAModelCodeIsRefused()
+    {
+        var row = Run(
+            LaptopRules(),
+            "Dell Pro Max MC16250_3 Notebook",
+            ("Marka", "Dell"),
+            ("RAM", "16GB"));
+
+        Assert.Equal("Pro Max MC16250_3 Notebook", row.CleanTitle);
+    }
+
+    // -----------------------------------------------------------------
+    // Values the title glues together
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// The marketplace writes "Ryzen™ 5" and "Core™ 5" in its processor column; the seller's titles
+    /// write "Ryzen5 220" and "Core5 120U". Nothing separates the two but a space one side chose not
+    /// to type, and a letter/digit change is a word boundary whether it is written or not.
+    /// </summary>
+    [Theory]
+    [InlineData("Lenovo ThinkPad E16 Ryzen5 220 Notebook", "Ryzen™ 5", "ThinkPad E16 220 Notebook")]
+    [InlineData("Asus Vivobook 15 Core5 120U Notebook", "Core™ 5", "Vivobook 15 120U Notebook")]
+    [InlineData("Lenovo ThinkPad T16 Ultra7 255U Notebook", "Ultra 7", "ThinkPad T16 255U Notebook")]
+    public void AGluedSpellingMatchesAtALetterDigitBoundary(string title, string cell, string expected)
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Marka"), new TitleAttributeRule("İşlemci")]);
+
+        var brand = title.Split(' ')[0];
+        var row = Run(rules, title, ("Marka", brand), ("İşlemci", cell));
+
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "İşlemci").Status);
+        Assert.Equal(expected, row.CleanTitle);
+    }
+
+    /// <summary>
+    /// Two letters running together are two words the writer joined, not one word they split — so the
+    /// tolerance stops at the letter/digit change and "Pro Max" never answers "ProMax". Without this
+    /// the whole thing would be a prefix search wearing a different name.
+    /// </summary>
+    [Fact]
+    public void AGluedSpellingIsRefusedBetweenTwoLetters()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık", [new TitleAttributeRule("Seri")]);
+
+        var row = Run(rules, "Dell ProMax 16 Notebook", ("Seri", "Pro Max"));
+
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Seri").Status);
+        Assert.Equal("Dell ProMax 16 Notebook", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// The same tolerance has to reach the partial path, or a cell reading "Intel Core Ultra 5" finds
+    /// nothing in a title that plainly says "Ultra5" — the words are split differently on the two
+    /// sides, which is exactly what the partial search is for.
+    /// </summary>
+    [Fact]
+    public void APartialValueMatchesAGluedTitleSpelling()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("İşlemci", AllowPartial: true)]);
+
+        var row = Run(rules, "Acer Aspire Lite Ultra5 125H Notebook", ("İşlemci", "Intel Core Ultra 5"));
+
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "İşlemci").Status);
+        Assert.Equal("Acer Aspire Lite 125H Notebook", row.CleanTitle);
+    }
+
+    // -----------------------------------------------------------------
+    // Reference lists
+    // -----------------------------------------------------------------
+
+    static readonly TitleReferenceList Processors = new("İşlemciler", "test",
+    [
+        "Intel Core Ultra 5 125H",
+        "Intel Core Ultra 5 125HL",
+        "AMD Ryzen 5 220",
+        "AMD Ryzen 5 PRO 220",
+        "Intel Core i5-13420H",
+    ]);
+
+    static TitleCleanRow RunWithCatalogue(
+        TitleRuleSet set, string title, params (string Column, string Value)[] cells)
+    {
+        var map = cells.ToDictionary(c => c.Column, c => c.Value, StringComparer.OrdinalIgnoreCase);
+
+        return TitleCleanBuilder.CleanRow(
+            CompiledRuleSet.Compile(set, [Processors]),
+            2,
+            title,
+            name => map.GetValueOrDefault(name, ""));
+    }
+
+    static TitleRuleSet CpuRules() => new("Test", "Başlık",
+    [
+        new TitleAttributeRule("Marka"),
+        new TitleAttributeRule("İşlemci", AllowPartial: true, ReferenceList: "İşlemciler"),
+    ]);
+
+    /// <summary>
+    /// The case the whole feature exists for. The cell says "Intel Core Ultra 5" and the title says
+    /// "Ultra5 125H"; no cell in the file carries the model code, so nothing but a catalogue can say
+    /// that those five characters belong to the processor.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryRemovesTheModelCodeNoCellCarries()
+    {
+        var row = RunWithCatalogue(
+            CpuRules(),
+            "Acer Aspire Lite Ultra5 125H Notebook",
+            ("Marka", "Acer"),
+            ("İşlemci", "Intel Core Ultra 5"));
+
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "İşlemci").Status);
+        Assert.Equal("Aspire Lite Notebook", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// Removal stays a whitelist. The catalogue holds five thousand processors; the only ones it may
+    /// look for are the ones this row's own cell is part of, so a title naming a processor the cell
+    /// disagrees with keeps it.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryIsOnlyUsedWhenTheCellAgreesWithIt()
+    {
+        var row = RunWithCatalogue(
+            CpuRules(),
+            "Acer Aspire Lite Ultra5 125H Notebook",
+            ("Marka", "Acer"),
+            ("İşlemci", "AMD Ryzen 5"));
+
+        Assert.Equal("Aspire Lite Ultra5 125H Notebook", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// "125HL" is a different processor from "125H", and both are consistent with the same cell. The
+    /// entry is only the one the title actually writes — checked on the words it adds, before any
+    /// search is run.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryTheTitleDoesNotWriteIsNotUsed()
+    {
+        var row = RunWithCatalogue(
+            CpuRules(),
+            "Acer Aspire Lite Ultra5 125HX Notebook",
+            ("Marka", "Acer"),
+            ("İşlemci", "Intel Core Ultra 5"));
+
+        Assert.Contains("125HX", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The regression this cost a whole file. "AMD Ryzen 5 PRO 220" is consistent with a cell reading
+    /// "Ryzen 5" and has more words than "AMD Ryzen 5 220", so it is tried first — and because "PRO"
+    /// is nowhere in the title, a partial search falls back to the one word both sides share: the bare
+    /// "220". Every word an entry adds has to be a word the title writes, or the entry is not it.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryWhoseExtraWordsAreMissingIsNotUsed()
+    {
+        var row = RunWithCatalogue(
+            CpuRules(),
+            "Lenovo ThinkPad E16 Ryzen5 220 Notebook",
+            ("Marka", "Lenovo"),
+            ("İşlemci", "Ryzen 5"));
+
+        Assert.Equal("ThinkPad E16 Notebook", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// Intel's own catalogue joins the family and the model code with a hyphen — "Intel Core
+    /// i5-13420H" — against a cell that reads "Intel Core i5". The cell's last word may therefore end
+    /// part-way into the entry's, but only on a boundary.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryMayContinueInsideTheCellsLastWord()
+    {
+        var row = RunWithCatalogue(
+            CpuRules(),
+            "Acer Nitro V15 i5-13420H Notebook",
+            ("Marka", "Acer"),
+            ("İşlemci", "Intel Core i5"));
+
+        Assert.Equal("Nitro V15 Notebook", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// The limit on that. "Ryzen 5" must not reach into "Ryzen 50" — digit meeting digit is not a
+    /// boundary, and treating it as one would make every catalogue entry a prefix search.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryDoesNotContinueMidNumber()
+    {
+        var list = new TitleReferenceList("İşlemciler", "test", ["AMD Ryzen 50 900X"]);
+
+        var row = TitleCleanBuilder.CleanRow(
+            CompiledRuleSet.Compile(CpuRules(), [list]),
+            2,
+            "Lenovo ThinkPad Ryzen5 900X Notebook",
+            name => name == "İşlemci" ? "Ryzen 5" : name == "Marka" ? "Lenovo" : "");
+
+        Assert.Contains("900X", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The catalogue says what the title says, never what the cell ought to say. Rewriting an
+    /// attribute column out of a reference file is a far larger claim than removing text from a
+    /// title, and nothing here makes it.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryNeverRewritesTheCell()
+    {
+        var row = RunWithCatalogue(
+            CpuRules(),
+            "Acer Aspire Lite Ultra5 125H Notebook",
+            ("Marka", "Acer"),
+            ("İşlemci", "Intel Core Ultra 5"));
+
+        Assert.Equal("Intel Core Ultra 5", Attr(row, "İşlemci").Value);
+    }
+
+    /// <summary>A rule naming a list nobody loaded is refused while the operator is looking at it,
+    /// rather than running on and leaving every title carrying what they asked to have removed.</summary>
+    [Fact]
+    public void ARuleNamingAnUnloadedReferenceListIsRefused()
+    {
+        var error = Assert.Throws<InvalidOperationException>(
+            () => CompiledRuleSet.Compile(CpuRules()));
+
+        Assert.Contains("İşlemciler", error.Message, StringComparison.Ordinal);
+    }
+
     // -----------------------------------------------------------------
     // The marketplace's field-code row
     // -----------------------------------------------------------------
@@ -876,6 +1149,190 @@ public class TitleCleanerTests
         var row = Run(set, "GL General GLO 022SARS Rustik", ("Seri", "GLO 022"));
 
         Assert.Contains("022SARS", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
+    // Part of a value standing for the whole of it
+    // -----------------------------------------------------------------
+
+    static TitleRuleSet Brand(bool allowPartial, params string[] group) => new("Test", "Başlık",
+        [new TitleAttributeRule("Marka", TitleAttributeKind.Alias, AllowPartial: allowPartial,
+            Aliases: [group])]);
+
+    /// <summary>The real case: the catalogue carries the legal name, the title carries the one people
+    /// use.</summary>
+    [Fact]
+    public void PartOfAValueAnswersForItWhenTheRestIsNowhereInTheTitle()
+    {
+        var row = Run(
+            Brand(allowPartial: true, "CETINTAS EVII"),
+            "Çetintaş 848 CT SLIM EI Siyah Cam Set Üstü Ocak",
+            ("Marka", "CETINTAS EVII"));
+
+        Assert.Equal("848 CT SLIM EI Siyah Cam Set Üstü Ocak", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "Marka").Status);
+    }
+
+    /// <summary>The same shape on a material column, where the title names the substance and the cell
+    /// qualifies it.</summary>
+    [Fact]
+    public void APartialMatchWorksWhereverTheCellSaysMoreThanTheTitle()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Malzeme", TitleAttributeKind.Alias, AllowPartial: true,
+                Aliases: [["Temperli Cam"]])]);
+
+        var row = Run(set, "Acme 205CS Siyah Cam Ankastre Ocak", ("Malzeme", "Temperli Cam"));
+
+        Assert.Equal("Acme 205CS Siyah Ankastre Ocak", row.CleanTitle);
+    }
+
+    /// <summary>Punctuation must not make a word look absent: "(vitroseramik)" is that word in
+    /// brackets, and the title genuinely does not carry it.</summary>
+    [Fact]
+    public void ABracketedWordIsComparedAsTheWordItIs()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Yüzey", TitleAttributeKind.Alias, AllowPartial: true,
+                Aliases: [["Elektrikli (vitroseramik)"]])]);
+
+        var row = Run(set, "Acme CSA VE 222 2 Gözlü Elektrikli Ankastre", ("Yüzey", "Elektrikli (vitroseramik)"));
+
+        Assert.Equal("Acme CSA VE 222 2 Gözlü Ankastre", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// The condition that makes this safe. The title says "Ocak", so the word the run leaves out is
+    /// present — cutting "Ankastre" alone would take half a value out of a title that carries all of
+    /// it, just not together.
+    /// </summary>
+    [Fact]
+    public void PartOfAValueIsRefusedWhenTheRestIsInTheTitleAfterAll()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias, AllowPartial: true,
+                Aliases: [["Ankastre Ocak"]])]);
+
+        var row = Run(set, "Acme Ankastre Cam Ocak Seti", ("Ürün Tipi", "Ankastre Ocak"));
+
+        Assert.Equal("Acme Ankastre Cam Ocak Seti", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Ürün Tipi").Status);
+    }
+
+    /// <summary>
+    /// Off by default, and this is the case that says why. A catalogue holding "Windows 11 Pro" must
+    /// not read the word "Pro" in a laptop's model name as an operating system.
+    /// </summary>
+    [Fact]
+    public void WithoutThatPermissionAWordOfAValueMeansNothingOnItsOwn()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
+                Aliases: [["W11P", "Windows 11 Pro"]])]);
+
+        var row = Run(set, "Dell Pro Max 16 MC16250_3", ("İşletim Sistemi", "W11P"));
+
+        Assert.Equal("Dell Pro Max 16 MC16250_3", row.CleanTitle);
+    }
+
+    /// <summary>A word too short to carry an identity cannot stand for a value by itself.</summary>
+    [Fact]
+    public void ATwoLetterWordCannotStandForAValue()
+    {
+        var row = Run(
+            Brand(allowPartial: true, "EI Teknoloji"),
+            "Acme 848 CT SLIM EI Siyah",
+            ("Marka", "EI Teknoloji"));
+
+        Assert.Equal("Acme 848 CT SLIM EI Siyah", row.CleanTitle);
+    }
+
+    /// <summary>A single-word value either is in the title or is not; there is no part of it.</summary>
+    [Fact]
+    public void ASingleWordValueIsNeverMatchedInPart()
+    {
+        var row = Run(Brand(allowPartial: true, "Çetintaş"), "Acme Çetin Siyah", ("Marka", "Çetintaş"));
+
+        Assert.Equal("Acme Çetin Siyah", row.CleanTitle);
+    }
+
+    /// <summary>Where one spelling is written out in full, the others are not taken apart looking for
+    /// a second opinion.</summary>
+    [Fact]
+    public void AFullMatchOnOneSpellingStopsThePartialSearchEntirely()
+    {
+        var row = Run(
+            Brand(allowPartial: true, "Çetintaş", "CETINTAS EVII"),
+            "Çetintaş Evii 848 CT SLIM",
+            ("Marka", "Çetintaş"));
+
+        // "Çetintaş Evii" is the longer spelling and is present in full, so it goes whole.
+        Assert.Equal("848 CT SLIM", row.CleanTitle);
+    }
+
+    // -----------------------------------------------------------------
+    // A title that rounds
+    // -----------------------------------------------------------------
+
+    static readonly MeasureUnit CmR = new("cm", ["cm"], 1);
+    static readonly MeasureUnit MmR = new("mm", ["mm"], 0.1);
+
+    /// <summary>
+    /// 745 mm of width is written "75 cm" in the title. Refusing that is a false conflict — and an
+    /// expensive one, because the span then belongs to nobody.
+    /// </summary>
+    [Fact]
+    public void ATitleMayWriteAMeasurementLessPreciselyThanTheCell()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Genişlik", TitleAttributeKind.Measure, Units: [CmR, MmR])]);
+
+        var row = Run(set, "Hoover HVG7PB/TK 5 Gözlü 75 cm Döküm", ("Genişlik", "745 mm"));
+
+        Assert.Equal("Hoover HVG7PB/TK 5 Gözlü Döküm", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "Genişlik").Status);
+
+        // The cell is the precise one. Rewriting it as the title's "75 cm" would delete a figure.
+        Assert.Equal("745 mm", Attr(row, "Genişlik").Value);
+    }
+
+    /// <summary>Less precise, never differently precise. The title wrote a decimal, and it is a
+    /// different one.</summary>
+    [Fact]
+    public void ATitleThatWritesADifferentDecimalIsStillAConflict()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Ekran", TitleAttributeKind.Measure,
+                Units: [new MeasureUnit("cm", ["cm"], 1)])]);
+
+        var row = Run(set, "Acme Notebook 15,7 cm Siyah", ("Ekran", "15,6 cm"));
+
+        Assert.Equal(TitleAttributeStatus.Conflict, Attr(row, "Ekran").Status);
+    }
+
+    /// <summary>
+    /// The whole of row 8. One unmatched width made three columns disagree about the same "75 cm";
+    /// once the width owns it, the other two fall silent.
+    /// </summary>
+    [Fact]
+    public void OnceOneColumnOwnsTheMeasurementTheOthersStopDisagreeingAboutIt()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("Genişlik", TitleAttributeKind.Measure, Units: [CmR, MmR]),
+            new TitleAttributeRule("Derinlik", TitleAttributeKind.Measure, Units: [CmR, MmR]),
+            new TitleAttributeRule("Yükseklik", TitleAttributeKind.Measure, Units: [CmR, MmR]),
+        ]);
+
+        var row = Run(
+            set,
+            "Hoover HVG7PB/TK 5 Gözlü 75 cm Döküm Izgara Siyah",
+            ("Genişlik", "745 mm"), ("Derinlik", "510 mm"), ("Yükseklik", "45 mm"));
+
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "Genişlik").Status);
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Derinlik").Status);
+        Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Yükseklik").Status);
+        Assert.False(row.HasConflict);
     }
 
     static TitleCleanRow Run(TitleRuleSet set, string title, params (string Column, string Value)[] cells)

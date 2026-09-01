@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using YeniRPA.Web.Models;
 
@@ -125,7 +125,7 @@ public static class TitleFixSuggester
         if (rule.Kind == TitleAttributeKind.Measure)
             return null;
 
-        var phrase = PhraseSharingAWord(rules, scenario);
+        var phrase = PhraseSharingAWord(rules, scenario) ?? MisspeltWord(scenario);
         if (phrase is null)
             return null;
 
@@ -311,6 +311,129 @@ public static class TitleFixSuggester
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(kind + "" + key));
         return Convert.ToHexString(bytes, 0, 8).ToLowerInvariant();
+    }
+
+    // ---------------------------------------------------------------------
+    // Settings the leftover report says are in the way
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Cards drawn from <see cref="TitleLeftoverReport"/>: a word is still in the title, the column's
+    /// own cell carries it, and one setting stands between the two.
+    ///
+    /// <para>One card per column rather than per word. A material column with its removal switched
+    /// off leaves "Emaye", "Cam" and "Seramik" behind, and that is one decision about one column, not
+    /// three about three words.</para>
+    /// </summary>
+    public static IReadOnlyList<TitleFix> SuggestSettings(
+        CompiledRuleSet rules,
+        IReadOnlyList<TitleCleanRow> rows,
+        IReadOnlyList<TitleLeftover> leftovers)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(leftovers);
+
+        var fixes = new List<TitleFix>();
+
+        var groups = leftovers
+            .Where(l => l.Column is not null && Switch(l.Cause) is not null)
+            .GroupBy(l => l.Column!, StringComparer.Ordinal)
+            .OrderByDescending(g => g.Sum(l => l.Rows));
+
+        foreach (var group in groups)
+        {
+            var column = group.Key;
+
+            var rule = rules.Attributes.FirstOrDefault(a =>
+                string.Equals(a.Rule.Column, column, StringComparison.Ordinal))?.Rule;
+
+            if (rule is null)
+                continue;
+
+            // Every switch this column is held back by, together. One of them alone often changes
+            // nothing — see TitleFixKind.EnableMatching.
+            //
+            // Removal is read off the rule rather than off the report. The report names the reason a
+            // word was not matched; a column that may not remove is held back on top of that, and
+            // fixing only the matching would leave the card with nothing to show for itself.
+            var switches = group
+                .Select(l => Switch(l.Cause)!)
+                .Concat(rule.Remove ? [] : new[] { SwitchRemove })
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(s => s, StringComparer.Ordinal)
+                .ToList();
+
+            var sample = rows.FirstOrDefault(r =>
+                string.Equals(r.OriginalTitle, group.First().Sample, StringComparison.Ordinal));
+
+            var attribute = sample?.Attributes.FirstOrDefault(a =>
+                string.Equals(a.Column, column, StringComparison.Ordinal));
+
+            if (sample is null || attribute is null)
+                continue;
+
+            var words = string.Join(", ",
+                group.OrderByDescending(l => l.Rows).Select(l => $"\"{l.Word}\"").Take(4));
+            var names = string.Join(" ve ", switches.Select(Label));
+            var key = string.Join('', "setting", column);
+
+            var proposed = Build(
+                rules, new Scenario(attribute, sample, key) { Rows = group.Sum(l => l.Rows) },
+                column, TitleFixKind.EnableMatching,
+                $"{column}: başlıkta {words} duruyor, hücrede de var",
+                $"Bu kolonda {names} ayarını aç",
+                // Nothing to type: the card turns switches. An editable box would invite an edit
+                // that could not be honoured.
+                "",
+                ApplyEnable,
+                // The switches ride in CellValue rather than Value: CellValue is not rendered as an
+                // editable box, and these are not something to hand-edit.
+                cellValue: string.Join('|', switches));
+
+            if (proposed is not null &&
+                !string.Equals(proposed.SampleAfter, sample.CleanTitle, StringComparison.Ordinal))
+            {
+                fixes.Add(proposed);
+            }
+
+            if (fixes.Count >= MaxFixes)
+                break;
+        }
+
+        return fixes;
+    }
+
+    const string SwitchRemove = "remove";
+    const string SwitchSuffix = "suffix";
+    const string SwitchPartial = "partial";
+
+    static string? Switch(TitleLeftoverCause cause) => cause switch
+    {
+        TitleLeftoverCause.RemoveOff => SwitchRemove,
+        TitleLeftoverCause.NeedsSuffix => SwitchSuffix,
+        TitleLeftoverCause.NeedsPartial => SwitchPartial,
+        _ => null,
+    };
+
+    static string Label(string name) => name switch
+    {
+        SwitchRemove => "\"Çıkar\"",
+        SwitchSuffix => "\"Ek\"",
+        _ => "\"Kısmi\"",
+    };
+
+    /// <summary>Turns on what the card named and nothing else — a switch already on stays on.</summary>
+    static TitleRuleSet ApplyEnable(TitleRuleSet set, TitleFix fix)
+    {
+        var switches = fix.CellValue.Split('|', StringSplitOptions.RemoveEmptyEntries);
+
+        return WithRule(set, fix.TargetColumn, rule => rule with
+        {
+            Remove = rule.Remove || switches.Contains(SwitchRemove, StringComparer.Ordinal),
+            AllowSuffix = rule.AllowSuffix || switches.Contains(SwitchSuffix, StringComparer.Ordinal),
+            AllowPartial = rule.AllowPartial || switches.Contains(SwitchPartial, StringComparer.Ordinal),
+        });
     }
 
     // ---------------------------------------------------------------------
@@ -635,11 +758,12 @@ public static class TitleFixSuggester
         if (value.Length == 0 || title.Length == 0)
             return null;
 
-        var valueWords = SplitWords(value);
+        var group = GroupOf(rules, scenario, value);
 
         // Two characters and under carry no identity of their own — "cm", "ve", "8" — and anchoring
         // on one would propose a phrase assembled around a coincidence.
-        var shared = valueWords
+        var shared = group
+            .SelectMany(SplitWords)
             .Select(FoldedTitle.Fold)
             .Where(w => w.Length > 2)
             .ToHashSet(StringComparer.Ordinal);
@@ -663,7 +787,8 @@ public static class TitleFixSuggester
         if (claimed.Contains(FoldedTitle.Fold(words[anchor])))
             return null;
 
-        var from = Math.Max(0, anchor - Math.Min(valueWords.Count, MaxPhraseWords) + 1);
+        var reach = group.Max(spelling => SplitWords(spelling).Count);
+        var from = Math.Max(0, anchor - Math.Min(reach, MaxPhraseWords) + 1);
         while (from < anchor && claimed.Contains(FoldedTitle.Fold(words[from])))
             from++;
 
@@ -674,6 +799,136 @@ public static class TitleFixSuggester
         return string.Equals(FoldedTitle.Fold(phrase), FoldedTitle.Fold(value), StringComparison.Ordinal)
             ? null
             : phrase;
+    }
+
+    /// <summary>
+    /// Every spelling the value already answers to — its alias group, or just itself.
+    ///
+    /// <para>The reason this is a group and not the cell's own text is the product type column. A
+    /// marketplace RuleSet defines "Notebook OR Laptop OR Dizüstü Bilgisayar OR …" as one value, and
+    /// a seller writes titles ending "Taşınabilir Bilgisayar" — a spelling that group has never heard
+    /// of. Anchored on the cell alone the word "Notebook" is nowhere in that title and no card is
+    /// offered; anchored on the group, "Bilgisayar" is, and the phrase around it is the spelling
+    /// worth adopting.</para>
+    ///
+    /// <para><b>This is also what keeps the proposal from being a correlation.</b> Widening it to
+    /// "any phrase that turns up on the rows carrying this value" would, on a real file, notice that
+    /// "Gümüş" and "Aspire Lite" appear on exactly the same rows and offer to make one a spelling of
+    /// the other. A value with a single spelling gets a single spelling's worth of anchor words, and
+    /// nothing about a colour ever reaches a model name.</para>
+    /// </summary>
+    static IReadOnlyList<string> GroupOf(CompiledRuleSet rules, Scenario scenario, string value)
+    {
+        var attr = rules.Attributes.FirstOrDefault(a =>
+            string.Equals(a.Rule.Column, scenario.Attribute.Column, StringComparison.Ordinal));
+
+        if (attr is null || attr.AliasSpellings.Count == 0)
+            return [value];
+
+        var folded = FoldedTitle.Fold(value);
+
+        var key = attr.AliasSpellings
+            .FirstOrDefault(s => string.Equals(s.Folded, folded, StringComparison.Ordinal))
+            .Key;
+
+        if (string.IsNullOrEmpty(key))
+            return [value];
+
+        var group = attr.AliasSpellings
+            .Where(s => string.Equals(s.Key, key, StringComparison.Ordinal))
+            .Select(s => s.Folded)
+            .ToList();
+
+        // The cell's own spelling stays in, whatever the catalogue is keyed on.
+        group.Add(folded);
+        return group;
+    }
+
+    /// <summary>How short a word may be before one letter of difference stops being a typo. "Krem"
+    /// and "Kreb" are four letters apart from being two different things; "Emaye" and "Emaya" are
+    /// not.</summary>
+    const int TypoWordLength = 5;
+
+    /// <summary>
+    /// A word in the title that is one letter away from one of the cell's — "Emaya" against a cell
+    /// reading "Emaye". The title is simply misspelt, and no amount of exact matching will ever find
+    /// it.
+    ///
+    /// <para><b>This is the only place in the module that measures similarity, and it may never move
+    /// out of it.</b> What it produces is a <em>proposal</em>: the operator reads it on a card beside
+    /// a before and after, edits it if it is wrong, and approves it — at which point the spelling
+    /// joins the catalogue and matching goes on being exact. The engine never consults this. That
+    /// distinction is the whole of why it does not break the rule on
+    /// <see cref="AttributeMatcher"/>: a wrong guess here costs a card the operator declines, not
+    /// characters cut out of a title nobody checked.</para>
+    /// </summary>
+    static string? MisspeltWord(Scenario scenario)
+    {
+        var value = scenario.Attribute.OriginalValue.Trim();
+        var title = scenario.Sample.OriginalTitle;
+        if (value.Length == 0 || title.Length == 0)
+            return null;
+
+        var needles = SplitWords(value)
+            .Select(FoldedTitle.Fold)
+            .Where(w => w.Length >= TypoWordLength)
+            .ToList();
+
+        if (needles.Count == 0)
+            return null;
+
+        foreach (var word in SplitWords(title))
+        {
+            var folded = FoldedTitle.Fold(word);
+            if (folded.Length < TypoWordLength)
+                continue;
+
+            if (needles.Any(n => OneLetterApart(n, folded)))
+                return word;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether two words differ by exactly one letter — substituted, inserted or dropped. Deliberately
+    /// not a distance function: nothing here is allowed to ask "how close", only "is it one".
+    /// </summary>
+    static bool OneLetterApart(string a, string b)
+    {
+        if (Math.Abs(a.Length - b.Length) > 1)
+            return false;
+
+        if (string.Equals(a, b, StringComparison.Ordinal))
+            return false;
+
+        var (shorter, longer) = a.Length <= b.Length ? (a, b) : (b, a);
+        var i = 0;
+        var j = 0;
+        var spent = false;
+
+        while (i < shorter.Length && j < longer.Length)
+        {
+            if (shorter[i] == longer[j])
+            {
+                i++;
+                j++;
+                continue;
+            }
+
+            if (spent)
+                return false;
+
+            spent = true;
+
+            // A substitution steps both; an insertion steps only the longer one.
+            if (shorter.Length == longer.Length)
+                i++;
+
+            j++;
+        }
+
+        return true;
     }
 
     static List<string> SplitWords(string text) =>
@@ -735,6 +990,7 @@ public static class TitleFixSuggester
                 TitleFixKind.ProtectPhrase => ApplyProtect(result, candidate),
                 TitleFixKind.AdoptPhrase => ApplyAdopt(result, candidate),
                 TitleFixKind.AdoptCategoryType => ApplyCategoryType(result, candidate),
+                TitleFixKind.EnableMatching => ApplyEnable(result, candidate),
                 _ => result,
             };
         }

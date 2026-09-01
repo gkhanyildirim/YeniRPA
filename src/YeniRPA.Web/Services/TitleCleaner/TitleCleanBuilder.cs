@@ -145,6 +145,7 @@ public static class TitleCleanBuilder
     {
         var rows = Clean(rules, table, out var skippedFieldCodes);
 
+        var leftovers = TitleLeftoverReport.Build(rules, rows);
         var allNotes = new List<string>(notes ?? []);
         if (skippedFieldCodes)
         {
@@ -192,7 +193,9 @@ public static class TitleCleanBuilder
             [
                 .. TitleFixSuggester.Suggest(rules, rows),
                 .. TitleFixSuggester.SuggestCategoryTypes(rules, rows, categoryRules, fileCategory),
-            ]);
+                .. TitleFixSuggester.SuggestSettings(rules, rows, leftovers),
+            ],
+            leftovers);
     }
 
     /// <summary>
@@ -305,6 +308,9 @@ public static class TitleCleanBuilder
     {
         return pool
             .Where(c => ReferenceEquals(c.Attr, attr))
+            // A bare number nothing supports is not a sighting of anything — the title wrote a
+            // number, and only the unit would have made it this value.
+            .Where(c => BareSupported(c, accepted))
             .Where(c => BoundaryOk(c, accepted, title))
             // A scattered match nobody owns the gap of is not a sighting of the value at all, so it
             // is no more evidence than it was a match. Without this the two words of a colour found
@@ -432,7 +438,15 @@ public static class TitleCleanBuilder
 
         var canonical = hits[0].Match.Canonical;
         var differs = !string.Equals(original, canonical, StringComparison.Ordinal);
-        var status = differs && rule.Correct ? TitleAttributeStatus.Corrected : TitleAttributeStatus.Ok;
+
+        // A rounded match agrees about the product and disagrees about the precision, and the cell is
+        // the precise one. Rewriting 745 mm as the title's "75 cm" would delete a figure nobody asked
+        // to lose — so the title is cleaned and the cell is left exactly as it was.
+        var rounded = Rounded(value, hits[0].Match);
+
+        var status = differs && rule.Correct && !rounded
+            ? TitleAttributeStatus.Corrected
+            : TitleAttributeStatus.Ok;
 
         // The pieces, not the reach: a scattered match spans text that belongs to another attribute,
         // and cutting the whole stretch would take that with it.
@@ -490,8 +504,31 @@ public static class TitleCleanBuilder
         if (value.BareQuantity is { } bare)
             return match.Quantity.HasValue && Math.Abs(match.Quantity.Value - bare) < 1e-9;
 
-        return value.Key.Length > 0 && string.Equals(value.Key, match.Key, StringComparison.Ordinal);
+        if (value.Key.Length > 0 && string.Equals(value.Key, match.Key, StringComparison.Ordinal))
+            return true;
+
+        return Rounded(value, match);
     }
+
+    /// <summary>
+    /// Whether the two say the same thing once the cell is read to the precision the title wrote.
+    ///
+    /// <para>A title rounds: 745 mm of width is written "75 cm". Refusing that is not caution, it is
+    /// a false conflict — and an expensive one, because the span then belongs to nobody and every
+    /// other rule sharing the unit family reports its own disagreement about the same "75 cm".</para>
+    ///
+    /// <para><b>The title may be less precise, never differently precise.</b> Rounding happens only
+    /// to the number of decimals the title itself used, so "15,7" against a cell of 15,6 stays a
+    /// conflict — the title wrote a decimal, and it is a different one.</para>
+    /// </summary>
+    /// <para>True only where the rounding was <b>needed</b>. Two quantities that are already equal in
+    /// the base unit — a cell of 1024 GB against a title's "1TB" — match on their key and are an
+    /// ordinary agreement about spelling, which <c>Düzelt</c> is entitled to act on.</para>
+    static bool Rounded(AttributeValue value, TitleMatch match) =>
+        value.BaseQuantity is { } cell && match.BaseQuantity is { } said &&
+        Math.Abs(cell - said) > 1e-9 &&
+        Math.Round(cell, match.Decimals, MidpointRounding.AwayFromZero) ==
+        Math.Round(said, match.Decimals, MidpointRounding.AwayFromZero);
 
     // ---------------------------------------------------------------------
     // Span resolution
@@ -513,7 +550,9 @@ public static class TitleCleanBuilder
         {
             var accepted = Greedy(live);
             var invalid = accepted
-                .Where(c => !BoundaryOk(c, accepted, title) || !GapsClaimed(c, accepted, title))
+                .Where(c => !BoundaryOk(c, accepted, title) ||
+                            !GapsClaimed(c, accepted, title) ||
+                            !BareSupported(c, accepted))
                 .ToList();
 
             if (invalid.Count == 0)
@@ -577,6 +616,9 @@ public static class TitleCleanBuilder
     {
         var ordered = pool
             .OrderByDescending(c => c.IsValueMatch)
+            // A value the title spelled out with its unit outranks the same value read off a bare
+            // number, wherever the two sit — the written one is evidence in its own right.
+            .ThenBy(c => c.Match.Bare)
             .ThenByDescending(c => c.Match.Length)
             .ThenBy(c => c.Attr.Index)
             .ThenBy(c => c.Start)
@@ -621,6 +663,34 @@ public static class TitleCleanBuilder
     static bool Overlaps(List<Candidate> accepted, Candidate candidate) =>
         accepted.Any(a => a.Match.Spans.Any(x =>
             candidate.Match.Spans.Any(y => x.Start < y.End && y.Start < x.End)));
+
+    /// <summary>
+    /// A number the title wrote without its unit stands only where another confirmed value is glued
+    /// straight onto it.
+    ///
+    /// <para>This is the whole safety case for reading "512SSD" as 512 GB of SSD. The unit is what
+    /// normally tells a measurement apart from a model number, and here there is none — so the
+    /// evidence has to come from somewhere else, and the only thing available is that the characters
+    /// touching the number are themselves a confirmed value of some other attribute. Two values
+    /// written with nothing between them is a thing titles do constantly ("1TBSSD" already relied on
+    /// it); a number sitting alone in the middle of a title is not.</para>
+    ///
+    /// <para>So "Pro Max 16" is refused — its "16" has spaces either side and nothing to lean on —
+    /// and it is refused even on a row whose screen really is 16 inches, which is the case that makes
+    /// this worth writing down. <see cref="BoundaryOk"/> covers the other direction, the "16" inside
+    /// "MC16250_3".</para>
+    /// </summary>
+    static bool BareSupported(Candidate candidate, List<Candidate> accepted)
+    {
+        if (!candidate.Match.Bare)
+            return true;
+
+        return accepted.Any(other =>
+            !ReferenceEquals(other, candidate) &&
+            other.IsValueMatch &&
+            !other.Match.Bare &&
+            other.Match.Spans.Any(s => s.Start == candidate.End || s.End == candidate.Start));
+    }
 
     /// <summary>
     /// A span may cut into a word only where another accepted span continues from it. "1TBSSD" is

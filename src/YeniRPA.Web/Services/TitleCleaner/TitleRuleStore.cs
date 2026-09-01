@@ -138,8 +138,10 @@ public sealed class TitleRuleStore
             rule.Correct,
             rule.FillFromTitle,
             rule.AllowSuffix,
+            rule.AllowPartial,
             EncodeUnits(rule.UnitList),
-            EncodeAliases(rule.AliasGroups))).ToList(),
+            EncodeAliases(rule.AliasGroups),
+            rule.ReferenceList ?? "")).ToList(),
         set.DecimalSeparator == "," ? "," : ".");
 
     public static TitleRuleSet FromForm(TitleRuleSetForm form)
@@ -158,8 +160,10 @@ public sealed class TitleRuleStore
                     a.Correct,
                     a.FillFromTitle,
                     a.AllowSuffix,
+                    a.AllowPartial,
                     ParseUnits(a.Units),
-                    ParseAliases(a.Aliases)))
+                    ParseAliases(a.Aliases),
+                    string.IsNullOrWhiteSpace(a.ReferenceList) ? null : a.ReferenceList.Trim()))
                 .ToList(),
             form.DecimalSeparator == "," ? "," : ".");
     }
@@ -234,11 +238,14 @@ public sealed class TitleRuleStore
     /// <summary>Last on purpose. Putting a new column where it reads best would shift every constant
     /// above, and those decide which cell each value is written into.</summary>
     const int SuffixColumn = 11;
+    const int PartialColumn = 12;
+    const int ReferenceColumn = 13;
 
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
-        "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek",
+        "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek", "Kısmi",
+        "Referans Listesi",
     ];
 
     /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
@@ -265,7 +272,7 @@ public sealed class TitleRuleStore
 
         // Text throughout: a unit spelling of "11" or a set named "2024" must not come back as a
         // number, and the encoded unit/alias cells must survive verbatim.
-        sheet.Columns(SetColumn, SuffixColumn).Style.NumberFormat.Format = "@";
+        sheet.Columns(SetColumn, ReferenceColumn).Style.NumberFormat.Format = "@";
 
         var row = 2;
         foreach (var set in sets)
@@ -283,11 +290,13 @@ public sealed class TitleRuleStore
                 sheet.Cell(row, UnitsColumn).SetValue(EncodeUnits(rule.UnitList));
                 sheet.Cell(row, AliasColumn).SetValue(EncodeAliases(rule.AliasGroups));
                 sheet.Cell(row, SuffixColumn).SetValue(Yes(rule.AllowSuffix));
+                sheet.Cell(row, PartialColumn).SetValue(Yes(rule.AllowPartial));
+                sheet.Cell(row, ReferenceColumn).SetValue(rule.ReferenceList ?? "");
                 row++;
             }
         }
 
-        sheet.Columns(SetColumn, SuffixColumn).AdjustToContents();
+        sheet.Columns(SetColumn, ReferenceColumn).AdjustToContents();
         foreach (var column in sheet.ColumnsUsed())
             column.Width = Math.Clamp(column.Width, 10, 52);
 
@@ -320,6 +329,11 @@ public sealed class TitleRuleStore
         var cUnits = Optional(header, Headers[UnitsColumn - 1]);
         var cAlias = OptionalAny(header, Headers[AliasColumn - 1], LegacyAliasHeader);
         var cSuffix = Optional(header, Headers[SuffixColumn - 1]);
+        var cPartial = Optional(header, Headers[PartialColumn - 1]);
+
+        // Optional like the rest: a workbook exported before reference lists existed carries no such
+        // column, and it has to keep importing rather than being refused for a column it predates.
+        var cReference = Optional(header, Headers[ReferenceColumn - 1]);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
@@ -352,8 +366,10 @@ public sealed class TitleRuleStore
                 ParseBool(TabularFile.GetCell(row, cCorrect), fallback: true),
                 ParseBool(TabularFile.GetCell(row, cFill), fallback: false),
                 ParseBool(TabularFile.GetCell(row, cSuffix), fallback: false),
+                ParseBool(TabularFile.GetCell(row, cPartial), fallback: false),
                 ParseUnits(TabularFile.GetCell(row, cUnits)),
-                ParseAliases(TabularFile.GetCell(row, cAlias))));
+                ParseAliases(TabularFile.GetCell(row, cAlias)),
+                Blank(TabularFile.GetCell(row, cReference))));
         }
 
         if (sets.Count == 0)
@@ -363,6 +379,11 @@ public sealed class TitleRuleStore
             .Select(s => new TitleRuleSet(s.Name, s.Title, s.Rules, s.Separator))
             .ToList();
     }
+
+    /// <summary>An empty cell as <c>null</c> — "no reference list" and "a list named nothing" are the
+    /// same thing, and the rule carries the first of them.</summary>
+    static string? Blank(string text) =>
+        string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
     static int Require(Dictionary<string, int> header, string name) =>
         header.TryGetValue(name, out var index)

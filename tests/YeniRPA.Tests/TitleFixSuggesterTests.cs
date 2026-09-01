@@ -25,6 +25,64 @@ public class TitleFixSuggesterTests
     }
 
     // -----------------------------------------------------------------
+    // Anchoring a proposed spelling
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// The product type column, as a marketplace RuleSet leaves it. Its group carries the spellings
+    /// the marketplace accepts; the seller writes one it has never heard of. The cell says "Notebook"
+    /// and the title says "Taşınabilir Bilgisayar", so there is no word in common with the cell — but
+    /// there is one with "Dizüstü Bilgisayar", which is the same value, and that is enough to say
+    /// which phrase the card should be about.
+    /// </summary>
+    [Fact]
+    public void APhraseIsAnchoredOnAnySpellingInTheValuesGroup()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("Marka"),
+            new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias,
+                Aliases: [["Notebook", "Laptop", "Dizüstü Bilgisayar"]]),
+        ]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "Marka", "Ürün Tipi"],
+            ["Lenovo ThinkPad E16 Taşınabilir Bilgisayar", "Lenovo", "Notebook"],
+        ];
+
+        var fix = Assert.Single(Fixes(set, table), f => f.Column == "Ürün Tipi");
+
+        Assert.Equal(TitleFixKind.AdoptPhrase, fix.Kind);
+        Assert.Equal("Taşınabilir Bilgisayar", fix.Value);
+    }
+
+    /// <summary>
+    /// The guard that keeps this from being a correlation. On the real laptop export "Gümüş" and
+    /// "Aspire Lite" appear on exactly the same rows, and anything that proposed a phrase because it
+    /// turns up alongside a value would offer to make a model name the spelling of a colour. A value
+    /// with one spelling gets one spelling's worth of anchor words, and a colour shares none of them
+    /// with a model name.
+    /// </summary>
+    [Fact]
+    public void AnUnrelatedPhraseIsNotProposedForASingleSpellingValue()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("Marka"),
+            new TitleAttributeRule("Renk"),
+        ]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "Marka", "Renk"],
+            ["Acer Aspire Lite AL16-51P Notebook", "Acer", "Gümüş"],
+        ];
+
+        Assert.DoesNotContain(Fixes(set, table), f => f.Column == "Renk");
+    }
+
+    // -----------------------------------------------------------------
     // Grouping
     // -----------------------------------------------------------------
 
@@ -266,6 +324,87 @@ public class TitleFixSuggesterTests
         Assert.Equal(
             set.AttributeList.Single().AliasGroups.Select(g => string.Join("|", g)),
             updated.AttributeList.Single().AliasGroups.Select(g => string.Join("|", g)));
+    }
+
+    // -----------------------------------------------------------------
+    // A title that is simply misspelt
+    // -----------------------------------------------------------------
+
+    static TitleRuleSet Material(params string[] group) => new("Test", "Başlık",
+        [new TitleAttributeRule("Malzeme", TitleAttributeKind.Alias, Aliases: [group])]);
+
+    /// <summary>
+    /// The title writes "Emaya" for "Emaye". No exact match will ever find that, so the one place in
+    /// the module that measures similarity offers it as a card — for the operator to approve, not for
+    /// the engine to act on.
+    /// </summary>
+    [Fact]
+    public void AWordOneLetterOutIsOfferedAsASpelling()
+    {
+        List<List<string>> table =
+        [
+            ["Başlık", "Malzeme"],
+            ["GL General GLO 024SARK Rustik Krem Emaya Ankastre", "Emaye"],
+        ];
+
+        var fix = Assert.Single(Fixes(Material("Emaye"), table));
+
+        Assert.Equal(TitleFixKind.AdoptPhrase, fix.Kind);
+        Assert.Equal("Emaya", fix.Value);
+    }
+
+    /// <summary>Applying it puts the title's spelling in the catalogue, and the ordinary exact
+    /// matching takes it from there.</summary>
+    [Fact]
+    public void ApplyingTheMisspeltSpellingCleansThoseRows()
+    {
+        var set = Material("Emaye");
+        List<List<string>> table =
+        [
+            ["Başlık", "Malzeme"],
+            ["GL General GLO 024SARK Rustik Krem Emaya Ankastre", "Emaye"],
+        ];
+
+        var fixes = Fixes(set, table);
+        var updated = TitleFixSuggester.Apply(set, fixes, [fixes[0].Id]);
+
+        Assert.Equal(["Emaye", "Emaya"], updated.AttributeList.Single().AliasGroups.Single());
+        Assert.Equal(
+            "GL General GLO 024SARK Rustik Krem Ankastre",
+            Run(updated, table).Rows.Single().CleanTitle);
+    }
+
+    /// <summary>
+    /// <b>The engine never acts on the resemblance itself.</b> Until the card is approved the title
+    /// keeps its misspelling, and the row reports the value as absent.
+    /// </summary>
+    [Fact]
+    public void TheEngineDoesNotRemoveAMisspeltWordOnItsOwn()
+    {
+        List<List<string>> table =
+        [
+            ["Başlık", "Malzeme"],
+            ["GL General GLO 024SARK Rustik Krem Emaya Ankastre", "Emaye"],
+        ];
+
+        var row = Run(Material("Emaye"), table).Rows.Single();
+
+        Assert.Equal("GL General GLO 024SARK Rustik Krem Emaya Ankastre", row.CleanTitle);
+        Assert.Equal(TitleAttributeStatus.NotInTitle, row.Attributes.Single().Status);
+    }
+
+    /// <summary>Short words are left alone. Four letters apart from being a different thing is not a
+    /// typo, it is a different thing.</summary>
+    [Fact]
+    public void AShortWordOneLetterOutIsNotOffered()
+    {
+        List<List<string>> table =
+        [
+            ["Başlık", "Malzeme"],
+            ["Acme 205CS Kreb Ankastre Ocak", "Krem"],
+        ];
+
+        Assert.Empty(Fixes(Material("Krem"), table));
     }
 
     // -----------------------------------------------------------------

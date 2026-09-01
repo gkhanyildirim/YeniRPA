@@ -103,6 +103,11 @@ builder.Services.AddSingleton<TitleRuleStore>();
 // is derived data: it can always be rebuilt by uploading the workbook again.
 builder.Services.AddSingleton<CategoryRuleStore>();
 
+// The value catalogues a rule may consult for spellings longer than its own cells carry — a processor
+// list against a column reading "Intel Core Ultra 5" and titles reading "Ultra5 125H". Derived data
+// like the RuleSet above, and a singleton for the same reason.
+builder.Services.AddSingleton<TitleReferenceStore>();
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())

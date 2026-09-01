@@ -749,10 +749,12 @@
                                 <th style="width: 9%" title="Bu kolonun başlıkta nasıl aranacağı">Tip</th>
                                 <th style="width: 6%" title="Bulunca başlıktan silinsin mi. Kapalıysa metin korunur.">Çıkar</th>
                                 <th style="width: 6%" title="Hücredeki yazım standarda çevrilsin mi (16 → 16 GB). Tip = Metin olan satırlarda kullanılmaz.">Düzelt</th>
-                                <th style="width: 6%" title="Başlıktaki &quot;Ocaklar&quot; kelimesi &quot;Ocak&quot; değerini karşılasın mı — Türkçe çekim ekli yazımlar. Model kodu taşıyan kolonlarda kapalı bırakın.">Ek</th>
-                                <th style="width: 9%" title="Son taramada bu kural kaç satırda karşılık buldu">Eşleşme</th>
-                                <th style="width: 21%" title="Yalnızca Tip = Ölçü olan satırlarda kullanılır. Hazır bir set seçip düzenleyebilirsiniz.">Birimler</th>
-                                <th style="width: 20%" title="Yalnızca Tip = Değer Listesi olan satırlarda kullanılır">Değerler</th>
+                                <th style="width: 5%" title="Başlıktaki &quot;Ocaklar&quot; kelimesi &quot;Ocak&quot; değerini karşılasın mı — Türkçe çekim ekli yazımlar. Model kodu taşıyan kolonlarda kapalı bırakın.">Ek</th>
+                                <th style="width: 5%" title="Değerin bir parçası tamamının yerine geçsin mi — hücrede &quot;CETINTAS EVII&quot; yazarken başlıkta yalnızca &quot;Çetintaş&quot; geçmesi. Yalnızca marka, malzeme gibi kolonlarda açın; ürün tipinde açmayın.">Kısmi</th>
+                                <th style="width: 7%" title="Son taramada bu kural kaç satırda karşılık buldu">Eşleşme</th>
+                                <th style="width: 17%" title="Yalnızca Tip = Ölçü olan satırlarda kullanılır. Hazır bir set seçip düzenleyebilirsiniz.">Birimler</th>
+                                <th style="width: 16%" title="Yalnızca Tip = Değer Listesi olan satırlarda kullanılır">Değerler</th>
+                                <th style="width: 9%" title="Hücrenin yazmadığı uzun yazımlar için katalog — hücrede &quot;Intel Core Ultra 5&quot; yazarken başlıkta &quot;Ultra5 125H&quot; geçmesi. Kayıt yalnızca hücrenin değerini içeriyorsa kullanılır.">Referans</th>
                                 <th style="width: 5%"></th>
                             </tr>
                         </thead>
@@ -771,7 +773,38 @@
                     &quot;;&quot; farklı değerleri ayırır; her grubun ilki standart yazımdır.
                     <br />
                     <strong>RuleSet:</strong> <span id="tc-ruleset-status">yüklenmedi</span>
+                    <br />
+                    <strong>Referans listeleri:</strong> <span id="tc-reference-status">yüklenmedi</span>
                 </p>
+
+                @* A reference list supplies the spellings a cell does not carry — a processor
+                   catalogue's "Intel Core Ultra 5 125H" against a column reading "Intel Core Ultra 5".
+                   The column is asked for rather than guessed: a catalogue workbook carries source
+                   URLs and family names beside the values. *@
+                <div class="filter-bar">
+                    @* "örn:" is not decoration. These two boxes sit empty and their examples name the
+                       very values the list is usually built from, so without it they read as already
+                       filled — the same trap the rule table's Birimler/Değerler boxes fell into. *@
+                    <div class="field">
+                        <label for="tc-reference-name">Liste adı</label>
+                        <input type="text" id="tc-reference-name" placeholder="örn: İşlemciler"
+                               title="Kural tablosundaki Referans kutusunda bu adla görünür" />
+                    </div>
+                    <div class="field">
+                        <label for="tc-reference-column">Değer kolonu</label>
+                        <input type="text" id="tc-reference-column" placeholder="örn: Tam İşlemci Adı"
+                               title="Değerlerin bulunduğu kolonun, çalışma kitabının başlık satırındaki adı. Her sayfada aranır." />
+                    </div>
+                    <div class="field">
+                        <button type="button" class="btn btn-ghost" id="tc-reference-import"
+                                title="Değer kataloğu çalışma kitabı — her sayfada adı verilen kolon okunur">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Referans listesi yükle</span>
+                        </button>
+                        <input type="file" id="tc-reference-file" accept=".xlsx,.xls,.csv" hidden
+                               aria-label="Referans listesi çalışma kitabı" />
+                    </div>
+                </div>
 
                 <div class="actions">
                     <button type="button" class="btn btn-ghost" id="tc-rule-add">
@@ -855,6 +888,15 @@
                 <div class="card accent-amber">
                     <h3>Başlık ile özellik çelişiyor</h3>
                     <div class="table-scroll" id="tc-conflict-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    Başlıkta kalanlar
+                    <partial name="_ExportButton" model='new ExportButton("tc-leftovers-wrap", "Basliklarda kalanlar", "Title Cleaner")' />
+                </div>
+                <div class="card">
+                    <h3>Temizlemeden sonra başlıklarda duran kelimeler ve neden durdukları</h3>
+                    <div class="table-scroll" id="tc-leftovers-wrap"></div>
                 </div>
 
                 <div class="section-title">

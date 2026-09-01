@@ -243,14 +243,45 @@ That title carries `16` three times — in the model name (`Pro Max 16`), inside
 value leaves `Pro Max MC250_3`, a model that does not exist, written back to the marketplace. Two
 rules together settle it, and neither works alone:
 
-- **A measured value is only ever recognised together with its unit.** A bare number is never a
-  candidate. Loosen this and model names start disappearing.
+- **A measured value is only ever recognised together with its unit** — or, where the unit is
+  missing, glued to another value that is. A bare number standing on its own is never a candidate.
+  Loosen this and model names start disappearing.
 - **A span may begin or end inside a word only where another accepted span picks up exactly where it
   leaves off.** This is what lets `1TBSSD` — a disk capacity and a disk type with no separator
   between them — come apart into two matches while `MC16250_3` stays whole. A boundary rule strict
   enough to reject the one would reject the other, so the two cases cannot be told apart one span at
   a time: `TitleCleanBuilder` collects candidates first, then resolves overlaps and validates
   boundaries against the neighbours, to a fixed point.
+
+### Three ways a title writes a value the cell does not
+
+A second real export — 48 laptops from a different seller — broke the module in three places at once,
+and the operator saw one symptom: the processor was never removed. Each has its own answer, and none
+of them is a similarity score.
+
+**The space nobody typed.** The marketplace's attribute column reads `Ryzen™ 5` and `Core™ 5`; the
+seller's titles read `Ryzen5 220` and `Core5 120U`. Nothing separates those but a space one side chose
+not to write, and without it the processor column matched *nothing at all* on the whole file. A gap in
+one may now be missing in the other — **only at a change between letter and digit**, which is a word
+boundary whether it is written or not. `Pro Max` therefore still does not answer `ProMax`: two letters
+running together are two words the writer joined, not one word they split, and allowing that would
+turn every value into a prefix search. `AttributeMatcher.IndexOfLoose` does it, the partial search
+uses the same rule so `Intel Core Ultra 5` can find `Ultra5`, and the boundary check afterwards is
+unchanged.
+
+**The unit nobody wrote.** The same titles write `512SSD` — the capacity, no unit at all, glued onto
+the disk type. The number is readable as 512 GB only because the confirmed disk type continues
+straight from it, which is the same evidence `1TBSSD` always relied on, minus the unit. So a
+`Measure` scan now also proposes the cell's *own* quantity where the title wrote it bare, and
+`TitleCleanBuilder.BareSupported` throws it away unless another confirmed span is glued to it with no
+separator. `Pro Max 16` is refused — its `16` has spaces either side and nothing to lean on — and it
+is refused *even on a row whose screen really is 16 inches*, which is the case that makes the rule
+worth having.
+
+**The words no cell contains.** `Ultra5 125H`: the model code is in no column of the file. The older
+export happened to carry it (`İşlemci (tr_TR) = 8745HX`); this one carries `Intel Core Ultra 5`
+instead, and no rule built out of that file can remove what the file does not contain. See
+[Reference lists](#reference-lists).
 
 `FoldedTitle` exists because neither fold already in the app can be used here. `SellerGroupMap.FoldName`
 collapses whitespace and `CarrierNames.Fold` turns punctuation into spaces — both right for comparing
@@ -290,6 +321,49 @@ Two units that both carry a `Factor` are compared in the base unit, so a cell re
 reported as a conflict against a title reading `1TB`. Without a factor the unit must match exactly —
 no conversion is ever invented.
 
+### Reference lists
+
+An attribute cell says what a product is; it does not always say it in full. A **reference list** is a
+column of full canonical values out of a workbook the operator uploads — the published Intel/AMD
+catalogue, 5384 rows of `Intel Core Ultra 5 125H` — attached to a rule by name and stored apart from
+the rule sets, in `reference-lists.json`, because a catalogue that long has no business inside a file
+meant to stay hand-readable.
+
+**It does not widen the whitelist.** An entry is only ever looked at when the row's **own cell value
+sits inside it** as a run of whole words, so the row is always the one asserting what the product is;
+the list only says how that value is written out in full. A catalogue of five thousand processors
+therefore cannot introduce a processor into a title — against a cell reading `AMD Ryzen 3`, the entry
+`Intel Core Ultra 5 125H` is never searched for.
+
+What gets searched is the entry **from the cell's value onwards**, matched partially. Titles drop the
+manufacturer — `Intel Core Ultra 5 125H` is written `Ultra5 125H` — but they do not drop the model
+code, and `AddPartial`'s existing rule enforces exactly that: every word the run leaves out has to be
+absent from the title. `Intel Core` may go because the title genuinely does not say it; `125H` may not
+because it does.
+
+Three details are load-bearing, and two of them were bought the hard way:
+
+- **Every word an entry adds must be a word the title writes**, checked before any search is run.
+  Checking only the last one let `AMD Ryzen 5 PRO 220` through against a title reading `Ryzen5 220` —
+  it has more words than `AMD Ryzen 5 220` so it was tried first, `PRO` is nowhere in that title, and
+  the partial search fell back to the one word both sides shared: the bare `220`. A reference entry
+  matching nothing but an unqualified number is the exact deletion this module refuses everywhere
+  else, and it silently cost the whole file its processor removal.
+- **The cell's last word may end part-way into the entry's**, on a separator or a letter/digit change.
+  Intel's own catalogue writes `Intel Core i5-13420H` against a cell reading `Intel Core i5`, so
+  whole words throughout would rule out every Intel entry written that way. `Ryzen 5` still does not
+  reach into `Ryzen 50`.
+- **A reference match never rewrites the cell.** The list says what the *title* says; what the cell
+  ought to say is a much larger claim, and nothing here makes it.
+
+A rule naming a list that is not loaded is **refused at compile time** rather than ignored — the rule
+exists because the column cannot be cleaned without it, and running on quietly would leave every title
+in the file carrying the value the operator asked to have removed.
+
+Narrowing five thousand entries happens once per **distinct cell value**, not once per row: a file
+names ten or so processors across thousands of products, and `CompiledAttribute.ConsistentWith` caches
+on that.
+
 ### Rule sets
 
 One per category, stored in `%LOCALAPPDATA%\YeniRPA\TitleCleaner\title-rules.json` by `TitleRuleStore`
@@ -311,6 +385,13 @@ applied on its own. Two things about it are deliberate:
   attributes claimed the characters next to a span, so `1TBSSD` only comes apart while both the
   capacity rule and the disk-type rule are present. Measured alone, both halves of every glued token
   match nothing — and glued tokens are exactly how these titles are written.
+
+**Not every column that matches should be given a rule.** A laptop export carries
+`Kutu İçeriği (tr_TR) = Bilgisayar` on every row, and that word does appear in the titles — so the
+proposal offers it, switched on. Accepting it cuts `Bilgisayar` out of `Dizüstü Bilgisayar` and leaves
+the product type stranded. The column describes what is in the box, not what the product is, and no
+statistic can tell those apart; the rule editor is where a person decides. `ClaimedWords` at least
+stops the suggester then proposing a product-type card built on a word that column has taken.
 
 A column of bare numbers is never proposed for removal unless its own name says what the unit is
 (`RAM`, `Ekran Boyutu`, `Kapasite`). `16` is a screen size, a model name and a fragment of a model
@@ -417,6 +498,17 @@ Four things about it are deliberate:
 - **Nothing is saved.** Applying updates the editor and re-runs the preview; the rule set is written
   when the operator presses Save, like everywhere else here.
 
+**A proposed phrase is anchored on the value's whole alias group, not on the cell's own text.** The
+marketplace's RuleSet defines `Notebook OR Laptop OR Dizüstü Bilgisayar OR …` as one value, and a
+seller writes titles ending `Taşınabilir Bilgisayar` — a spelling that group has never heard of.
+Anchored on the cell alone the word `Notebook` is nowhere in that title and no card is offered;
+anchored on the group, `Bilgisayar` is, and the phrase around it is the spelling worth adopting.
+
+That is also the guard that keeps this from being a correlation. On the same export `Gümüş` and
+`Aspire Lite` appear on exactly the same rows, and anything that proposed a phrase because it *turns
+up alongside* a value would offer to make a model name the spelling of a colour. A value with one
+spelling gets one spelling's worth of anchor words, and a colour shares none of them with a model name.
+
 The apply endpoint **recomputes the suggestions server-side** and takes only ids from the browser, so
 a page cannot hand over a rule edit of its own. Fix ids are derived from the scenario rather than its
 position in a list, which is what lets them mean the same thing on that second pass.
@@ -496,6 +588,14 @@ four characters too many looks perfectly reasonable and is noticed weeks later w
 gone. They run on CSV built in memory and go through the same
 readers the app does. The test packages are a **build-time** dependency only — the app itself still
 ships with no external runtime dependencies.
+
+`TitleCleanerRealFileTests` is the exception to "built in memory": it runs the engine end to end over
+the sample exports served from `wwwroot`, which the build already copies into the test output. The
+unit tests next door pin one rule each against a title written to exercise it; these pin the whole
+thing against files nobody wrote for a test — 300 columns, a technical field-code row, titles typed by
+five different sellers — and every rule in this module came from such a file in the first place. Two
+of its checks are invariants rather than expected strings: nothing an attribute reported as removed is
+still in the cleaned title, and a second pass takes nothing further out.
 
 Requires the .NET 10 SDK. `ClosedXML` and `Microsoft.Playwright` are the only NuGet dependencies;
 Chart.js and the IBM Plex fonts are vendored under `wwwroot/lib`, so the app has **no external

@@ -73,6 +73,16 @@
   let UNIT_PRESETS = [];
 
   /**
+   * The loaded reference lists, as {name, sourceName, values}.
+   *
+   * Same treatment as UNIT_PRESETS and for a sharper reason: a rule naming a list this fetch failed
+   * to deliver still runs, because the server compiles against its own copy. What an empty list costs
+   * is the picker — the box falls back to showing whatever name the rule already carries, so a set
+   * loaded into the editor can still be saved without silently losing its reference.
+   */
+  let REFERENCE_LISTS = [];
+
+  /**
    * Whether the editor holds anything the server has not been told about.
    *
    * Importing a workbook and suggesting from a file both fill the table without saving — the same
@@ -156,6 +166,11 @@
     // A measured value is matched as a number and its unit, so a word ending has nothing to say
     // about it.
     lock(row.querySelector('.tc-suffix'), kind !== 'Measure');
+    lock(row.querySelector('.tc-partial'), kind !== 'Measure');
+
+    // Same reason for the reference list: a catalogue of spellings has nowhere to attach to a rule
+    // matched by number and unit, and AttributeMatcher.Compile drops one handed to a Measure rule.
+    lock(row.querySelector('.tc-reference'), kind !== 'Measure');
   }
 
   /**
@@ -191,10 +206,34 @@
     select.value = UNIT_PRESETS.some(p => p.units === units) ? units : '';
   }
 
-  /** Puts a row on screen: the locks its type implies, and its unit picker. */
+  /**
+   * Fills one row's reference-list picker.
+   *
+   * Written here rather than into the row template for the same reason as the unit presets: the lists
+   * arrive asynchronously and a rule set can be rendered before they land. The row's own value is
+   * kept as an option even when no such list is loaded, so rendering a set that names a list nobody
+   * has uploaded yet does not quietly clear the box on the next save.
+   */
+  function fillReferenceLists(row) {
+    const select = row.querySelector('.tc-reference');
+    const current = select.dataset.value || '';
+
+    const names = REFERENCE_LISTS.map(l => l.name);
+    if (current && !names.some(n => n.toLocaleLowerCase('tr') === current.toLocaleLowerCase('tr')))
+      names.push(current);
+
+    select.innerHTML = '<option value="">— yok —</option>' +
+      names.map(n => '<option value="' + RPA.escapeHtml(n) + '">' +
+        RPA.escapeHtml(n) + '</option>').join('');
+
+    select.value = current;
+  }
+
+  /** Puts a row on screen: the locks its type implies, and its two pickers. */
   function dressRuleRow(row) {
     applyKindLock(row);
     fillUnitPresets(row);
+    fillReferenceLists(row);
   }
 
   function ruleRowHtml(rule) {
@@ -218,12 +257,15 @@
       checkbox('tc-remove', r.remove !== false, 'Çıkar') +
       checkbox('tc-correct', r.correct !== false, 'Düzelt') +
       checkbox('tc-suffix', r.allowSuffix === true, 'Ek') +
+      checkbox('tc-partial', r.allowPartial === true, 'Kısmi') +
       matchCell(r.column) +
       '<td><select class="tc-unit-preset" aria-label="Hazır birim seti"></select>' +
         '<input type="text" class="tc-units" value="' + RPA.escapeHtml(r.units || '') +
         '" aria-label="Birimler" /></td>' +
       '<td><input type="text" class="tc-aliases" value="' + RPA.escapeHtml(r.aliases || '') +
         '" aria-label="Değerler" /></td>' +
+      '<td><select class="tc-reference" aria-label="Referans listesi" data-value="' +
+        RPA.escapeHtml(r.referenceList || '') + '"></select></td>' +
       '<td class="num"><button type="button" class="btn btn-ghost btn-sm tc-rule-remove" ' +
         'aria-label="Satırı sil">Sil</button></td>' +
       '</tr>';
@@ -252,9 +294,11 @@
       remove: row.querySelector('.tc-remove').checked,
       correct: row.querySelector('.tc-correct').checked,
       allowSuffix: row.querySelector('.tc-suffix').checked,
+      allowPartial: row.querySelector('.tc-partial').checked,
       fillFromTitle: row.querySelector('.tc-fill').value === 'true',
       units: row.querySelector('.tc-units').value.trim(),
-      aliases: row.querySelector('.tc-aliases').value.trim()
+      aliases: row.querySelector('.tc-aliases').value.trim(),
+      referenceList: row.querySelector('.tc-reference').value.trim()
     })).filter(a => a.column);
 
     return {
@@ -374,6 +418,86 @@
     Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(fillUnitPresets);
   }
 
+  function renderReferenceStatus() {
+    const box = el('tc-reference-status');
+    if (!box) return;
+
+    box.textContent = REFERENCE_LISTS.length === 0
+      ? 'yüklenmedi'
+      : REFERENCE_LISTS
+        .map(l => l.name + ' (' + RPA.fmtInt(l.values) + ')')
+        .join(' · ');
+  }
+
+  /** Same quiet failure as the unit presets: the picker goes empty, the editor keeps working. */
+  async function loadReferenceLists() {
+    try {
+      REFERENCE_LISTS = await sendJsonMethod('GET', '/api/title-cleaner/reference-lists') || [];
+    } catch (ignored) {
+      REFERENCE_LISTS = [];
+    }
+
+    renderReferenceStatus();
+    Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(fillReferenceLists);
+  }
+
+  /**
+   * Both boxes have to be filled before the file picker opens.
+   *
+   * Checking afterwards was the same work in the wrong order: the operator browsed for a workbook,
+   * chose it, and only then learned they needed to type something first. The boxes are also the kind
+   * that read as already filled — their examples name the very values this list is usually built
+   * from — so the message names the empty one and puts the cursor in it rather than describing both.
+   */
+  function openReferenceFile() {
+    const name = el('tc-reference-name');
+    const column = el('tc-reference-column');
+
+    RPA.clearError('tc-rule-alert');
+
+    const missing = !name.value.trim() ? name : !column.value.trim() ? column : null;
+
+    if (missing) {
+      RPA.showError('tc-rule-alert', missing === name
+        ? 'Listeye bir ad verin — kural tablosundaki Referans kutusunda bu adla görünecek.'
+        : 'Değerlerin hangi kolonda olduğunu yazın — çalışma kitabının başlık satırındaki adıyla.');
+      missing.focus();
+      return;
+    }
+
+    el('tc-reference-file').click();
+  }
+
+  async function importReferenceList(file) {
+    const button = el('tc-reference-import');
+    const name = el('tc-reference-name').value.trim();
+    const column = el('tc-reference-column').value.trim();
+
+    RPA.clearError('tc-rule-alert');
+    RPA.setBusy(button, true, 'Okunuyor…');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('name', name);
+      form.append('column', column);
+
+      REFERENCE_LISTS = await RPA.postJson('/api/title-cleaner/reference-lists', form);
+      renderReferenceStatus();
+      Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(fillReferenceLists);
+
+      const loaded = REFERENCE_LISTS.find(l => l.name === name);
+      renderNotes([
+        'Referans listesi alındı: ' + name + ' · ' +
+        RPA.fmtInt(loaded ? loaded.values : 0) + ' değer. ' +
+        'Kural tablosunda ilgili kolonun Referans kutusundan seçin.'
+      ]);
+    } catch (err) {
+      RPA.showError('tc-rule-alert', err.message);
+    } finally {
+      RPA.setBusy(button, false);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // The marketplace's RuleSet
   // ---------------------------------------------------------------------------
@@ -468,6 +592,34 @@
     { label: 'Çakışma', render: a => RPA.fmtInt(a.conflict), numeric: true },
     { label: 'Başlıkta yok', render: a => RPA.fmtInt(a.notInTitle), numeric: true },
     { label: 'Boş', render: a => RPA.fmtInt(a.empty), numeric: true }
+  ];
+
+  /**
+   * What is still standing in the cleaned titles.
+   *
+   * "Talep eden yok" is the ordinary case — a model code, a marketing word — so it is the quiet
+   * badge. Everything else is a setting standing between a column and a word it already carries,
+   * and those come first in the list precisely because they can be acted on.
+   */
+  const LEFTOVER_BADGE = {
+    Unclaimed: '',
+    RemoveOff: 'amber',
+    NeedsSuffix: 'amber',
+    NeedsPartial: 'amber',
+    Unmatched: 'amber'
+  };
+
+  const leftoverColumns = [
+    { label: 'Kelime', render: l => RPA.escapeHtml(l.word) },
+    { label: 'Satır', render: l => RPA.fmtInt(l.rows), numeric: true },
+    { label: 'Kolon', render: l => RPA.escapeHtml(l.column || '—'), filter: 'select' },
+    {
+      label: 'Neden',
+      render: l => '<span class="badge ' + (LEFTOVER_BADGE[l.cause] || '') + '">' +
+        RPA.escapeHtml(l.reason) + '</span>',
+      filter: 'select'
+    },
+    { label: 'Örnek başlık', render: l => RPA.escapeHtml(l.sample) }
   ];
 
   // ---------------------------------------------------------------------------
@@ -635,6 +787,9 @@
 
     RPA.renderDataTable('tc-conflict-wrap', data.conflicting || [], rowColumns,
       'Hiçbir satırda başlık ile özellik çelişmiyor.');
+
+    RPA.renderDataTable('tc-leftovers-wrap', data.leftovers || [], leftoverColumns,
+      'Başlıklarda kelime kalmadı.');
 
     RPA.renderDataTable('tc-rows-wrap', data.preview || [], rowColumns,
       'Gösterilecek satır yok.');
@@ -825,6 +980,7 @@
     loadSets('');
     loadUnitPresets();
     loadRuleSetStatus();
+    loadReferenceLists();
 
     el('tc-suggest').addEventListener('click', suggest);
     el('tc-preview').addEventListener('click', preview);
@@ -887,6 +1043,12 @@
       if (event.target.classList.contains('tc-unit-preset') && event.target.value)
         event.target.closest('tr').querySelector('.tc-units').value = event.target.value;
 
+      // The picker is rebuilt whenever the loaded lists change, and it rebuilds itself from
+      // data-value — so a choice that only lived in select.value would be lost the moment someone
+      // uploaded another list.
+      if (event.target.classList.contains('tc-reference'))
+        event.target.dataset.value = event.target.value;
+
       markDirty();
     });
 
@@ -904,6 +1066,12 @@
     el('tc-ruleset-import').addEventListener('click', () => el('tc-ruleset-file').click());
     el('tc-ruleset-file').addEventListener('change', function () {
       if (this.files[0]) importCategoryRules(this.files[0]);
+      this.value = '';
+    });
+
+    el('tc-reference-import').addEventListener('click', openReferenceFile);
+    el('tc-reference-file').addEventListener('change', function () {
+      if (this.files[0]) importReferenceList(this.files[0]);
       this.value = '';
     });
 

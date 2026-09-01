@@ -20,7 +20,7 @@ public class TitleRuleStoreTests
         [
             new TitleAttributeRule("Ürün Tipi"),
             new TitleAttributeRule("Sabit Disk Kapasitesi", TitleAttributeKind.Measure, Units: [Gb, Tb]),
-            new TitleAttributeRule("Ekran Kartı", Remove: false),
+            new TitleAttributeRule("Ekran Kartı", Remove: false, AllowPartial: true),
             new TitleAttributeRule("RAM", TitleAttributeKind.Measure, FillFromTitle: true, Units: [Gb]),
             new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
                 Correct: false,
@@ -183,6 +183,39 @@ public class TitleRuleStoreTests
         var rule = TitleRuleStore.ReadWorkbook(stream, "kurallar.csv").Single().AttributeList.Single();
 
         Assert.False(rule.AllowSuffix);
+        Assert.False(rule.AllowPartial);
+        Assert.Null(rule.ReferenceList);
+    }
+
+    /// <summary>
+    /// A reference list is a name written in a cell, so it has to survive the trip out to a workbook
+    /// and back — otherwise exporting a rule set and re-importing it silently drops the one thing that
+    /// lets a column remove more than its own cell says.
+    /// </summary>
+    [Fact]
+    public void AReferenceListNameSurvivesTheExcelRoundTrip()
+    {
+        var set = new TitleRuleSet("Laptop", "Başlık",
+            [new TitleAttributeRule("İşlemci", ReferenceList: "İşlemciler")]);
+
+        var bytes = TitleRuleStore.BuildWorkbook([set]);
+
+        using var stream = new MemoryStream(bytes);
+        var rule = TitleRuleStore.ReadWorkbook(stream, "kural-setleri.xlsx").Single().AttributeList.Single();
+
+        Assert.Equal("İşlemciler", rule.ReferenceList);
+    }
+
+    /// <summary>And an empty cell comes back as no list rather than as a list named nothing.</summary>
+    [Fact]
+    public void ARuleWithNoReferenceListComesBackWithNone()
+    {
+        var bytes = TitleRuleStore.BuildWorkbook([Laptop()]);
+
+        using var stream = new MemoryStream(bytes);
+        var read = TitleRuleStore.ReadWorkbook(stream, "kural-setleri.xlsx").Single();
+
+        Assert.All(read.AttributeList, rule => Assert.Null(rule.ReferenceList));
     }
 
     /// <summary>The Tip cell is written in English and read back through the Turkish label the editor
@@ -335,6 +368,7 @@ public class TitleRuleStoreTests
             Assert.Equal(want.Correct, got.Correct);
             Assert.Equal(want.FillFromTitle, got.FillFromTitle);
             Assert.Equal(want.AllowSuffix, got.AllowSuffix);
+            Assert.Equal(want.AllowPartial, got.AllowPartial);
 
             Assert.Equal(
                 want.UnitList.Select(u => (u.Canonical, u.Factor)),

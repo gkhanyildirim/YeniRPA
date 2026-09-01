@@ -22,7 +22,10 @@ namespace YeniRPA.Web.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/title-cleaner")]
-public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleStore categories) : ControllerBase
+public sealed class TitleCleanerController(
+    TitleRuleStore store,
+    CategoryRuleStore categories,
+    TitleReferenceStore references) : ControllerBase
 {
     // [FromForm] is not optional on the string parameters below. Under [ApiController] a simple type
     // binds from the route or query string by default — only IFormFile is taken from the multipart
@@ -82,6 +85,66 @@ public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleSto
         return Ok(categories.Status());
     }
 
+    // ---------------------------------------------------------------------
+    // Reference lists
+    // ---------------------------------------------------------------------
+
+    [HttpGet("reference-lists")]
+    public IActionResult GetReferenceLists() => Ok(references.Status());
+
+    /// <summary>
+    /// Takes a catalogue workbook and keeps one of its columns as a named list of values.
+    ///
+    /// <para>Parsed here rather than on every preview, the same as the RuleSet above: a five thousand
+    /// row catalogue only changes when a new edition is published, and re-reading it per run would be
+    /// work repeated for an answer that does not move.</para>
+    ///
+    /// <para>The column is asked for rather than guessed. A catalogue workbook carries provenance
+    /// notes, family names and source URLs beside the values, and picking the wrong column would load
+    /// a list of Wikipedia links as though they were processor names.</para>
+    /// </summary>
+    [HttpPost("reference-lists")]
+    public async Task<IActionResult> PutReferenceList(
+        IFormFile? file,
+        [FromForm] string? name,
+        [FromForm] string? column,
+        CancellationToken cancellationToken)
+    {
+        if (file is not { Length: > 0 })
+            return BadRequest(new { error = "Referans listesi çalışma kitabını (.xlsx) yükleyin." });
+
+        if (string.IsNullOrWhiteSpace(name))
+            return BadRequest(new { error = "Listeye bir ad verin." });
+
+        if (string.IsNullOrWhiteSpace(column))
+            return BadRequest(new { error = "Değerlerin hangi kolonda olduğunu yazın." });
+
+        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        var values = TitleReferenceStore.ReadWorkbook(stream, column);
+
+        references.Put(new TitleReferenceList(
+            name.Trim(), $"{file.FileName} · {column.Trim()}", values));
+
+        return Ok(references.Status());
+    }
+
+    /// <summary>
+    /// Deletes one list. Unlike a rule set this is derived data and uploading the workbook again
+    /// rebuilds it, so nothing is lost — but a rule still naming it will refuse to compile until the
+    /// operator clears that box, which is the loud failure rather than the silent one.
+    /// </summary>
+    [HttpDelete("reference-lists/{name}")]
+    public IActionResult DeleteReferenceList(string name)
+    {
+        var before = references.Status().Count;
+        var after = references.Remove(name).ListList.Count;
+
+        if (after == before)
+            return BadRequest(new { error = $"'{name}' adında bir referans listesi yok." });
+
+        return Ok(references.Status());
+    }
+
     /// <summary>
     /// The unit families the rule editor offers as ready-made choices, each already encoded in the
     /// cell format.
@@ -100,6 +163,7 @@ public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleSto
     public IActionResult PutRules([FromBody] JsonElement body)
     {
         var file = TitleRuleStore.FromForm(TitleRuleStore.ParseFileForm(body.GetRawText()));
+        var lists = references.Load().ListList;
 
         foreach (var set in file.Sets)
         {
@@ -107,8 +171,9 @@ public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleSto
                 return BadRequest(new { error = "Her kural setinin bir adı olmalı." });
 
             // Compiled now rather than at run time: a set that cannot run is refused while the
-            // operator is still looking at it, not on their next upload.
-            CompiledRuleSet.Compile(set);
+            // operator is still looking at it, not on their next upload. The reference lists have to
+            // come along, or a rule naming a list that IS loaded would be refused on the way in.
+            CompiledRuleSet.Compile(set, lists);
         }
 
         var duplicate = file.Sets
@@ -168,9 +233,10 @@ public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleSto
 
         using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
         var sets = TitleRuleStore.ReadWorkbook(stream, file.FileName);
+        var lists = references.Load().ListList;
 
         foreach (var set in sets)
-            CompiledRuleSet.Compile(set);
+            CompiledRuleSet.Compile(set, lists);
 
         return Ok(TitleRuleStore.ToForm(new TitleRuleFile(1, null, sets)));
     }
@@ -236,6 +302,8 @@ public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleSto
         var suggested = TitleFixSuggester.Suggest(rules, cleaned)
             .Concat(TitleFixSuggester.SuggestCategoryTypes(
                 rules, cleaned, categories.Load().RuleList, CategoryRuleStore.FileCategory(table)))
+            .Concat(TitleFixSuggester.SuggestSettings(
+                rules, cleaned, TitleLeftoverReport.Build(rules, cleaned)))
             .ToList();
 
         // Where the operator had to choose the owning column, or corrected the proposed phrase, that
@@ -304,8 +372,12 @@ public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleSto
     /// </summary>
     CompiledRuleSet Resolve(string? posted, string? name)
     {
+        // Every run goes through here — preview, the Excel download and the fix application — so the
+        // reference lists are read in one place rather than remembered at three call sites.
+        var lists = references.Load().ListList;
+
         if (!string.IsNullOrWhiteSpace(posted))
-            return CompiledRuleSet.Compile(TitleRuleStore.ParseRuleSetForm(posted));
+            return CompiledRuleSet.Compile(TitleRuleStore.ParseRuleSetForm(posted), lists);
 
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidOperationException("Bu çalıştırma için bir kural seti seçilmedi.");
@@ -313,7 +385,7 @@ public sealed class TitleCleanerController(TitleRuleStore store, CategoryRuleSto
         var saved = store.Find(name)
             ?? throw new InvalidOperationException($"'{name}' adında kayıtlı bir kural seti yok.");
 
-        return CompiledRuleSet.Compile(saved);
+        return CompiledRuleSet.Compile(saved, lists);
     }
 
     static async Task<List<List<string>>> ReadTableAsync(IFormFile file, CancellationToken cancellationToken)

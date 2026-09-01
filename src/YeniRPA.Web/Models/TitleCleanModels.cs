@@ -59,6 +59,17 @@ public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Unit
 /// <param name="FillFromTitle">Whether an empty cell may be filled from the title. Off by default:
 /// it writes in the opposite direction from everything else here, so it is enabled per attribute
 /// rather than assumed.</param>
+/// <param name="AllowPartial">
+/// Whether part of the cell's value may answer for the whole of it — a cell reading "CETINTAS EVII"
+/// against a title that says only "Çetintaş", or "Temperli Cam" against one that says only "Cam".
+///
+/// <para>Off by default and enabled per attribute, and the reason is worth writing down because the
+/// first attempt at this had it always on. A catalogue holding "Windows 11 Pro" then matched the
+/// word <em>Pro</em> in "Dell Pro Max 16", and cut it out of a title that had nothing to do with an
+/// operating system. The words a value is made of are ordinary words; that some of them are missing
+/// from the title is not evidence that the rest of them mean the value. Only the operator knows
+/// which columns are written this way — a brand or a material, not a product type.</para>
+/// </param>
 /// <param name="AllowSuffix">
 /// Whether a match may run to the end of a word carrying a Turkish inflection — the title's
 /// "Ankastre Ocaklar" answering a cell reading "Ankastre ocak". The whole word goes; no "lar" is
@@ -68,6 +79,15 @@ public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Unit
 /// words. A column of model codes must never have it: "GLO 022SARS" ends in letters that a suffix
 /// rule has no business reading, and a wrong extension here deletes part of a model name.</para>
 /// </param>
+/// <param name="ReferenceList">
+/// Name of a <see cref="TitleReferenceList"/> this column may consult, or null. The list supplies
+/// <em>longer</em> spellings than the cell carries — a processor catalogue's "Intel Core Ultra 5 125H"
+/// against a cell reading "Intel Core Ultra 5" — so a title can be cleaned of the model code the cell
+/// never mentions.
+///
+/// <para>Removal stays a whitelist: an entry is only ever used where the row's own cell value is
+/// contained in it. See <c>AttributeMatcher.AddReference</c>.</para>
+/// </param>
 public sealed record TitleAttributeRule(
     string Column,
     TitleAttributeKind Kind = TitleAttributeKind.Text,
@@ -75,8 +95,10 @@ public sealed record TitleAttributeRule(
     bool Correct = true,
     bool FillFromTitle = false,
     bool AllowSuffix = false,
+    bool AllowPartial = false,
     IReadOnlyList<MeasureUnit>? Units = null,
-    IReadOnlyList<IReadOnlyList<string>>? Aliases = null)
+    IReadOnlyList<IReadOnlyList<string>>? Aliases = null,
+    string? ReferenceList = null)
 {
     public IReadOnlyList<MeasureUnit> UnitList => Units ?? [];
 
@@ -108,6 +130,47 @@ public sealed record TitleRuleFile(
     int Version,
     string? UpdatedUtc,
     IReadOnlyList<TitleRuleSet> Sets);
+
+// ---------------------------------------------------------------------
+// Reference lists
+// ---------------------------------------------------------------------
+//
+// An attribute cell says what a product is; it does not always say it in full. A laptop export's
+// processor column reads "Intel Core Ultra 5" while its titles read "Ultra5 125H", and no rule built
+// out of that file can remove the model code, because no cell in it contains one.
+//
+// A reference list closes that gap without teaching the engine anything about processors: it is a
+// column of full canonical values out of a workbook the operator uploads, and it is consulted only
+// through the row's own cell. Nothing about it is specific to a category — a GPU catalogue, a panel
+// list or a fabric list is the same shape and takes the same path.
+
+/// <summary>
+/// A named list of full canonical values, uploaded from a workbook column.
+/// </summary>
+/// <param name="Name">What a rule refers to it by. Unique within the file, folded for comparison.</param>
+/// <param name="SourceName">The workbook and column it came from — the only record of which edition
+/// is loaded, the same reason <see cref="CategoryRuleFile.SourceName"/> exists.</param>
+/// <param name="Values">Entries as the source spelled them, de-duplicated, in the source's order.</param>
+public sealed record TitleReferenceList(
+    string Name,
+    string? SourceName,
+    IReadOnlyList<string> Values)
+{
+    public IReadOnlyList<string> ValueList => Values ?? [];
+}
+
+/// <summary>The file <c>TitleReferenceStore</c> owns. Kept apart from <c>title-rules.json</c> because
+/// a catalogue runs to thousands of lines and that file is meant to stay hand-readable.</summary>
+public sealed record TitleReferenceFile(
+    int Version,
+    string? UpdatedUtc,
+    IReadOnlyList<TitleReferenceList> Lists)
+{
+    public IReadOnlyList<TitleReferenceList> ListList => Lists ?? [];
+}
+
+/// <summary>What the editor shows about one loaded reference list.</summary>
+public sealed record TitleReferenceStatus(string Name, string? SourceName, int Values);
 
 // ---------------------------------------------------------------------
 // The marketplace's own category rules
@@ -173,8 +236,10 @@ public sealed record TitleAttributeForm(
     bool Correct = true,
     bool FillFromTitle = false,
     bool AllowSuffix = false,
+    bool AllowPartial = false,
     string Units = "",
-    string Aliases = "");
+    string Aliases = "",
+    string ReferenceList = "");
 
 /// <summary>One ready-made unit set the editor offers, on its way to the browser.</summary>
 /// <param name="Units">Already encoded into the cell format by <c>TitleRuleStore</c>. The browser
@@ -332,6 +397,18 @@ public enum TitleFixKind
     /// <summary>The title names a product type the marketplace's own RuleSet defines: take that
     /// rule's whole group — canonical plus every spelling it accepts — into the column's catalogue.</summary>
     AdoptCategoryType,
+
+    /// <summary>
+    /// Turn on whatever settings stand between a column and words it already carries — Çıkar, Ek,
+    /// Kısmi, in whatever combination the leftover report found.
+    ///
+    /// <para>All of them at once, and on purpose. A column can be held back by two switches at the
+    /// same time — its removal is off <em>and</em> its value only partly appears — and lifting one of
+    /// those changes nothing, so a card offering one alone gets filtered out for having no effect.
+    /// The operator would then never be offered either. One card, one column, every switch that
+    /// column needs.</para>
+    /// </summary>
+    EnableMatching,
 }
 
 /// <summary>
@@ -373,6 +450,44 @@ public sealed record TitleFix(
     string? Warning = null,
     bool Preselected = true);
 
+/// <summary>Why a word is still standing in the cleaned titles.</summary>
+public enum TitleLeftoverCause
+{
+    /// <summary>No column's cell carries it — a model code, a marketing word, a size nobody mapped.
+    /// Ordinary, and the bulk of what a clean run leaves behind.</summary>
+    Unclaimed,
+
+    /// <summary>A column carries it and the rule found it, but that rule says do not remove.</summary>
+    RemoveOff,
+
+    /// <summary>A column carries it under an inflection its rule is not allowed to follow.</summary>
+    NeedsSuffix,
+
+    /// <summary>A column carries it as part of a longer value whose other words the title omits.</summary>
+    NeedsPartial,
+
+    /// <summary>A column carries it and none of the above explains the miss — the title spells it some
+    /// way the catalogue has no entry for.</summary>
+    Unmatched,
+}
+
+/// <summary>
+/// One word still standing in the cleaned titles, and what accounts for it.
+///
+/// <para>This is the answer to the only question an operator actually asks of a cleaned file: why is
+/// <em>that</em> still there. Without it the question can only be answered by reading a rule table
+/// against a title by eye, which is how a column with its removal switched off looks exactly like a
+/// column that failed to match.</para>
+/// </summary>
+/// <param name="Column">The column whose own cell carries this word, where there is one.</param>
+public sealed record TitleLeftover(
+    string Word,
+    int Rows,
+    string? Column,
+    TitleLeftoverCause Cause,
+    string Reason,
+    string Sample);
+
 /// <summary>How one attribute fared across the whole file — the table the team tunes rules against.</summary>
 public sealed record TitleAttributeSummary(
     string Column,
@@ -402,4 +517,5 @@ public sealed record TitleCleanData(
     IReadOnlyList<TitleCleanRow> Conflicting,
     int PreviewLimit,
     IReadOnlyList<string> Notes,
-    IReadOnlyList<TitleFix> Fixes);
+    IReadOnlyList<TitleFix> Fixes,
+    IReadOnlyList<TitleLeftover> Leftovers);
