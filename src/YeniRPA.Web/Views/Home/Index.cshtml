@@ -198,6 +198,10 @@
                 @* The headline figures. Everything under them is the explanation. *@
                 <div class="hero" id="order-hero"></div>
 
+                @* Names the period every change badge above and below is measured against — a
+                   comparison with an unnamed baseline is a number nobody can check. *@
+                <p class="note" id="order-baseline-note" hidden></p>
+
                 <div class="section-title" id="sec-overview" data-section="Overview">
                     Key metrics
                     <partial name="_ExportButton" model='new ExportButton("order-kpis", "Key metrics")' />
@@ -2382,6 +2386,65 @@
                                     <td>Revenue lost to cancellations and refunds.</td>
                                     <td><code>Total canceled amount</code>&nbsp;+&nbsp;<code>Total refunded amount</code>.</td>
                                     <td>Money-weighted, not count-weighted: one expensive cancellation moves it a lot. Not printed anywhere as a figure &mdash; it is what ranks <em>Every line that did not complete cleanly</em>, worst first.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Comparison with the previous period</h3>
+                    <p class="sub">
+                        Every figure in the hero strip and in <em>Key metrics</em> carries the change against
+                        the period immediately before the one on screen
+                    </p>
+                    <div class="table-scroll is-full">
+                        <table>
+                            <thead>
+                                <tr><th>Question</th><th>Answer</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Which period is the baseline?</strong></td>
+                                    <td>
+                                        The window immediately before the active date filter, of the same length,
+                                        measured on <code>Date created</code>. A filter that is exactly one calendar
+                                        month is compared against the previous <em>calendar month</em> instead, so a
+                                        31-day August is not measured against a window reaching back into June.
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Where does the baseline data come from?</strong></td>
+                                    <td>
+                                        The uploaded file itself &mdash; nothing is stored between runs. If the export
+                                        does not reach back far enough, no change is shown at all rather than a
+                                        comparison against a period that is only partly in the file.
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Does the seller filter apply to it?</strong></td>
+                                    <td>
+                                        Yes. Narrowing to one seller compares that seller with themselves, not with
+                                        the whole marketplace.
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Why do rates move in &ldquo;pp&rdquo; and counts in &ldquo;%&rdquo;?</strong></td>
+                                    <td>
+                                        A cancellation rate going from 5.4% to 7.1% has risen 1.7 percentage points.
+                                        Calling that a 31.5% rise would read as a collapse it is not, so rates state
+                                        the point difference and only counts and durations state a percent change.
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>What do the colours mean?</strong></td>
+                                    <td>
+                                        Green is a move in the good direction for that metric and red a move in the
+                                        bad one &mdash; a rising acceptance rate is green, a rising rejection rate is
+                                        red. Order lines has no good direction, so its change stays uncoloured. The
+                                        arrow carries the direction on its own, so the badge reads correctly without
+                                        the colour.
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>

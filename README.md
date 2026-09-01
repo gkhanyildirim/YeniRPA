@@ -220,6 +220,17 @@ analysis, category performance and data quality. They read **optional** columns,
 without them still renders; each affected section shows an empty state naming the missing column,
 and a banner above *Key metrics* lists them all.
 
+**Period-over-period comparison.** The hero strip and every *Key metrics* tile carry the change
+against the window immediately before the active date filter, of the same length, measured on
+`Date created`; a filter that is exactly one calendar month is compared against the previous
+*calendar month* instead, so a 31-day August is not measured against a window reaching back into
+June. Rates state the difference in percentage points (`▲ 1.7 pp`) and counts and durations a
+percent change (`▲ 31.9%`) — calling a 5.4% → 7.1% cancellation rate a 31.5% rise would read as a
+collapse it is not. The seller filter applies to the baseline too. **Nothing is stored between
+runs**, so the baseline exists only where the uploaded export itself reaches back that far; where it
+does not, no change is shown and the note under the hero offers the last whole month in the file as
+a range that would produce one.
+
 ## Title Cleaner
 
 Product titles have to follow a per-category naming standard. The cleaner reads **each row's own

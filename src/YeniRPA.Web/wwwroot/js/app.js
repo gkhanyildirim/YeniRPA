@@ -573,13 +573,15 @@ window.RPA = window.RPA || {};
   /**
    * Renders a KPI grid.
    *
-   * An item is either a tile — `[label, value, tone, context]`, where `tone` is ''/red/amber/green
-   * and `context` is the optional line under the figure — or a band label, `{ group: 'Speed' }`,
+   * An item is either a tile — `[label, value, tone, context, delta]`, where `tone` is
+   * ''/red/amber/green, `context` is the optional line under the figure and `delta` is the optional
+   * period-over-period badge `{ text, tone, context }` — or a band label, `{ group: 'Speed' }`,
    * which splits the grid into the groups the metrics actually belong to.
    *
    * `options.exportRows` overrides what the section's Excel button hands over. The order report
    * uses it to keep exporting all twelve key metrics while four of them are shown in the hero
-   * above rather than as tiles here.
+   * above rather than as tiles here. `options.exportColumns` widens that sheet past the default
+   * Metric/Value pair — the order report adds the previous period and its change.
    */
   RPA.renderKpis = function (gridId, items, options) {
     const opts = options || {};
@@ -587,9 +589,11 @@ window.RPA = window.RPA || {};
 
     // A KPI block is a label/value readout rather than something anyone sums, so the exported value
     // is the formatted string that is on screen ("8.3%", "36.7h") instead of a bare number.
+    const exportColumns = opts.exportColumns ||
+      [{ label: 'Metric' }, { label: 'Value', numeric: true }];
     RPA.registerExport(gridId, {
-      columns: [{ label: 'Metric' }, { label: 'Value', numeric: true }],
-      rows: (opts.exportRows || tiles).map(([label, value]) => [label, value])
+      columns: exportColumns,
+      rows: (opts.exportRows || tiles).map(row => row.slice(0, exportColumns.length))
     });
 
     let tileIndex = 0;
@@ -599,7 +603,7 @@ window.RPA = window.RPA || {};
         return '<div class="kpi-band">' + RPA.escapeHtml(item.group) + '</div>';
       }
 
-      const [label, value, tone, context] = item;
+      const [label, value, tone, context, delta] = item;
 
       // Values are never broken mid-number, so a long one (e.g. "124,652,748.41 TRY")
       // has to be stepped down in size instead of wrapping or clipping.
@@ -614,9 +618,23 @@ window.RPA = window.RPA || {};
                  RPA.escapeHtml(value) +
                '</div>' +
                (context ? '<div class="kpi-context">' + RPA.escapeHtml(context) + '</div>' : '') +
+               deltaHtml('kpi-delta', delta) +
              '</div>';
     }).join('');
   };
+
+  /**
+   * The period-over-period badge under a figure: `{ text, tone, context }`, where `tone` is
+   * ''/red/green and `context` names the value it is measured against. The arrow in `text` carries
+   * the direction on its own, so the colour is never the only thing saying which way it moved.
+   */
+  function deltaHtml(className, delta) {
+    if (!delta || !delta.text) return '';
+    return '<div class="' + className + (delta.tone ? ' is-' + delta.tone : '') + '">' +
+             RPA.escapeHtml(delta.text) +
+             (delta.context ? '<span>' + RPA.escapeHtml(delta.context) + '</span>' : '') +
+           '</div>';
+  }
 
   // ---------------------------------------------------------------------------
   // Hero, sparkline, chart legend, section index
@@ -653,8 +671,12 @@ window.RPA = window.RPA || {};
 
   /**
    * The headline row of a report: a few figures set large, with an optional sparkline beside them.
-   * Figures are `{ value, label, context, tone }`; `options.spark` is the series to draw and
-   * `options.sparkLabel` / `options.sparkRange` caption it.
+   * Figures are `{ value, label, context, tone, delta }`, where `delta` is the optional
+   * period-over-period badge; `options.spark` is the series to draw and `options.sparkLabel` /
+   * `options.sparkRange` caption it.
+   *
+   * The badge is a sibling of `.hero-value`, never a child of it: `countUp` animates the first
+   * number it finds in that element, and a delta inside it would be counted up instead of the figure.
    */
   RPA.renderHero = function (elId, figures, options) {
     const el = document.getElementById(elId);
@@ -666,6 +688,7 @@ window.RPA = window.RPA || {};
         '<div class="hero-value ' + (f.tone || '') + '" data-value="' + RPA.escapeHtml(f.value) + '">' +
           RPA.escapeHtml(f.value) +
         '</div>' +
+        deltaHtml('hero-delta', f.delta) +
         '<div class="hero-label">' + RPA.escapeHtml(f.label) + '</div>' +
         (f.context ? '<div class="hero-context">' + RPA.escapeHtml(f.context) + '</div>' : '') +
       '</div>').join('');

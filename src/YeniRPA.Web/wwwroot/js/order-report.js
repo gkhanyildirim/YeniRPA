@@ -366,9 +366,126 @@
     ], 'No order line in the selected range names a shipping company.');
   }
 
-  function computeAndRender(rows) {
-    const p = RPA.palette();
+  // ---------------------------------------------------------------------------
+  // Period-over-period comparison
+  // ---------------------------------------------------------------------------
 
+  const DAY_MS = 86400000;
+  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  /** yyyy-mm-dd in local time — the shape the two date inputs read and write. */
+  function isoDay(d) {
+    const pad = n => (n < 10 ? '0' + n : String(n));
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  const monthStart = d => new Date(d.getFullYear(), d.getMonth(), 1);
+  const monthEnd = d => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+
+  /** True when the range is exactly one calendar month — the 1st through that month's last day. */
+  function isWholeMonth(from, to) {
+    return from.getDate() === 1 &&
+           from.getFullYear() === to.getFullYear() && from.getMonth() === to.getMonth() &&
+           to.getDate() === monthEnd(to).getDate();
+  }
+
+  /** "Jul 2026" for a whole month, "30 Jul 2026 – 9 Aug 2026" otherwise. */
+  function periodLabel(from, to) {
+    if (isWholeMonth(from, to)) return MONTH_NAMES[from.getMonth()] + ' ' + from.getFullYear();
+    const one = d => d.getDate() + ' ' + MONTH_NAMES[d.getMonth()] + ' ' + d.getFullYear();
+    return one(from) + ' – ' + one(to);
+  }
+
+  /**
+   * The two periods the report compares: the range currently on screen, and the window immediately
+   * before it of the same length.
+   *
+   * A filter that is exactly one calendar month compares against the previous calendar month rather
+   * than against the same number of days — otherwise a 31-day August would be measured against a
+   * window reaching back into June, and every month with a different length would be shifted.
+   *
+   * With no date filter the current period is the whole span of the file, which puts the baseline
+   * outside the upload and leaves nothing to compare against. `suggestion` then names the latest
+   * whole month the file does cover, which the note under the hero offers as one click.
+   */
+  function resolvePeriods(fromVal, toVal) {
+    const created = ROWS.map(r => r.dc).filter(Boolean).sort();
+    if (!created.length) return null;
+
+    const dataFrom = new Date(created[0].slice(0, 10) + 'T00:00:00');
+    const dataTo = new Date(created[created.length - 1].slice(0, 10) + 'T00:00:00');
+
+    const from = fromVal ? new Date(fromVal + 'T00:00:00') : dataFrom;
+    const to = toVal ? new Date(toVal + 'T00:00:00') : dataTo;
+    if (!isFinite(from.getTime()) || !isFinite(to.getTime()) || to < from) return null;
+
+    let baseFrom, baseTo;
+    if (fromVal && toVal && isWholeMonth(from, to)) {
+      baseTo = new Date(from.getFullYear(), from.getMonth(), 0);
+      baseFrom = monthStart(baseTo);
+    } else {
+      const days = Math.round((to - from) / DAY_MS) + 1;
+      baseTo = new Date(from.getFullYear(), from.getMonth(), from.getDate() - 1);
+      baseFrom = new Date(from.getFullYear(), from.getMonth(), from.getDate() - days);
+    }
+
+    // Only worth offering when the month before it is actually in the file — a button that empties
+    // the comparison it promises is worse than no button.
+    const latestMonth = monthStart(dataTo);
+    const suggestion = (!(fromVal && toVal) && dataFrom < latestMonth)
+      ? { from: isoDay(latestMonth), to: isoDay(monthEnd(dataTo)),
+          label: periodLabel(latestMonth, monthEnd(dataTo)),
+          against: periodLabel(monthStart(new Date(dataTo.getFullYear(), dataTo.getMonth(), 0)),
+                               new Date(dataTo.getFullYear(), dataTo.getMonth(), 0)) }
+      : null;
+
+    return {
+      baseline: { from: baseFrom, to: new Date(baseTo.getFullYear(), baseTo.getMonth(), baseTo.getDate(), 23, 59, 59) },
+      label: periodLabel(baseFrom, baseTo),
+      suggestion: suggestion
+    };
+  }
+
+  /**
+   * The move from `previous` to `current`.
+   *
+   * Rates move in percentage points and everything else in percent: a cancellation rate going from
+   * 5.4% to 7.1% has risen 1.7 points, and calling that a 31.5% rise would read as a collapse it is
+   * not. `dir` names the direction that counts as an improvement, and is left off for a figure like
+   * order lines where neither direction is good news.
+   */
+  function changeBadge(current, previous, kind, dir, fmt) {
+    if (previous === null || previous === undefined || !isFinite(previous)) return null;
+    // A count that rises from nothing has no percent to state — but one that stayed at nothing has
+    // not moved, and saying so beats leaving a gap next to the rate that reports the same standstill.
+    if (kind !== 'rate' && !previous && current) return null;
+
+    const raw = (kind === 'rate')
+      ? (current - previous) * 100
+      : (previous ? ((current - previous) / previous) * 100 : 0);
+    if (!isFinite(raw)) return null;
+
+    const moved = Math.round(raw * 10) / 10;
+    // The arrow carries the direction on its own, so the badge still reads correctly without colour.
+    const arrow = moved > 0 ? '▲ ' : moved < 0 ? '▼ ' : '→ ';
+    const tone = (!dir || !moved) ? '' : ((moved > 0) === (dir === 'up-good') ? 'green' : 'red');
+
+    return {
+      text: arrow + Math.abs(moved).toFixed(1) + (kind === 'rate' ? ' pp' : '%'),
+      tone: tone,
+      context: fmt ? 'was ' + fmt(previous) : ''
+    };
+  }
+
+  /**
+   * Every figure the hero and the Key metrics block are built from, over one set of rows.
+   *
+   * This is separate from the rendering below for one reason: the same arithmetic has to run a
+   * second time over the baseline period. Two copies of these rules would eventually disagree, and
+   * a comparison whose halves are computed differently is worse than no comparison at all.
+   */
+  function computeMetrics(rows) {
     const shippedRows = rows.filter(r => r.sh);
     const totalLines = rows.length;
     const shipped = shippedRows.length;
@@ -414,6 +531,36 @@
 
     const sellerCount = new Set(rows.map(r => r.s).filter(Boolean)).size;
 
+    return {
+      shippedRows, receivedRows, trendEntries, primaryCurrency, sellerCount,
+      totalLines, shipped, lateShipped, lateRate, canceled, cancelRate,
+      received, rejected, receivedRate, rejectedRate,
+      pendingAcceptance, decided, acceptanceRate,
+      avgHoursToShip, avgHoursReceiveIntegrated, avgHoursReceiveManual
+    };
+  }
+
+  function computeAndRender(rows, baselineRows) {
+    const p = RPA.palette();
+
+    const m = computeMetrics(rows);
+    const base = baselineRows && baselineRows.length ? computeMetrics(baselineRows) : null;
+
+    const { shippedRows, receivedRows, trendEntries, primaryCurrency, sellerCount,
+            totalLines, shipped, lateShipped, lateRate, canceled, cancelRate,
+            received, rejected, receivedRate, rejectedRate, decided,
+            acceptanceRate, avgHoursToShip,
+            avgHoursReceiveIntegrated, avgHoursReceiveManual } = m;
+
+    // Reads one metric off both periods by name, so a figure and its badge can never end up
+    // describing two different things. Yields nothing at all when the file holds no earlier period.
+    const d = (key, kind, dir, fmt) => (base ? changeBadge(m[key], base[key], kind, dir, fmt) : null);
+    const wasText = (key, fmt) => (base ? fmt(base[key]) : '—');
+    const changeText = (key, kind) => {
+      const badge = base ? changeBadge(m[key], base[key], kind) : null;
+      return badge ? badge.text : '—';
+    };
+
     // The figures the report exists to answer, set large above everything else. They are the same
     // numbers as the twelve key metrics below — the whole list still travels to Excel through
     // `exportRows`, so the workbook and the Summary sheet keep their nine boxes either way.
@@ -422,22 +569,29 @@
     // afterwards, and how many of the survivors shipped late. The order-lines-per-day sparkline that
     // used to sit beside them is gone — the same trend has its own chart further down the page.
     RPA.renderHero('order-hero', [
+      // Volume is the one figure with no good direction: more order lines is neither a win nor a
+      // problem, so its badge states the move and stays out of the colour argument.
       { value: RPA.fmtInt(totalLines), label: 'Order lines',
         context: RPA.fmtInt(sellerCount) + ' seller' + (sellerCount === 1 ? '' : 's') + ' · ' +
-                 RPA.fmtInt(shipped) + ' shipped' },
+                 RPA.fmtInt(shipped) + ' shipped',
+        delta: d('totalLines', 'count', '', RPA.fmtInt) },
       { value: RPA.fmtPct(acceptanceRate), label: 'Acceptance rate',
         tone: acceptanceRate >= 0.99 ? 'green' : acceptanceRate >= 0.95 ? 'amber' : 'red',
-        context: RPA.fmtInt(decided - rejected) + ' of ' + RPA.fmtInt(decided) + ' decided lines' },
+        context: RPA.fmtInt(decided - rejected) + ' of ' + RPA.fmtInt(decided) + ' decided lines',
+        delta: d('acceptanceRate', 'rate', 'up-good', RPA.fmtPct) },
       // Above 5% is where these stop being background noise and start being a problem worth opening
       // the report for, which is the only reason they are ever painted red.
       { value: RPA.fmtPct(cancelRate), label: 'Cancellation rate', tone: cancelRate > 0.05 ? 'red' : 'green',
-        context: RPA.fmtInt(canceled) + ' of ' + RPA.fmtInt(totalLines) + ' lines' },
+        context: RPA.fmtInt(canceled) + ' of ' + RPA.fmtInt(totalLines) + ' lines',
+        delta: d('cancelRate', 'rate', 'up-bad', RPA.fmtPct) },
       // Any refusal at all is worth seeing: a rejected line is an order the customer placed and did
       // not get, so nought is the only good number and the only green one.
       { value: RPA.fmtPct(rejectedRate), label: 'Rejection rate', tone: rejected > 0 ? 'red' : 'green',
-        context: RPA.fmtInt(rejected) + ' of ' + RPA.fmtInt(totalLines) + ' lines' },
+        context: RPA.fmtInt(rejected) + ' of ' + RPA.fmtInt(totalLines) + ' lines',
+        delta: d('rejectedRate', 'rate', 'up-bad', RPA.fmtPct) },
       { value: RPA.fmtPct(lateRate), label: 'Late shipment rate', tone: lateRate > 0.05 ? 'red' : 'green',
-        context: RPA.fmtInt(lateShipped) + ' of ' + RPA.fmtInt(shipped) + ' shipped lines' }
+        context: RPA.fmtInt(lateShipped) + ' of ' + RPA.fmtInt(shipped) + ' shipped lines',
+        delta: d('lateRate', 'rate', 'up-bad', RPA.fmtPct) }
     ]);
 
     // A tile only turns red when there is something red about it: nought rejected lines is a good
@@ -446,32 +600,48 @@
 
     RPA.renderKpis('order-kpis', [
       { group: 'Outcome — read from the Status column alone' },
-      ['Received orders', RPA.fmtInt(received), 'green', RPA.fmtPct(receivedRate) + ' of all lines'],
-      ['Rejected orders', RPA.fmtInt(rejected), badIf(rejected), RPA.fmtPct(rejectedRate) + ' of all lines'],
-      ['Rejection rate', RPA.fmtPct(rejectedRate), badIf(rejected), 'over every order line'],
+      ['Received orders', RPA.fmtInt(received), 'green', RPA.fmtPct(receivedRate) + ' of all lines',
+        d('received', 'count', 'up-good', RPA.fmtInt)],
+      ['Rejected orders', RPA.fmtInt(rejected), badIf(rejected), RPA.fmtPct(rejectedRate) + ' of all lines',
+        d('rejected', 'count', 'up-bad', RPA.fmtInt)],
+      ['Rejection rate', RPA.fmtPct(rejectedRate), badIf(rejected), 'over every order line',
+        d('rejectedRate', 'rate', 'up-bad', RPA.fmtPct)],
       { group: 'Shipping deadline & cancellations' },
-      ['Late shipped', RPA.fmtInt(lateShipped), badIf(lateShipped), 'of ' + RPA.fmtInt(shipped) + ' shipped lines'],
-      ['Canceled orders', RPA.fmtInt(canceled), badIf(canceled), RPA.fmtPct(cancelRate) + ' of all lines'],
+      ['Late shipped', RPA.fmtInt(lateShipped), badIf(lateShipped), 'of ' + RPA.fmtInt(shipped) + ' shipped lines',
+        d('lateShipped', 'count', 'up-bad', RPA.fmtInt)],
+      ['Canceled orders', RPA.fmtInt(canceled), badIf(canceled), RPA.fmtPct(cancelRate) + ' of all lines',
+        d('canceled', 'count', 'up-bad', RPA.fmtInt)],
       { group: 'Speed' },
-      ['Avg. hours to ship', RPA.fmtHours(avgHoursToShip), '', 'created → shipped'],
+      ['Avg. hours to ship', RPA.fmtHours(avgHoursToShip), '', 'created → shipped',
+        d('avgHoursToShip', 'hours', 'up-bad', RPA.fmtHours)],
       ['Avg. hours to receive (integrated)', RPA.fmtHours(avgHoursReceiveIntegrated), 'green',
-        'carriers that report delivery'],
+        'carriers that report delivery',
+        d('avgHoursReceiveIntegrated', 'hours', 'up-bad', RPA.fmtHours)],
       ['Avg. hours to receive (manual)', RPA.fmtHours(avgHoursReceiveManual), 'red',
-        'delivery ticked by hand']
+        'delivery ticked by hand',
+        d('avgHoursReceiveManual', 'hours', 'up-bad', RPA.fmtHours)]
     ], {
+      // Four columns once there is something to compare against, the original two when there is not
+      // — a sheet of em-dashes would say less than leaving the columns off.
+      exportColumns: base
+        ? [{ label: 'Metric' }, { label: 'Value', numeric: true },
+           { label: 'Previous period', numeric: true }, { label: 'Change', numeric: true }]
+        : null,
       exportRows: [
-        ['Total order lines', RPA.fmtInt(totalLines)],
-        ['Received orders', RPA.fmtInt(received)],
-        ['Received rate', RPA.fmtPct(receivedRate)],
-        ['Rejected orders', RPA.fmtInt(rejected)],
-        ['Rejection rate', RPA.fmtPct(rejectedRate)],
-        ['Late shipped', RPA.fmtInt(lateShipped)],
-        ['Late shipment rate', RPA.fmtPct(lateRate)],
-        ['Canceled orders', RPA.fmtInt(canceled)],
-        ['Cancellation rate', RPA.fmtPct(cancelRate)],
-        ['Avg. hours to ship', RPA.fmtHours(avgHoursToShip)],
-        ['Avg. hours to receive (integrated)', RPA.fmtHours(avgHoursReceiveIntegrated)],
-        ['Avg. hours to receive (manual)', RPA.fmtHours(avgHoursReceiveManual)]
+        ['Total order lines', RPA.fmtInt(totalLines), wasText('totalLines', RPA.fmtInt), changeText('totalLines', 'count')],
+        ['Received orders', RPA.fmtInt(received), wasText('received', RPA.fmtInt), changeText('received', 'count')],
+        ['Received rate', RPA.fmtPct(receivedRate), wasText('receivedRate', RPA.fmtPct), changeText('receivedRate', 'rate')],
+        ['Rejected orders', RPA.fmtInt(rejected), wasText('rejected', RPA.fmtInt), changeText('rejected', 'count')],
+        ['Rejection rate', RPA.fmtPct(rejectedRate), wasText('rejectedRate', RPA.fmtPct), changeText('rejectedRate', 'rate')],
+        ['Late shipped', RPA.fmtInt(lateShipped), wasText('lateShipped', RPA.fmtInt), changeText('lateShipped', 'count')],
+        ['Late shipment rate', RPA.fmtPct(lateRate), wasText('lateRate', RPA.fmtPct), changeText('lateRate', 'rate')],
+        ['Canceled orders', RPA.fmtInt(canceled), wasText('canceled', RPA.fmtInt), changeText('canceled', 'count')],
+        ['Cancellation rate', RPA.fmtPct(cancelRate), wasText('cancelRate', RPA.fmtPct), changeText('cancelRate', 'rate')],
+        ['Avg. hours to ship', RPA.fmtHours(avgHoursToShip), wasText('avgHoursToShip', RPA.fmtHours), changeText('avgHoursToShip', 'hours')],
+        ['Avg. hours to receive (integrated)', RPA.fmtHours(avgHoursReceiveIntegrated),
+          wasText('avgHoursReceiveIntegrated', RPA.fmtHours), changeText('avgHoursReceiveIntegrated', 'hours')],
+        ['Avg. hours to receive (manual)', RPA.fmtHours(avgHoursReceiveManual),
+          wasText('avgHoursReceiveManual', RPA.fmtHours), changeText('avgHoursReceiveManual', 'hours')]
       ]
     });
 
@@ -882,6 +1052,25 @@
     renderDataQuality(rows, cur);
   }
 
+  /**
+   * Picked from the list -> that seller exactly; typed by hand -> everyone whose name contains it,
+   * so a half-remembered name still narrows the dashboard instead of emptying it. The baseline
+   * period runs through the same predicate, so filtering to one seller compares that seller with
+   * themselves rather than with the whole marketplace.
+   */
+  function sellerPredicate(sellerVal) {
+    if (!sellerVal) return null;
+    const wanted = RPA.fold(sellerVal);
+    const exact = SELLERS.some(s => RPA.fold(s) === wanted);
+    return {
+      match: r => {
+        const seller = RPA.fold(r.s);
+        return exact ? seller === wanted : seller.indexOf(wanted) !== -1;
+      },
+      label: exact ? sellerVal : 'Seller contains "' + sellerVal + '"'
+    };
+  }
+
   function applyFilter() {
     const fromVal = document.getElementById('order-date-from').value;
     const toVal = document.getElementById('order-date-to').value;
@@ -900,18 +1089,26 @@
       });
     }
 
-    // Picked from the list -> that seller exactly; typed by hand -> everyone whose name contains
-    // it, so a half-remembered name still narrows the dashboard instead of emptying it.
+    const seller = sellerPredicate(sellerVal);
     let sellerLabel = '';
-    if (sellerVal) {
-      const wanted = RPA.fold(sellerVal);
-      const exact = SELLERS.some(s => RPA.fold(s) === wanted);
-      filtered = filtered.filter(r => {
-        const seller = RPA.fold(r.s);
-        return exact ? seller === wanted : seller.indexOf(wanted) !== -1;
-      });
-      sellerLabel = exact ? sellerVal : 'Seller contains "' + sellerVal + '"';
+    if (seller) {
+      filtered = filtered.filter(seller.match);
+      sellerLabel = seller.label;
     }
+
+    // The baseline is drawn from the whole upload rather than from `filtered`: it lies outside the
+    // date filter by definition, but it still has to honour the seller filter.
+    const periods = resolvePeriods(fromVal, toVal);
+    let baselineRows = [];
+    if (periods) {
+      baselineRows = ROWS.filter(r => {
+        if (!r.dc) return false;
+        const d = new Date(r.dc);
+        return d >= periods.baseline.from && d <= periods.baseline.to;
+      });
+      if (seller) baselineRows = baselineRows.filter(seller.match);
+    }
+    renderBaselineNote(periods, baselineRows.length);
 
     const narrowed = from || to || sellerVal;
     const summary = narrowed
@@ -925,10 +1122,47 @@
     const range = (from || to)
       ? 'Date created ' + (fromVal || '…') + ' → ' + (toVal || '…') + ' · '
       : '';
-    RPA.setExportContext('Late Shipment & Cancellation Report · ' + range +
+    const against = (periods && baselineRows.length)
+      ? 'Compared with ' + periods.label + ' · '
+      : '';
+    RPA.setExportContext('Late Shipment & Cancellation Report · ' + range + against +
       (sellerLabel ? sellerLabel + ' · ' : '') + summary);
 
-    computeAndRender(filtered);
+    computeAndRender(filtered, baselineRows);
+  }
+
+  /**
+   * Says which period the badges are measured against — a comparison whose baseline is unnamed is
+   * a number nobody can check. When there is no baseline it says so instead of showing badges, and
+   * offers the latest whole month in the file as the range that would produce one.
+   */
+  function renderBaselineNote(periods, baselineCount) {
+    const note = document.getElementById('order-baseline-note');
+    if (!note) return;
+
+    if (periods && baselineCount) {
+      note.innerHTML = '<strong>Compared with ' + RPA.escapeHtml(periods.label) + '</strong> — ' +
+        baselineCount.toLocaleString('en-US') + ' order line' + (baselineCount === 1 ? '' : 's') +
+        ' created in the period immediately before the one on screen. Rates move in percentage ' +
+        'points (pp), counts and durations in percent.';
+      note.hidden = false;
+      return;
+    }
+
+    const suggestion = periods && periods.suggestion;
+    if (suggestion) {
+      note.innerHTML = 'No earlier period to compare against in the current range. ' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="order-compare-month" ' +
+        'data-from="' + suggestion.from + '" data-to="' + suggestion.to + '">' +
+        'Compare ' + RPA.escapeHtml(suggestion.label) + ' with ' +
+        RPA.escapeHtml(suggestion.against) + '</button>';
+      note.hidden = false;
+      return;
+    }
+
+    note.innerHTML = 'This file holds no period earlier than the one on screen, so there is nothing ' +
+      'to compare it against.';
+    note.hidden = false;
   }
 
   function render(data) {
@@ -1057,6 +1291,16 @@
       document.getElementById('order-date-from').value = '';
       document.getElementById('order-date-to').value = '';
       document.getElementById('order-seller').value = '';
+      applyFilter();
+    });
+
+    // The note is rewritten on every filter, so the offer to compare the file's last whole month is
+    // caught on the container that survives instead of on the button that does not.
+    document.getElementById('order-baseline-note').addEventListener('click', function (event) {
+      const button = event.target.closest('#order-compare-month');
+      if (!button) return;
+      document.getElementById('order-date-from').value = button.dataset.from;
+      document.getElementById('order-date-to').value = button.dataset.to;
       applyFilter();
     });
 

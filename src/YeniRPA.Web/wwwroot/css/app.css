@@ -1118,6 +1118,38 @@ textarea {
   color: var(--ink-3);
 }
 
+/* Period-over-period change. The arrow says which way it moved, so the colour only reinforces
+   whether that direction is the good one — the badge still reads correctly in greyscale. */
+.hero-delta,
+.kpi-delta {
+  /* Laid out as two units rather than one run of text: on a narrow screen the baseline drops to a
+     line of its own instead of breaking in the middle of "was 97.9%". */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: .62rem;
+  letter-spacing: .02em;
+  color: var(--ink-3);
+}
+.hero-delta.is-green,
+.kpi-delta.is-green { color: var(--green); }
+.hero-delta.is-red,
+.kpi-delta.is-red   { color: var(--red); }
+
+/* The baseline value trails the change in the flat ink whatever the badge is coloured, so the
+   comparison reads as one figure with a footnote rather than two competing numbers. */
+.hero-delta span,
+.kpi-delta span {
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.hero-delta { margin-top: 5px; }
+.kpi-delta  { margin-top: 5px; }
+
 .hero-spark { min-width: 0; }
 .hero-spark svg { display: block; width: 100%; height: 62px; overflow: visible; }
 .hero-spark .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
