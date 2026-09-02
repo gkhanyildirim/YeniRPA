@@ -872,15 +872,260 @@ select:disabled {
   cursor: not-allowed;
 }
 
-td.is-locked { opacity: .5; }
+/* ---------------------------------------------------------------------------
+   Title Cleaner — the rule editor
 
-/* The ready-made unit sets, above the Birimler box rather than beside it: the rule table is already
-   eight columns wide, and the picker only fills the box in — what gets saved is the text below it,
-   which stays visible so a family can be trimmed to the units a column really uses. */
-.tc-unit-preset {
+   A rule is a form with ten fields, one of which holds forty alias groups. As a table it needed
+   eleven columns and a 720px minimum, so the boxes were too narrow to read what was in them and the
+   whole thing scrolled sideways on any ordinary screen. So: a summary line you can scan forty of,
+   and the editing underneath it at full width.
+
+   Nothing here introduces a colour. The flags borrow --accent for on and --ink-3 for off, the match
+   badge is the app's own .badge, and the locked look is the same dashed treatment the disabled
+   inputs above already carry.
+   --------------------------------------------------------------------------- */
+
+.tc-rules {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+/* Column captions for the summary lines below. Hidden once the summary stops being one line,
+   because at that point they no longer sit above anything. */
+.tc-rules-head {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 116px auto 92px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 14px;
+  background: color-mix(in srgb, var(--surface-3) 88%, transparent);
+  border-bottom: 1px solid var(--line-strong);
+  font-family: var(--font-mono);
+  font-size: .61rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--ink-2);
+}
+.tc-rules-head > :first-child { grid-column: 2; }
+.tc-rules-head .num { text-align: right; }
+
+.tc-rules-empty {
+  margin: 0;
+  padding: 22px 16px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: .8rem;
+}
+
+.tc-rule { border-bottom: 1px solid var(--line); }
+.tc-rule:last-child { border-bottom: 0; }
+
+.tc-rule-head {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 116px auto 92px;
+  gap: 12px;
+  align-items: center;
   width: 100%;
-  max-width: none;
-  margin-bottom: 6px;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tc-rule-head:hover { background: var(--surface-2); }
+.tc-rule-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A right-pointing triangle that turns down when the row opens — drawn rather than a glyph, so it
+   sits on the text baseline at any size. */
+.tc-rule-caret {
+  justify-self: center;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--ink-3);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform .12s ease;
+}
+.tc-rule-head[aria-expanded="true"] .tc-rule-caret {
+  transform: rotate(90deg) translateX(1px);
+  border-left-color: var(--accent);
+}
+
+.tc-rule-name {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tc-rule-name.is-empty { color: var(--ink-3); font-style: italic; }
+
+.tc-rule-kind { font-size: .72rem; color: var(--ink-2); }
+
+.tc-rule-flags { display: flex; gap: 4px; }
+
+/* One letter per permission. The label lives on the box in the body; up here the letter plus its
+   title is enough to tell forty rules apart at a glance. */
+.tc-rule-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: .6rem;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.tc-rule-flag.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.tc-rule-flag.is-locked {
+  border-style: dashed;
+  opacity: .45;
+  background: transparent;
+  color: var(--ink-3);
+}
+
+.tc-rule-match { justify-self: end; font-family: var(--font-mono); font-size: .72rem; color: var(--ink-3); }
+
+.tc-rule-body {
+  padding: 4px 14px 16px 46px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.tc-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin: 14px 0;
+}
+.tc-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.tc-field > label {
+  font-family: var(--font-mono);
+  font-size: .6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--ink-2);
+}
+
+/* The two catalogues take the whole width wherever the grid lands — they are the reason this
+   redesign happened. */
+.tc-field-full { grid-column: 1 / -1; }
+.tc-field-wide { grid-column: span 2; }
+
+/* A field this row's type does not use. Faded rather than hidden: what was typed into it survives a
+   change of mind about the type, and hiding it would look like the setting had been lost. */
+.tc-field.is-locked > label,
+.tc-field.is-locked .tc-hint { opacity: .5; }
+
+.tc-hint { font-size: .68rem; line-height: 1.45; color: var(--ink-3); }
+
+.tc-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* A permission is a labelled target, not a bare tick in a column whose heading is somewhere off to
+   the left. */
+.tc-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: .72rem;
+  cursor: pointer;
+}
+.tc-check:has(input:checked) { border-color: var(--accent); color: var(--accent); }
+.tc-check:has(input:disabled) { border-style: dashed; opacity: .5; cursor: not-allowed; }
+.tc-check input { margin: 0; }
+
+/* The same chip standing on its own in the settings bar, where it lines up with the bottom edge of
+   the inputs beside it rather than floating against their labels. */
+.tc-setting { align-self: flex-end; padding: 8px 12px 8px 10px; }
+
+.tc-units,
+.tc-aliases { resize: vertical; line-height: 1.5; }
+
+.tc-unit-preset { width: 100%; max-width: none; }
+
+.tc-rule-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.tc-move { display: flex; gap: 4px; }
+.tc-move .btn { padding: 5px 11px; font-family: var(--font-mono); }
+
+/* Destructive, and far from everything else on the row. */
+.tc-rule-foot .tc-rule-remove { margin-left: auto; color: var(--red); }
+
+/* The reference upload, told apart from the rule set's own settings it sits under — side by side
+   the two read as one thing, and the upload looked like a setting of the set. */
+.tc-subcard {
+  margin-top: var(--s-5);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+.tc-subcard h4 {
+  margin: 0 0 4px;
+  font-size: .82rem;
+  font-weight: 600;
+}
+.tc-subcard .sub { margin: 0 0 var(--s-3); font-size: .72rem; color: var(--ink-3); }
+
+/* Inside a sub-card the bar is just a row of fields — it must not stick, float or draw a second
+   frame around itself. */
+.filter-bar.is-plain {
+  position: static;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+@media (max-width: 1000px) {
+  /* The captions describe a single line; once the summary wraps they label nothing. */
+  .tc-rules-head { display: none; }
+
+  /* Every child placed by name. Left to auto-placement the match badge landed in the first cell and
+     the column name in the last, so the row read back to front. */
+  .tc-rule-head {
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "caret name  match"
+      ".     kind  flags";
+    row-gap: 6px;
+  }
+  .tc-rule-caret { grid-area: caret; align-self: center; }
+  .tc-rule-name { grid-area: name; }
+  .tc-rule-match { grid-area: match; }
+  .tc-rule-kind { grid-area: kind; }
+  .tc-rule-flags { grid-area: flags; justify-self: end; }
+
+  .tc-rule-body { padding-left: 14px; }
+  .tc-field-wide { grid-column: 1 / -1; }
+}
+
+@media (max-width: 560px) {
+  .tc-fields { grid-template-columns: minmax(0, 1fr); }
+  .tc-rule-foot { flex-wrap: wrap; }
 }
 
 /* ---------------------------------------------------------------------------

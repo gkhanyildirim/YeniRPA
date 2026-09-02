@@ -1,0 +1,59 @@
+# Keep AI context small: exclude generated, vendored, large and secret files.
+# Active source, tests, configs and docs are intentionally NOT ignored.
+
+## Build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+TestResults/
+coverage/
+dist/
+build/
+
+## IDE / caches
+.vs/
+.idea/
+.cache/
+tmp/
+temp/
+
+## Playwright (browser bundles and reports)
+**/.playwright/
+**/playwright-report/
+**/playwright/.cache/
+
+## Node tooling / vendored deps
+node_modules/
+vendor/
+
+## Vendored front-end libraries (not authored here)
+**/wwwroot/lib/
+
+## Logs
+*.log
+[Ll]og/
+[Ll]ogs/
+
+## Secrets & credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+secrets.json
+credentials*.json
+auth.json
+auth.dat
+appsettings.*.local.json
+
+## Local data / large fixtures
+samples/
+*.xlsx
+*.csv
+seller-groups.json
+seller-mails.json
+offer-warnings.json
+vat-mails.json
+**/WhatsApp/profile/

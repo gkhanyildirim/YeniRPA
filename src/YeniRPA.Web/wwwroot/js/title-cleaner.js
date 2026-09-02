@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
    Title Cleaner — rule set editor, preview, download.
 
    Every rule decision happens server-side; this file edits a rule set, posts it
@@ -101,6 +101,27 @@
   /** The same labels keyed by wire value, for tables that render a kind the server sent. */
   const KIND_LABEL = Object.fromEntries(KINDS);
 
+  /**
+   * The four per-rule permissions, as [class, the letter the summary line shows, full label].
+   *
+   * One list rather than four repetitions: the summary badges, the checkboxes in the body and the
+   * read-back in collectRuleSet all walk it, so a fifth flag is added in one place and a mismatch
+   * between the badge and the box it stands for cannot happen.
+   */
+  const FLAGS = [
+    ['tc-remove', 'Ç', 'Çıkar'],
+    ['tc-correct', 'D', 'Düzelt'],
+    ['tc-suffix', 'E', 'Ek'],
+    ['tc-partial', 'K', 'Kısmi']
+  ];
+
+  const FLAG_HINT = {
+    'tc-remove': 'Bulunca başlıktan silinsin mi. Kapalıysa metin korunur.',
+    'tc-correct': 'Hücredeki yazım standarda çevrilsin mi (16 → 16 GB). Tip = Metin olan satırlarda kullanılmaz.',
+    'tc-suffix': 'Başlıktaki "Ocaklar" kelimesi "Ocak" değerini karşılasın mı — Türkçe çekim ekli yazımlar. Model kodu taşıyan kolonlarda kapalı bırakın.',
+    'tc-partial': 'Değerin bir parçası tamamının yerine geçsin mi — hücrede "CETINTAS EVII" yazarken başlıkta yalnızca "Çetintaş" geçmesi. Yalnızca marka, malzeme gibi kolonlarda açın; ürün tipinde açmayın.'
+  };
+
   const STATUS_LABEL = {
     Ok: 'OK',
     Corrected: 'DÜZELTİLDİ',
@@ -122,13 +143,13 @@
    */
   function matchCell(column) {
     const hint = column ? HINTS[column] : null;
-    if (!hint) return '<td class="num">&mdash;</td>';
+    if (!hint) return '<span class="tc-rule-match">&mdash;</span>';
 
     const short = hint.matched < Math.ceil(hint.filled * 0.35);
-    return '<td class="num" title="' + hint.filled + ' dolu hücrenin ' + hint.matched +
+    return '<span class="tc-rule-match" title="' + hint.filled + ' dolu hücrenin ' + hint.matched +
       ' tanesi başlıkta bulundu">' +
       '<span class="badge' + (short ? ' amber' : ' green') + '">' +
-      hint.matched + '/' + hint.filled + '</span></td>';
+      hint.matched + '/' + hint.filled + '</span></span>';
   }
 
   /**
@@ -153,14 +174,15 @@
 
     const lock = (input, active, hint) => {
       input.disabled = !active;
-      if (input.type !== 'checkbox')
+      if (input.type !== 'checkbox' && input.tagName !== 'SELECT')
         input.placeholder = active ? hint : '';
-      input.closest('td').classList.toggle('is-locked', !active);
+      const field = input.closest('.tc-field');
+      if (field) field.classList.toggle('is-locked', !active);
     };
 
-    lock(row.querySelector('.tc-units'), kind === 'Measure', 'örn: GB=gb@1 ; TB=tb@1024');
+    lock(row.querySelector('.tc-units'), kind === 'Measure', 'GB=gb|gigabayt@1\nTB=tb@1024');
     lock(row.querySelector('.tc-unit-preset'), kind === 'Measure');
-    lock(row.querySelector('.tc-aliases'), kind === 'Alias', 'örn: W11P|Windows 11 Pro');
+    lock(row.querySelector('.tc-aliases'), kind === 'Alias', 'W11P|Windows 11 Pro\nW11H|Windows 11 Home');
     lock(row.querySelector('.tc-correct'), kind !== 'Text');
 
     // A measured value is matched as a number and its unit, so a word ending has nothing to say
@@ -171,6 +193,37 @@
     // Same reason for the reference list: a catalogue of spellings has nowhere to attach to a rule
     // matched by number and unit, and AttributeMatcher.Compile drops one handed to a Measure rule.
     lock(row.querySelector('.tc-reference'), kind !== 'Measure');
+
+    syncRuleHead(row);
+  }
+
+  /**
+   * Redraws the parts of the summary line that mirror what is in the body — the type, the four
+   * flags, and the column name.
+   *
+   * The summary is what the operator scans forty rules with, so it cannot go stale the moment
+   * something below it is edited. A flag reads lit when it is on, faint when it is off and dashed
+   * when this row's type does not use it, which is the same three states the boxes themselves have.
+   */
+  function syncRuleHead(row) {
+    const name = row.querySelector('.tc-col').value.trim();
+    const title = row.querySelector('.tc-rule-name');
+
+    title.textContent = name || '(kolon adı yok)';
+    title.classList.toggle('is-empty', !name);
+
+    row.querySelector('.tc-rule-kind').textContent =
+      KIND_LABEL[row.querySelector('.tc-kind').value] || '';
+
+    FLAGS.forEach(([cls, letter, label]) => {
+      const box = row.querySelector('.' + cls);
+      const dot = row.querySelector('.tc-rule-flag[data-flag="' + cls + '"]');
+
+      dot.textContent = letter;
+      dot.classList.toggle('is-on', box.checked && !box.disabled);
+      dot.classList.toggle('is-locked', box.disabled);
+      dot.title = label + ': ' + (box.disabled ? 'bu tipte kullanılmıyor' : box.checked ? 'açık' : 'kapalı');
+    });
   }
 
   /**
@@ -229,46 +282,135 @@
     select.value = current;
   }
 
-  /** Puts a row on screen: the locks its type implies, and its two pickers. */
+  /** Puts a row on screen: the locks its type implies, its two pickers, and its summary line. */
   function dressRuleRow(row) {
     applyKindLock(row);
     fillUnitPresets(row);
     fillReferenceLists(row);
+    autoGrow(row.querySelector('.tc-units'));
+    autoGrow(row.querySelector('.tc-aliases'));
   }
 
-  function ruleRowHtml(rule) {
+  /**
+   * Grows a box to fit what is in it, up to a ceiling.
+   *
+   * A catalogue runs to forty lines and a unit family to three; a fixed height is wrong for both.
+   * The ceiling is there so one long column cannot push every other rule off the screen — past it
+   * the box scrolls on its own.
+   */
+  function autoGrow(box) {
+    if (!box) return;
+    box.style.height = 'auto';
+    box.style.height = Math.min(box.scrollHeight + 2, 320) + 'px';
+  }
+
+  let RULE_SEQ = 0;
+
+  function ruleItemHtml(rule) {
     const r = rule || {};
-    const checkbox = (cls, on, label) =>
-      '<td class="num"><input type="checkbox" class="' + cls + '"' + (on ? ' checked' : '') +
-      ' aria-label="' + label + '" /></td>';
+    const id = 'tc-rule-' + (++RULE_SEQ);
 
     const options = KINDS.map(([value, label]) =>
       '<option value="' + value + '"' + (r.kind === value ? ' selected' : '') + '>' +
       RPA.escapeHtml(label) + '</option>').join('');
 
-    return '<tr>' +
-      '<td><input type="text" class="tc-col" value="' + RPA.escapeHtml(r.column || '') +
-        '" aria-label="Kolon" />' +
-        // Not shown in the table: every attribute column a marketplace export carries is already
-        // filled, so the box only ever sat there unticked. The value rides along hidden so that
-        // saving a set from this editor does not drop what an imported workbook turned on.
-        '<input type="hidden" class="tc-fill" value="' + (r.fillFromTitle === true) + '" /></td>' +
-      '<td><select class="tc-kind" aria-label="Tip">' + options + '</select></td>' +
-      checkbox('tc-remove', r.remove !== false, 'Çıkar') +
-      checkbox('tc-correct', r.correct !== false, 'Düzelt') +
-      checkbox('tc-suffix', r.allowSuffix === true, 'Ek') +
-      checkbox('tc-partial', r.allowPartial === true, 'Kısmi') +
-      matchCell(r.column) +
-      '<td><select class="tc-unit-preset" aria-label="Hazır birim seti"></select>' +
-        '<input type="text" class="tc-units" value="' + RPA.escapeHtml(r.units || '') +
-        '" aria-label="Birimler" /></td>' +
-      '<td><input type="text" class="tc-aliases" value="' + RPA.escapeHtml(r.aliases || '') +
-        '" aria-label="Değerler" /></td>' +
-      '<td><select class="tc-reference" aria-label="Referans listesi" data-value="' +
-        RPA.escapeHtml(r.referenceList || '') + '"></select></td>' +
-      '<td class="num"><button type="button" class="btn btn-ghost btn-sm tc-rule-remove" ' +
-        'aria-label="Satırı sil">Sil</button></td>' +
-      '</tr>';
+    const on = { 'tc-remove': r.remove !== false, 'tc-correct': r.correct !== false,
+                 'tc-suffix': r.allowSuffix === true, 'tc-partial': r.allowPartial === true };
+
+    const dots = FLAGS.map(([cls]) =>
+      '<span class="tc-rule-flag" data-flag="' + cls + '"></span>').join('');
+
+    const checks = FLAGS.map(([cls, , label]) =>
+      '<label class="tc-check" title="' + RPA.escapeHtml(FLAG_HINT[cls]) + '">' +
+      '<input type="checkbox" class="' + cls + '"' + (on[cls] ? ' checked' : '') + ' />' +
+      '<span>' + label + '</span></label>').join('');
+
+    return '' +
+      '<div class="tc-rule" data-rule>' +
+        // The summary is a button so it opens from the keyboard and announces its state; the row's
+        // own actions live in the body, because a button cannot contain another one — and because
+        // "Sil" under the cursor while scanning forty rules is an accident waiting to happen.
+        '<button type="button" class="tc-rule-head" aria-expanded="false" aria-controls="' + id + '">' +
+          '<span class="tc-rule-caret" aria-hidden="true"></span>' +
+          '<span class="tc-rule-name"></span>' +
+          '<span class="tc-rule-kind"></span>' +
+          '<span class="tc-rule-flags" aria-hidden="true">' + dots + '</span>' +
+          matchCell(r.column) +
+        '</button>' +
+
+        '<div class="tc-rule-body" id="' + id + '" hidden>' +
+          '<div class="tc-fields">' +
+            '<div class="tc-field">' +
+              '<label>Kolon</label>' +
+              '<input type="text" class="tc-col" value="' + RPA.escapeHtml(r.column || '') +
+                '" placeholder="Excel başlığıyla birebir aynı" />' +
+              // Never shown: every attribute column a marketplace export carries is already filled,
+              // so the box only ever sat there unticked. The value rides along hidden so saving from
+              // this editor does not drop what an imported workbook turned on.
+              '<input type="hidden" class="tc-fill" value="' + (r.fillFromTitle === true) + '" />' +
+            '</div>' +
+            '<div class="tc-field">' +
+              '<label>Tip</label>' +
+              '<select class="tc-kind">' + options + '</select>' +
+            '</div>' +
+            '<div class="tc-field tc-field-wide">' +
+              '<label>İzinler</label>' +
+              '<div class="tc-checks">' + checks + '</div>' +
+            '</div>' +
+
+            '<div class="tc-field tc-field-full">' +
+              '<label>Birimler</label>' +
+              '<select class="tc-unit-preset" aria-label="Hazır birim seti"></select>' +
+              '<textarea class="tc-units" rows="1" spellcheck="false">' +
+                RPA.escapeHtml(r.units || '') + '</textarea>' +
+              '<span class="tc-hint">Her satır bir birim. &quot;=&quot; öncesi standart yazım, ' +
+                '&quot;|&quot; kabul edilen diğer yazımlar, &quot;@@&quot; taban birime göre katsayı ' +
+                '(1 TB = 1024 GB).</span>' +
+            '</div>' +
+
+            '<div class="tc-field tc-field-full">' +
+              '<label>Değerler</label>' +
+              '<textarea class="tc-aliases" rows="1" spellcheck="false">' +
+                RPA.escapeHtml(r.aliases || '') + '</textarea>' +
+              '<span class="tc-hint">Her satır bir değer; satırın ilk yazımı standart olan. ' +
+                '&quot;|&quot; aynı şeyin diğer yazımlarını ayırır.</span>' +
+            '</div>' +
+
+            '<div class="tc-field">' +
+              '<label>Referans listesi</label>' +
+              '<select class="tc-reference" data-value="' +
+                RPA.escapeHtml(r.referenceList || '') + '"></select>' +
+              '<span class="tc-hint">Hücrenin yazmadığı uzun yazımlar için katalog.</span>' +
+            '</div>' +
+          '</div>' +
+
+          '<div class="tc-rule-foot">' +
+            // Order decides which of two rules claims a stretch of title that both could match, so
+            // it has to be changeable here. Until now the only way was to edit the workbook.
+            '<div class="tc-move">' +
+              '<button type="button" class="btn btn-ghost btn-sm tc-rule-up" title="Yukarı taşı — sıra, iki kuralın aynı metni istediği durumda hangisinin kazanacağını belirler">&uarr;</button>' +
+              '<button type="button" class="btn btn-ghost btn-sm tc-rule-down" title="Aşağı taşı">&darr;</button>' +
+            '</div>' +
+            '<button type="button" class="btn btn-ghost btn-sm tc-rule-remove">Kuralı sil</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  /** Opens or closes one rule, keeping the button's state and the body's visibility together. */
+  function toggleRule(rule, open) {
+    const head = rule.querySelector('.tc-rule-head');
+    const body = rule.querySelector('.tc-rule-body');
+    const next = open === undefined ? head.getAttribute('aria-expanded') !== 'true' : open;
+
+    head.setAttribute('aria-expanded', next ? 'true' : 'false');
+    body.hidden = !next;
+
+    // A textarea measures as zero while it is hidden, so its height is only right once it is shown.
+    if (next) {
+      autoGrow(rule.querySelector('.tc-units'));
+      autoGrow(rule.querySelector('.tc-aliases'));
+    }
   }
 
   /** @param dirty true when the set came from a scan or an import — filled in, but not saved. */
@@ -278,17 +420,27 @@
     el('tc-set-name').value = s.name || '';
     el('tc-title-column').value = s.titleColumn || '';
     el('tc-decimal').value = s.decimalSeparator === ',' ? ',' : '.';
-    el('tc-rules-body').innerHTML = (s.attributes || []).map(ruleRowHtml).join('');
+    el('tc-collapse').checked = s.collapseRepeats === true;
 
-    Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(dressRuleRow);
+    const list = (s.attributes || []);
+    el('tc-rules-body').innerHTML = list.length
+      ? list.map(ruleItemHtml).join('')
+      : '<p class="tc-rules-empty">Henüz kural yok — bir dosya yükleyip ' +
+        '&quot;Dosyadan kural öner&quot; deyin, ya da &quot;Satır ekle&quot; ile kendiniz başlayın.</p>';
+
+    ruleRows().forEach(dressRuleRow);
     DIRTY = dirty === true;
     updateRuleCount();
   }
 
-  /** Reads the table back out. A row with no column name is dropped — "Add row" leaves one behind
-      whenever someone changes their mind. */
+  function ruleRows() {
+    return Array.from(el('tc-rules-body').querySelectorAll('[data-rule]'));
+  }
+
+  /** Reads the editor back out. A rule with no column name is dropped — "Satır ekle" leaves one
+      behind whenever someone changes their mind. */
   function collectRuleSet() {
-    const attributes = Array.from(el('tc-rules-body').querySelectorAll('tr')).map(row => ({
+    const attributes = ruleRows().map(row => ({
       column: row.querySelector('.tc-col').value.trim(),
       kind: row.querySelector('.tc-kind').value,
       remove: row.querySelector('.tc-remove').checked,
@@ -305,6 +457,7 @@
       name: el('tc-set-name').value.trim(),
       titleColumn: el('tc-title-column').value.trim(),
       decimalSeparator: el('tc-decimal').value,
+      collapseRepeats: el('tc-collapse').checked,
       attributes: attributes
     };
   }
@@ -415,7 +568,7 @@
       return;
     }
 
-    Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(fillUnitPresets);
+    ruleRows().forEach(fillUnitPresets);
   }
 
   function renderReferenceStatus() {
@@ -438,7 +591,7 @@
     }
 
     renderReferenceStatus();
-    Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(fillReferenceLists);
+    ruleRows().forEach(fillReferenceLists);
   }
 
   /**
@@ -483,7 +636,7 @@
 
       REFERENCE_LISTS = await RPA.postJson('/api/title-cleaner/reference-lists', form);
       renderReferenceStatus();
-      Array.from(el('tc-rules-body').querySelectorAll('tr')).forEach(fillReferenceLists);
+      ruleRows().forEach(fillReferenceLists);
 
       const loaded = REFERENCE_LISTS.find(l => l.name === name);
       renderNotes([
@@ -633,7 +786,12 @@
    * title and can reach a word too far. Correcting it here beats finding the rule row by hand.
    */
   function fixCardHtml(fix) {
-    const columns = collectRuleSet().attributes.map(a => a.column);
+    // Never the column that reported the problem. A protector switches the chosen column's removal
+    // off, so pointing it back here would disable the very rule the operator is trying to fix — the
+    // server refuses it too, this only keeps it out of sight.
+    const columns = collectRuleSet().attributes
+      .map(a => a.column)
+      .filter(c => c !== fix.column);
 
     const chooser = fix.needsColumnChoice
       ? '<label class="tc-fix-field">Hangi kolona ait?' +
@@ -1013,41 +1171,98 @@
 
     el('tc-rule-add').addEventListener('click', function () {
       const body = el('tc-rules-body');
-      body.insertAdjacentHTML('beforeend', ruleRowHtml(null));
-      dressRuleRow(body.lastElementChild);
-      body.lastElementChild.querySelector('.tc-col').focus();
+
+      // The empty-state paragraph is not a rule; the first added row replaces it.
+      if (!body.querySelector('[data-rule]')) body.innerHTML = '';
+
+      body.insertAdjacentHTML('beforeend', ruleItemHtml(null));
+
+      const added = body.lastElementChild;
+      dressRuleRow(added);
+
+      // Opened, because a new rule has nothing in its summary line to act on — the whole point of
+      // adding one is to fill it in.
+      toggleRule(added, true);
+      added.querySelector('.tc-col').focus();
+      added.scrollIntoView({ block: 'nearest' });
       markDirty();
     });
 
     el('tc-rules-body').addEventListener('click', function (event) {
-      if (!event.target.classList.contains('tc-rule-remove')) return;
-      event.target.closest('tr').remove();
+      const rule = event.target.closest('[data-rule]');
+      if (!rule) return;
+
+      if (event.target.closest('.tc-rule-head')) {
+        toggleRule(rule);
+        return;
+      }
+
+      if (event.target.closest('.tc-rule-remove')) {
+        rule.remove();
+        if (!ruleRows().length) renderRuleSet(collectRuleSet(), true);
+        markDirty();
+        return;
+      }
+
+      // Order decides which of two rules claims a stretch of title both could match, so moving one
+      // is a real edit rather than a view preference.
+      const up = event.target.closest('.tc-rule-up');
+      const down = event.target.closest('.tc-rule-down');
+      if (!up && !down) return;
+
+      const sibling = up ? rule.previousElementSibling : rule.nextElementSibling;
+      if (!sibling) return;
+
+      if (up) rule.parentNode.insertBefore(rule, sibling);
+      else rule.parentNode.insertBefore(sibling, rule);
+
+      // The moved rule keeps the focus so a second press moves it again without hunting for it.
+      (up ? rule.querySelector('.tc-rule-up') : rule.querySelector('.tc-rule-down')).focus();
+      rule.scrollIntoView({ block: 'nearest' });
       markDirty();
     });
 
     el('tc-rules-body').addEventListener('input', function (event) {
+      const rule = event.target.closest('[data-rule]');
+      if (!rule) return;
+
       // Typing over a ready-made set means it is no longer that set, so the picker lets go of it.
-      if (event.target.classList.contains('tc-units'))
-        syncUnitPreset(event.target.closest('tr'));
+      if (event.target.classList.contains('tc-units')) syncUnitPreset(rule);
+
+      if (event.target.classList.contains('tc-units') ||
+          event.target.classList.contains('tc-aliases')) {
+        autoGrow(event.target);
+      }
+
+      // The summary line carries the column name, so it follows what is typed rather than waiting
+      // for the row to be closed and reopened.
+      if (event.target.classList.contains('tc-col')) syncRuleHead(rule);
 
       markDirty();
     });
 
     el('tc-rules-body').addEventListener('change', function (event) {
+      const rule = event.target.closest('[data-rule]');
+      if (!rule) return;
+
       // Changing the type changes which box that row uses, so the locks follow immediately.
-      if (event.target.classList.contains('tc-kind'))
-        applyKindLock(event.target.closest('tr'));
+      if (event.target.classList.contains('tc-kind')) applyKindLock(rule);
 
       // The picker writes the server's own encoding into the visible box rather than replacing it.
       // The box is where the operator trims the family down to the units their column really uses.
-      if (event.target.classList.contains('tc-unit-preset') && event.target.value)
-        event.target.closest('tr').querySelector('.tc-units').value = event.target.value;
+      if (event.target.classList.contains('tc-unit-preset') && event.target.value) {
+        const units = rule.querySelector('.tc-units');
+        units.value = event.target.value;
+        autoGrow(units);
+      }
 
       // The picker is rebuilt whenever the loaded lists change, and it rebuilds itself from
       // data-value — so a choice that only lived in select.value would be lost the moment someone
       // uploaded another list.
       if (event.target.classList.contains('tc-reference'))
         event.target.dataset.value = event.target.value;
+
+      if (event.target.type === 'checkbox') syncRuleHead(rule);
 
       markDirty();
     });
@@ -1056,6 +1271,7 @@
     // title column is just as unsaved as an edited row.
     ['tc-set-name', 'tc-title-column'].forEach(id => el(id).addEventListener('input', markDirty));
     el('tc-decimal').addEventListener('change', markDirty);
+    el('tc-collapse').addEventListener('change', markDirty);
 
     el('tc-rule-import').addEventListener('click', () => el('tc-rule-file').click());
     el('tc-rule-file').addEventListener('change', function () {

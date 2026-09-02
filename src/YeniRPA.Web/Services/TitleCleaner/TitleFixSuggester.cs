@@ -57,6 +57,7 @@ public static class TitleFixSuggester
                 }
 
                 scenario.Rows++;
+                scenario.Remember(row);
             }
         }
 
@@ -77,13 +78,36 @@ public static class TitleFixSuggester
 
     sealed class Scenario(TitleAttributeResult attribute, TitleCleanRow row, string key)
     {
+        /// <summary>How many of a scenario's rows are kept for the proposers to look at. The first
+        /// row is what a card previews; the rest are only consulted where one row cannot answer on
+        /// its own, so a handful is plenty and the whole file is not held in memory per scenario.</summary>
+        const int Remembered = 20;
+
+        readonly List<TitleCleanRow> _rows = [row];
+
         public TitleAttributeResult Attribute { get; } = attribute;
 
         /// <summary>The first row that showed this problem — what the card previews.</summary>
         public TitleCleanRow Sample { get; } = row;
 
+        /// <summary>
+        /// The rows this scenario was built from, first one included.
+        ///
+        /// <para>One row is not always enough to read a proposal off. A title cut at a hundred
+        /// characters may stop before the word that would identify the value — every row saying the
+        /// same thing, and only some of them cut late enough to be legible. The proposer walks these
+        /// until one can answer.</para>
+        /// </summary>
+        public IReadOnlyList<TitleCleanRow> Rowset => _rows;
+
         public string Key { get; } = key;
         public int Rows { get; set; }
+
+        public void Remember(TitleCleanRow row)
+        {
+            if (_rows.Count < Remembered && !ReferenceEquals(_rows[0], row))
+                _rows.Add(row);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -125,7 +149,10 @@ public static class TitleFixSuggester
         if (rule.Kind == TitleAttributeKind.Measure)
             return null;
 
-        var phrase = PhraseSharingAWord(rules, scenario) ?? MisspeltWord(scenario);
+        var phrase = PhraseSharingAWord(rules, scenario)
+            ?? MisspeltWord(scenario)
+            ?? TruncatedTail(rules, scenario);
+
         if (phrase is null)
             return null;
 
@@ -191,7 +218,11 @@ public static class TitleFixSuggester
         if (phrase is null || occurrences < 2)
             return null;
 
-        var owner = FindOwner(rules, phrase) ?? "";
+        // The other occurrence belongs to something else, so somebody else has to claim it. Handing
+        // it back to the column that reported the ambiguity would turn that column's removal off and
+        // leave it holding a catalogue value nothing resolves to — which is how one real rule set
+        // ended up with a bare "Ultra9" under its processor column, conflicting on every row.
+        var owner = FindOwner(rules, phrase, attribute.Column) ?? "";
 
         return Build(
             rules, scenario, owner,
@@ -275,8 +306,22 @@ public static class TitleFixSuggester
         {
             try
             {
-                var applied = CompiledRuleSet.Compile(apply(rules.Source, draft));
-                after = Rerun(applied, scenario.Sample).CleanTitle;
+                var edited = apply(rules.Source, draft);
+
+                // A fix that leaves the rule set exactly as it was must not be offered. Applying it
+                // would redraw the same card, and pressing the button again would do nothing again —
+                // a card the operator cannot get rid of.
+                //
+                // AddSpelling is where this comes from: it refuses to move a spelling that already
+                // belongs to a different value, which is right — "FreeDOS" is not another way of
+                // writing "Windows 11 Pro", and the catalogue saying so is the whole point. What was
+                // wrong was offering the merge anyway. Such a row is a data error in one cell and
+                // belongs in the review list with no card at all.
+                if (Unchanged(rules.Source, edited))
+                    return null;
+
+                after = Rerun(CompiledRuleSet.Compile(edited, rules.ReferenceLists), scenario.Sample)
+                    .CleanTitle;
             }
             catch (InvalidOperationException)
             {
@@ -288,6 +333,15 @@ public static class TitleFixSuggester
 
         return draft with { SampleAfter = after };
     }
+
+    /// <summary>Whether applying a fix produced the same rule set it started from. Compared through
+    /// the store's own serialisation, so it sees every field a rule carries rather than the handful
+    /// a hand-written comparison would remember.</summary>
+    static bool Unchanged(TitleRuleSet before, TitleRuleSet after) =>
+        string.Equals(
+            TitleRuleStore.Serialize(new TitleRuleFile(1, null, [before])),
+            TitleRuleStore.Serialize(new TitleRuleFile(1, null, [after])),
+            StringComparison.Ordinal);
 
     /// <summary>
     /// Cleans one sample row again under a changed rule set. The row carries its own attribute
@@ -563,6 +617,21 @@ public static class TitleFixSuggester
         // listing both would show the operator a proposal half of which does nothing.
         var spellings = Distinct(rule.Types);
 
+        // Which group the new spellings join. The marketplace's own canonical heads a fresh one — but
+        // where this row's cell already belongs to a group, they join *that* instead, whatever it is
+        // headed by.
+        //
+        // A column carrying "Notebook" from an earlier file, against a RuleSet group headed "Laptop",
+        // is the case that made this necessary. Two groups meant the cell resolved to one value and
+        // the title's "Dizüstü Bilgisayar" to another, so the card changed nothing it was measured on
+        // and was dropped — the feature looked simply absent, on exactly the files that needed it.
+        var head = target.AliasGroups
+            .FirstOrDefault(group => group.Any(s => string.Equals(
+                FoldedTitle.Fold(s),
+                FoldedTitle.Fold(scenario.Attribute.OriginalValue),
+                StringComparison.Ordinal)))
+            ?.FirstOrDefault();
+
         var fix = Build(
             rules, scenario, target.Column,
             TitleFixKind.AdoptCategoryType,
@@ -576,7 +645,7 @@ public static class TitleFixSuggester
             ApplyCategoryType,
             warning: warnings.Count > 0 ? string.Join(" ", warnings) : null,
             preselected: covers,
-            cellValue: spellings[0]);
+            cellValue: head ?? spellings[0]);
 
         return fix is not null && Changes(rules, scenario, target.Column, fix) ? fix : null;
     }
@@ -593,7 +662,9 @@ public static class TitleFixSuggester
         TitleCleanRow after;
         try
         {
-            after = Rerun(CompiledRuleSet.Compile(ApplyCategoryType(rules.Source, fix)), scenario.Sample);
+            after = Rerun(
+                CompiledRuleSet.Compile(ApplyCategoryType(rules.Source, fix), rules.ReferenceLists),
+                scenario.Sample);
         }
         catch (InvalidOperationException)
         {
@@ -670,8 +741,19 @@ public static class TitleFixSuggester
                 continue;
             }
 
-            if (i + 1 < words.Count &&
-                (one + Squeeze(FoldedTitle.Fold(words[i + 1]))).Contains(target, StringComparison.Ordinal))
+            if (i + 1 >= words.Count)
+                continue;
+
+            var next = Squeeze(FoldedTitle.Fold(words[i + 1]));
+
+            // Only where the value is genuinely split between the two. Without that test a title
+            // reading "32GB 1TBSSD+2TBSSD" answered "SSD" by joining both words — the value sits
+            // whole inside the second one — and the phrase came back carrying the RAM the row had
+            // already removed.
+            if (next.Contains(target, StringComparison.Ordinal))
+                continue;
+
+            if ((one + next).Contains(target, StringComparison.Ordinal))
             {
                 occurrences++;
                 if (at < 0) (at, end) = (i, i + 1);
@@ -703,13 +785,16 @@ public static class TitleFixSuggester
     /// — which is what stopped "RTX 5070 8GB" being proposed, since the graphics card's cell reads
     /// "GeForce RTX 5070" and that phrase is not in the title at all.</para>
     /// </summary>
-    static HashSet<string> ClaimedWords(CompiledRuleSet rules, Scenario scenario)
+    static HashSet<string> ClaimedWords(CompiledRuleSet rules, Scenario scenario) =>
+        ClaimedWords(rules, scenario.Sample, scenario.Attribute.Column);
+
+    static HashSet<string> ClaimedWords(CompiledRuleSet rules, TitleCleanRow row, string column)
     {
         var claimed = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var other in scenario.Sample.Attributes)
+        foreach (var other in row.Attributes)
         {
-            if (string.Equals(other.Column, scenario.Attribute.Column, StringComparison.Ordinal))
+            if (string.Equals(other.Column, column, StringComparison.Ordinal))
                 continue;
 
             if (other.Status is not (TitleAttributeStatus.Ok or TitleAttributeStatus.Corrected
@@ -724,8 +809,19 @@ public static class TitleFixSuggester
             if (otherRule is null || !otherRule.Remove)
                 continue;
 
-            foreach (var word in SplitWords(other.OriginalValue.Trim()).Concat(SplitWords(other.TitleSaid ?? "")))
-                claimed.Add(FoldedTitle.Fold(word));
+            foreach (var text in new[] { other.OriginalValue.Trim(), other.TitleSaid ?? "" })
+            {
+                var words = SplitWords(text).Select(FoldedTitle.Fold).ToList();
+
+                foreach (var word in words)
+                    claimed.Add(word);
+
+                // And the whole of it with the spaces taken out. A title writes "32GB" where the cell
+                // writes "32 GB", so word-for-word this column looked as though it had claimed
+                // nothing — and a proposed phrase reached straight over the RAM it had just removed.
+                if (words.Count > 1)
+                    claimed.Add(string.Concat(words));
+            }
         }
 
         return claimed;
@@ -844,6 +940,79 @@ public static class TitleFixSuggester
         return group;
     }
 
+    /// <summary>
+    /// A title the marketplace cut short, where the cell's value is what got cut — "İş İstasyonu"
+    /// against a title ending "… Taşınabilir İş İstasy".
+    ///
+    /// <para>The engine can already <em>match</em> a truncated value; what it cannot do is guess the
+    /// spelling the seller uses, and here nothing in the file spells it out: every one of the eleven
+    /// rows was cut before "İstasyonu" finished. So the phrase is reconstructed — the title's own
+    /// unclaimed words, with the word the cut broke completed from the cell.</para>
+    ///
+    /// <para><b>Two conditions, and the second is what keeps it sane.</b> The title's last word must
+    /// be a proper prefix of the cell's last word; and the words before it must spell the cell's
+    /// remaining words, in order. Without the second, a title ending "… Taşınabilir İş" would read
+    /// its "İş" as a cut-off "İstasyonu" and propose "Taşınabilir İstasyonu" — eating a word.</para>
+    ///
+    /// <para>Read across the scenario's rows rather than only its first. A hundred-character cut
+    /// lands wherever it lands: the first row of this scenario stops at "Taşınabilir İş" and cannot
+    /// answer, while the fourth stops at "Taşınabilir İş İstasy" and can.</para>
+    /// </summary>
+    static string? TruncatedTail(CompiledRuleSet rules, Scenario scenario)
+    {
+        var value = scenario.Attribute.OriginalValue.Trim();
+        var cellWords = SplitWords(value);
+
+        if (cellWords.Count == 0)
+            return null;
+
+        foreach (var row in scenario.Rowset)
+        {
+            var words = SplitWords(row.OriginalTitle);
+            if (words.Count < cellWords.Count)
+                continue;
+
+            // The last word is cut: a proper prefix of what the cell ends with, never the whole of it
+            // — a whole word is PhraseSharingAWord's business.
+            var cut = FoldedTitle.Fold(words[^1]);
+            var whole = FoldedTitle.Fold(cellWords[^1]);
+
+            if (cut.Length == 0 || cut.Length >= whole.Length ||
+                !whole.StartsWith(cut, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // Everything before it spells the rest of the cell's value, in order.
+            var start = words.Count - cellWords.Count;
+            var spelled = true;
+
+            for (var i = 0; i < cellWords.Count - 1 && spelled; i++)
+            {
+                spelled = string.Equals(
+                    FoldedTitle.Fold(words[start + i]),
+                    FoldedTitle.Fold(cellWords[i]),
+                    StringComparison.Ordinal);
+            }
+
+            if (!spelled)
+                continue;
+
+            // Reach left over words nobody else claimed, the same as PhraseSharingAWord does, and
+            // write the cut word out in full.
+            var claimed = ClaimedWords(rules, row, scenario.Attribute.Column);
+            var from = Math.Max(0, words.Count - MaxPhraseWords);
+
+            while (from < start && claimed.Contains(FoldedTitle.Fold(words[from])))
+                from++;
+
+            var kept = words.Skip(from).Take(words.Count - 1 - from).Append(cellWords[^1]);
+            return string.Join(' ', kept);
+        }
+
+        return null;
+    }
+
     /// <summary>How short a word may be before one letter of difference stops being a typo. "Krem"
     /// and "Kreb" are four letters apart from being two different things; "Emaye" and "Emaya" are
     /// not.</summary>
@@ -919,6 +1088,13 @@ public static class TitleFixSuggester
             if (spent)
                 return false;
 
+            // A digit is never a typo here. In this catalogue the digits are the identity — "Ryzen 3"
+            // and "Ryzen7" differ by one character and are two different processors, and adopting the
+            // one as a spelling of the other would clean every Ryzen 7 title as a Ryzen 3 from then
+            // on. Letters are what people mistype: "Emaya" for "Emaye".
+            if (char.IsDigit(longer[j]) || i < shorter.Length && char.IsDigit(shorter[i]))
+                return false;
+
             spent = true;
 
             // A substitution steps both; an insertion steps only the longer one.
@@ -928,7 +1104,10 @@ public static class TitleFixSuggester
             j++;
         }
 
-        return true;
+        // The loop can end without ever reaching the difference: an extra character on the end of the
+        // longer word is never compared, because the shorter one runs out first. "Ryzen7" against
+        // "Ryzen" is exactly that, and it is the case this whole guard is for.
+        return !(!spent && j < longer.Length && char.IsDigit(longer[j]));
     }
 
     static List<string> SplitWords(string text) =>
@@ -942,7 +1121,7 @@ public static class TitleFixSuggester
     /// <summary>The column whose own value overlaps the phrase — the one the phrase belongs to. On
     /// the real export "RTX 5070 8GB" finds the graphics card column, whose cell reads
     /// "GeForce RTX 5070".</summary>
-    static string? FindOwner(CompiledRuleSet rules, string phrase)
+    static string? FindOwner(CompiledRuleSet rules, string phrase, string reporting)
     {
         var words = SplitWords(phrase).Select(FoldedTitle.Fold).Where(w => w.Length > 1).ToList();
         if (words.Count == 0)
@@ -950,6 +1129,13 @@ public static class TitleFixSuggester
 
         foreach (var attr in rules.Attributes)
         {
+            // Never the column that raised the ambiguity. Protecting the phrase there switches that
+            // column's own removal off — the opposite of what the operator is asking for — and leaves
+            // a catalogue value no cell resolves to, which reads as a conflict on every row
+            // afterwards. See ProposeProtect.
+            if (string.Equals(attr.Rule.Column, reporting, StringComparison.Ordinal))
+                continue;
+
             foreach (var group in attr.Rule.AliasGroups)
             {
                 foreach (var spelling in group)
@@ -1094,6 +1280,16 @@ public static class TitleFixSuggester
         var updated = groups.Select(g => g.ToList()).ToList();
         var wanted = FoldedTitle.Fold(canonical ?? value);
 
+        // Walked in order, and the order decides what happens when the spelling already names a value
+        // of its own. Reaching its group first leaves everything alone — which is what stops a merge
+        // of "FreeDOS" into "Windows 11 Pro" from going through, and what Build's Unchanged check
+        // then turns into "no card". Reaching the target first folds it in.
+        //
+        // Order-dependent, and deliberately left that way: "Notebook" joining "Oyun Bilgisayarı" has
+        // exactly the same shape as "FreeDOS" joining "Windows 11 Pro", and only a person knows that
+        // the first pair is one product type and the second is two operating systems. Refusing both
+        // would take away a fix the module exists to offer; allowing both would merge things that are
+        // not the same. The card shows its before and after, and the operator decides.
         foreach (var group in updated)
         {
             if (group.Count == 0)
@@ -1113,9 +1309,14 @@ public static class TitleFixSuggester
             }
         }
 
-        updated.Add(canonical is null || FoldedTitle.Fold(canonical) == FoldedTitle.Fold(value)
+        // Blank counts as "no canonical", not as one. A protector passes an empty string — its phrase
+        // is its own canonical — and treating that as a real head produced a group like ["", "Ultra9"]
+        // whose empty first entry EncodeAliases drops on the way out, so the save/reload round trip
+        // turned it into a standalone value.
+        updated.Add(string.IsNullOrWhiteSpace(canonical) ||
+                    FoldedTitle.Fold(canonical) == FoldedTitle.Fold(value)
             ? [value]
-            : [canonical, value]);
+            : [canonical!, value]);
 
         return updated.Select(g => (IReadOnlyList<string>)g).ToList();
     }

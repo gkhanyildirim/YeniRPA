@@ -31,6 +31,10 @@ public static class TitleCleanBuilder
         public bool IsValueMatch { get; } = isValueMatch;
         public int Start => Match.Start;
         public int End => Match.End;
+
+        /// <summary>Whether another confirmed value sits hard against this one with no separator —
+        /// the "SSD" in "1TBSSD". Filled in once the accepted set is known.</summary>
+        public bool Anchored { get; set; }
     }
 
     /// <summary>
@@ -257,6 +261,12 @@ public static class TitleCleanBuilder
         // evidence about a different attribute.
         var claimed = accepted.Where(c => c.IsValueMatch).ToList();
 
+        // Which spans are written hard against another confirmed value. "1TBSSD+1TBSSD" is two disks
+        // and says "SSD" twice, but the disk-type column can only say it once — so the evidence that
+        // the second one is real has to come from the capacity it is glued to, not from the cell.
+        foreach (var candidate in accepted)
+            candidate.Anchored = Anchored(candidate, accepted);
+
         var results = new List<TitleAttributeResult>(rules.Attributes.Count);
         var errors = new List<string>();
         var removals = new List<(int Start, int End)>();
@@ -272,8 +282,23 @@ public static class TitleCleanBuilder
                 original,
                 accepted.Where(c => ReferenceEquals(c.Attr, attr)).ToList(),
                 Evidence(attr, pool, accepted, claimed, title),
+                title,
                 removals,
                 errors));
+        }
+
+        if (rules.Source.CollapseRepeats)
+            AddRepeats(title, removals);
+
+        // A title that answers exactly one of a dozen filled cells is not a product name, and
+        // cutting that one value out of it writes a mangled sentence back to the marketplace.
+        var suspect = NotATitle(results);
+        if (suspect)
+        {
+            removals.Clear();
+            errors.Add(
+                "Bu satırın başlığı bir ürün adına benzemiyor — dolu özelliklerden yalnızca biri " +
+                "başlıkta bulundu. Başlığa dokunulmadı; satırı elden geçirin.");
         }
 
         return new TitleCleanRow(
@@ -281,7 +306,89 @@ public static class TitleCleanBuilder
             title.Original,
             Apply(title.Original, removals),
             results,
-            errors);
+            errors,
+            suspect);
+    }
+
+    /// <summary>How many filled cells a row needs before the count below means anything. Under it a
+    /// rule set is simply too small to draw a conclusion from — two columns of which one matched is
+    /// an ordinary row, not a broken title.</summary>
+    const int EnoughCells = 4;
+
+    /// <summary>
+    /// Whether this row's title reads as something other than a product name.
+    ///
+    /// <para>The test is deliberately arithmetic and knows nothing about brands or categories: of the
+    /// cells this row actually filled, the title carries <b>one</b>. A real export puts marketing copy
+    /// in the title column — "2 YIL LENOVO TÜRKİYE GARANTİLİ - HIZLI KARGO" — and the single thing
+    /// such a line has in common with the row is the brand, so the cleaner would faithfully cut the
+    /// brand out and write the rest back. A genuine title matches half its columns or better.</para>
+    /// </summary>
+    static bool NotATitle(List<TitleAttributeResult> results)
+    {
+        var filled = results.Count(r => r.Status != TitleAttributeStatus.Empty);
+        if (filled < EnoughCells)
+            return false;
+
+        return results.Count(r => r.Status is TitleAttributeStatus.Ok
+            or TitleAttributeStatus.Corrected or TitleAttributeStatus.Filled) == 1;
+    }
+
+    /// <summary>
+    /// The second of two identical words written back to back — "Lenovo Ideapad Ideapad Slim3".
+    ///
+    /// <para>The only place this module removes text no column claimed, which is why it is opt-in per
+    /// rule set. Two things keep it from being the blunt instrument that sounds like.</para>
+    ///
+    /// <para><b>A repeat carrying a digit is never touched.</b> "RTX 5070 8GB 8GB" is a graphics
+    /// card's own memory beside the system RAM, on the rows where the two happen to be the same size —
+    /// the case this module already has a verdict and a paragraph of its own for. Collapsing it would
+    /// delete the card's memory out of the title, and only on some rows, which is the hardest kind of
+    /// damage to notice.</para>
+    ///
+    /// <para><b>Read off the original title, not the cleaned one.</b> Cleaning can push two words
+    /// together that the seller never wrote together — cutting the middle out of "Ocak Siyah Ocak"
+    /// leaves "Ocak Ocak", which is not a repetition anybody typed. Only what was already adjacent
+    /// counts.</para>
+    /// </summary>
+    static void AddRepeats(FoldedTitle title, List<(int Start, int End)> removals)
+    {
+        var words = new List<(int Start, int End)>();
+        var at = 0;
+
+        while (at < title.Original.Length)
+        {
+            while (at < title.Original.Length && char.IsWhiteSpace(title.Original[at]))
+                at++;
+
+            var start = at;
+            while (at < title.Original.Length && !char.IsWhiteSpace(title.Original[at]))
+                at++;
+
+            if (at > start)
+                words.Add((start, at));
+        }
+
+        for (var i = 1; i < words.Count; i++)
+        {
+            var previous = title.Original[words[i - 1].Start..words[i - 1].End];
+            var current = title.Original[words[i].Start..words[i].End];
+
+            if (current.Any(char.IsDigit) ||
+                !current.Any(char.IsLetter) ||
+                !string.Equals(
+                    FoldedTitle.Fold(previous), FoldedTitle.Fold(current), StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // Some attribute is already cutting these characters. A second span over the same text
+            // would make Apply cut twice from shifting offsets and take a neighbour with it.
+            if (removals.Any(r => r.Start < words[i].End && words[i].Start < r.End))
+                continue;
+
+            removals.Add(words[i]);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -328,6 +435,7 @@ public static class TitleCleanBuilder
         string original,
         List<Candidate> mine,
         List<Candidate> evidence,
+        FoldedTitle title,
         List<(int Start, int End)> removals,
         List<string> errors)
     {
@@ -364,7 +472,11 @@ public static class TitleCleanBuilder
 
         if (hits.Count == 0)
         {
-            var said = evidence.Select(c => c.Match.Canonical).Distinct(StringComparer.Ordinal).ToList();
+            // The title's own words. A conflict is reported so a person can read the two sides
+            // against each other, and quoting the rule's canonical spelling for the title's half
+            // shows them a phrase the title may not contain — it also feeds the "merge these two
+            // spellings" fix, which has to fold in what the title actually wrote.
+            var said = evidence.Select(c => c.Match.Text).Distinct(StringComparer.Ordinal).ToList();
 
             // Nothing added to `errors`: a cell whose value the title never mentions is ordinary, not
             // a problem, and this row keeps its place outside the review list. The reason is carried
@@ -417,22 +529,53 @@ public static class TitleCleanBuilder
         // The fix for the operator is to add a rule for the other column (this file has a graphics
         // memory column), after which each occurrence is claimed by its own attribute and both are
         // removed correctly. Until then this is reported, not guessed at.
-        if (hits.Count > 1)
+        // How many occurrences the cell itself accounts for. One, normally — but a disk column
+        // reading "1 TB + 1 TB" is a machine with two of them, and the second "1TBSSD" in its title
+        // is not a repeat nobody asked for. The guard is not loosened by this, it is sharpened: the
+        // number is read off the row rather than assumed.
+        //
+        // What counts as an occurrence is settled first. Two spellings of one alias group written
+        // side by side name the product once, at length: "Gaming Laptop" and "Gaming Notebook" are
+        // one product type, not two, and counting their words separately reported a repeat the title
+        // never had — under the group's canonical name ("Notebook"), which in the first of those
+        // titles does not appear at all. Measures keep the old count: "8GB 8GB" really is two
+        // numbers, and so is any spelling written twice in a row.
+        var counted = rule.Kind == TitleAttributeKind.Alias ? OnePhrase(title, hits) : hits;
+
+        var repeated = counted
+            .GroupBy(c => c.Match.Key, StringComparer.Ordinal)
+            // What the cell says, or what the title's own compounds prove — whichever is larger. A
+            // disk-type column says "SSD" once however many disks the machine has, and
+            // "1TBSSD+1TBSSD" carries two confirmed capacities each with an SSD written onto it.
+            // "RTX 5070 8GB 8GB" is untouched by this: neither of those is glued to anything, so the
+            // count stays at what the cell says and the repeat is still reported.
+            .Any(g => g.Count() > Math.Max(value.Allowed(g.Key), g.Count(c => c.Anchored)));
+
+        if (repeated)
         {
-            var found = hits[0].Match.Canonical;
+            // What the title wrote, not what the rule calls it. The group's canonical spelling is
+            // often absent from the title — an operator told that "Notebook" occurs twice in a title
+            // holding neither of those words has been sent looking for something that is not there.
+            var said = counted
+                .Select(c => c.Match.Text)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var joined = string.Join(", ", said);
+            var found = string.Join("\", \"", said);
 
             // Names the fix rather than the problem. The other occurrence belongs to something else
             // — a graphics card's own memory beside the system RAM — and the way to say so is a rule
             // that claims the longer phrase around it and is not allowed to remove it.
             var message =
-                $"{rule.Column}: \"{found}\" başlıkta {hits.Count} kez geçiyor, hangisinin bu özellik " +
+                $"{rule.Column}: \"{found}\" başlıkta {counted.Count} kez geçiyor, hangisinin bu özellik " +
                 $"olduğu belirsiz. Diğerini sahiplenen bir kural ekleyin: o kolonu Değer Listesi yapıp " +
-                $"başlıktaki uzun yazımı ekleyin (ör. \"RTX 5070 {found}\") ve o satırda Çıkar ile " +
+                $"başlıktaki uzun yazımı ekleyin (ör. \"RTX 5070 {said[0]}\") ve o satırda Çıkar ile " +
                 "Düzelt'i kapalı bırakın — böylece o metin korunur, buradaki değer temizlenir";
             errors.Add(message);
 
             return new TitleAttributeResult(
-                rule.Column, TitleAttributeStatus.Ambiguous, original, original, found, message,
+                rule.Column, TitleAttributeStatus.Ambiguous, original, original, joined, message,
                 TitleAttributeReason.ValueRepeated);
         }
 
@@ -442,9 +585,12 @@ public static class TitleCleanBuilder
         // A rounded match agrees about the product and disagrees about the precision, and the cell is
         // the precise one. Rewriting 745 mm as the title's "75 cm" would delete a figure nobody asked
         // to lose — so the title is cleaned and the cell is left exactly as it was.
-        var rounded = Rounded(value, hits[0].Match);
+        var rounded = value.PartList.Any(part => Rounded(part, hits[0].Match));
 
-        var status = differs && rule.Correct && !rounded
+        // A cell holding several measurements is never rewritten. The canonical form of one match is
+        // one value, and writing it back over "1 TB + 1 TB" would throw the second disk away — the
+        // title is cleaned and the cell keeps everything it said.
+        var status = differs && rule.Correct && !rounded && value.Parts is null
             ? TitleAttributeStatus.Corrected
             : TitleAttributeStatus.Ok;
 
@@ -504,10 +650,11 @@ public static class TitleCleanBuilder
         if (value.BareQuantity is { } bare)
             return match.Quantity.HasValue && Math.Abs(match.Quantity.Value - bare) < 1e-9;
 
-        if (value.Key.Length > 0 && string.Equals(value.Key, match.Key, StringComparison.Ordinal))
-            return true;
-
-        return Rounded(value, match);
+        // Any of them: a disk column reading "2 TB + 1 TB" asserts both, and a title writing either
+        // is writing something the row says it has.
+        return value.PartList.Any(part =>
+            part.Key.Length > 0 && string.Equals(part.Key, match.Key, StringComparison.Ordinal) ||
+            Rounded(part, match));
     }
 
     /// <summary>
@@ -680,6 +827,59 @@ public static class TitleCleanBuilder
     /// this worth writing down. <see cref="BoundaryOk"/> covers the other direction, the "16" inside
     /// "MC16250_3".</para>
     /// </summary>
+    /// <summary>Whether another accepted, confirmed value ends exactly where this one begins or
+    /// begins exactly where it ends — the two halves of "1TBSSD".</summary>
+    static bool Anchored(Candidate candidate, List<Candidate> accepted) =>
+        accepted.Any(other =>
+            !ReferenceEquals(other, candidate) &&
+            other.IsValueMatch &&
+            other.Match.Spans.Any(s => s.End == candidate.Start || s.Start == candidate.End));
+
+    /// <summary>
+    /// One occurrence per phrase. Two spellings of the same alias group with nothing but separators
+    /// between them are the product type written out at length — "Gaming Laptop", "Gaming Notebook",
+    /// "Dizüstü Bilgisayar Notebook" — and the repeat guard must see one of them, not two.
+    /// </summary>
+    /// <remarks>
+    /// The two spans have to be spelled differently. The same word twice in a row is a repeat under
+    /// any reading, and folding it would hide exactly the case the guard exists for.
+    /// </remarks>
+    static List<Candidate> OnePhrase(FoldedTitle title, List<Candidate> hits)
+    {
+        var kept = new List<Candidate>();
+
+        foreach (var candidate in hits.OrderBy(c => c.Start))
+        {
+            var previous = kept.Count > 0 ? kept[^1] : null;
+
+            var joins =
+                previous is not null &&
+                string.Equals(previous.Match.Key, candidate.Match.Key, StringComparison.Ordinal) &&
+                !string.Equals(previous.Match.Text, candidate.Match.Text, StringComparison.OrdinalIgnoreCase) &&
+                OnlySeparators(title.Original, previous.End, candidate.Start);
+
+            if (!joins)
+                kept.Add(candidate);
+        }
+
+        return kept;
+    }
+
+    /// <summary>Whether the stretch between two matches is separator characters and nothing else.</summary>
+    static bool OnlySeparators(string title, int from, int to)
+    {
+        if (from > to || to > title.Length)
+            return false;
+
+        for (var i = from; i < to; i++)
+        {
+            if (!char.IsWhiteSpace(title[i]) && title[i] is not ('-' or '_' or '/' or '.'))
+                return false;
+        }
+
+        return true;
+    }
+
     static bool BareSupported(Candidate candidate, List<Candidate> accepted)
     {
         if (!candidate.Match.Bare)

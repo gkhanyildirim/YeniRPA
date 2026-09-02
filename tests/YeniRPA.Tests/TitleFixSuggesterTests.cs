@@ -25,6 +25,239 @@ public class TitleFixSuggesterTests
     }
 
     // -----------------------------------------------------------------
+    // A title the marketplace cut short
+    // -----------------------------------------------------------------
+
+    static TitleRuleSet Types() => new("Test", "Başlık",
+    [
+        new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
+            Aliases: [["Windows 11 Pro", "W11P"]]),
+        new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias, Aliases: [["Notebook"]]),
+    ]);
+
+    /// <summary>
+    /// The cell's value is in the title, but the field ran out in the middle of it. Nothing in the
+    /// file spells the seller's phrase out — every row is cut — so it is reconstructed: the title's
+    /// own unclaimed words, with the word the cut broke completed from the cell.
+    /// </summary>
+    [Fact]
+    public void ATruncatedTailIsCompletedFromTheCell()
+    {
+        List<List<string>> table =
+        [
+            ["Başlık", "İşletim Sistemi", "Ürün Tipi"],
+            ["Lenovo ThinkPad P16 W11P Taşınabilir İş İstasy", "Windows 11 Pro", "İş İstasyonu"],
+        ];
+
+        var fix = Assert.Single(Fixes(Types(), table), f => f.Column == "Ürün Tipi");
+
+        Assert.Equal(TitleFixKind.AdoptPhrase, fix.Kind);
+        Assert.Equal("Taşınabilir İş İstasyonu", fix.Value);
+    }
+
+    /// <summary>
+    /// The guard that keeps the reconstruction honest. A title ending "Taşınabilir İş" has an "İş"
+    /// that is also a prefix of "İstasyonu" — read that way it would propose "Taşınabilir İstasyonu",
+    /// eating a word. The words before the cut have to spell the rest of the value.
+    /// </summary>
+    [Fact]
+    public void ATailThatDoesNotSpellTheCellsValueIsNotCompleted()
+    {
+        List<List<string>> table =
+        [
+            ["Başlık", "İşletim Sistemi", "Ürün Tipi"],
+            ["Lenovo ThinkPad P16 W11P Taşınabilir İş", "Windows 11 Pro", "İş İstasyonu"],
+        ];
+
+        Assert.DoesNotContain(Fixes(Types(), table), f => f.Column == "Ürün Tipi");
+    }
+
+    /// <summary>
+    /// A hundred-character cut lands wherever it lands. The first row of a scenario may stop before
+    /// the value is legible while a later one does not, so the proposer reads across the rows rather
+    /// than giving up on the first.
+    /// </summary>
+    [Fact]
+    public void TheScenarioLooksPastItsFirstRowForATail()
+    {
+        List<List<string>> table =
+        [
+            ["Başlık", "İşletim Sistemi", "Ürün Tipi"],
+            ["Lenovo ThinkPad P16 W11P Taşınabilir İş", "Windows 11 Pro", "İş İstasyonu"],
+            ["Lenovo ThinkPad P16 W11P Taşınabilir İ", "Windows 11 Pro", "İş İstasyonu"],
+            ["Lenovo ThinkPad P16 W11P Taşınabilir İş İstasy", "Windows 11 Pro", "İş İstasyonu"],
+        ];
+
+        var fix = Assert.Single(Fixes(Types(), table), f => f.Column == "Ürün Tipi");
+
+        Assert.Equal("Taşınabilir İş İstasyonu", fix.Value);
+        Assert.Equal(3, fix.Rows);
+    }
+
+    // -----------------------------------------------------------------
+    // Who a protector may hand its phrase to
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// Never back to the column that raised the ambiguity. Protecting the phrase there switches that
+    /// column's own removal off — the opposite of what the operator wants — and leaves a catalogue
+    /// value no cell resolves to. One real rule set ended up with a bare "Ultra9" under its processor
+    /// column that way, and every row afterwards read as a conflict.
+    /// </summary>
+    [Fact]
+    public void AProtectCardNeverTargetsTheColumnThatReportedIt()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("RAM", TitleAttributeKind.Measure, Units: [Gb]),
+            new TitleAttributeRule("Grafik Kartı", TitleAttributeKind.Alias,
+                Aliases: [["GeForce RTX 5070"]]),
+        ]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "RAM", "Grafik Kartı"],
+            ["Asus TUF RTX 5070 8GB 8GB FHD", "8 GB", "GeForce RTX 5070"],
+        ];
+
+        foreach (var fix in Fixes(set, table).Where(f => f.Kind == TitleFixKind.ProtectPhrase))
+            Assert.NotEqual(fix.Column, fix.TargetColumn);
+    }
+
+    // -----------------------------------------------------------------
+    // A card that cannot be got rid of
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// "FreeDOS" is not another way of writing "Windows 11 Pro" — they are two operating systems,
+    /// and the catalogue already says so by carrying each as its own value. A merge card here asks
+    /// for something <see cref="TitleFixSuggester"/> quite rightly refuses to write, so applying it
+    /// changed nothing, the row came back unfixed, and the card was drawn again. Pressing the button
+    /// did nothing, forever.
+    ///
+    /// <para>The row is a genuine data error — that product's cell says Windows where its twin says
+    /// FreeDOS — and belongs in the review list with no card at all.</para>
+    /// </summary>
+    [Fact]
+    public void NoCardIsOfferedWhenApplyingItWouldChangeNothing()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
+                Aliases: [["FreeDOS", "FDOS"], ["Windows 11 Pro", "W11P"]]),
+        ]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "İşletim Sistemi"],
+            ["Lenovo IdeaPad 3 FreeDOS Notebook", "Windows 11 Pro"],
+        ];
+
+        var (rules, rows) = Run(set, table);
+
+        // The row is still reported — nothing here says the disagreement is not real.
+        Assert.Contains(rows.Single().Attributes, a =>
+            a.Column == "İşletim Sistemi" && a.Status == TitleAttributeStatus.Conflict);
+
+        Assert.Empty(TitleFixSuggester.Suggest(rules, rows));
+    }
+
+    /// <summary>The merge that genuinely does something is still offered: a spelling the catalogue
+    /// has never heard of joins the cell's group.</summary>
+    [Fact]
+    public void AMergeThatAddsASpellingTheCatalogueLacksIsStillOffered()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
+                Aliases: [["Windows 11 Pro", "W11P"], ["FDOS"]]),
+        ]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "İşletim Sistemi"],
+            ["Lenovo IdeaPad 3 FDOS Notebook", "Windows 11 Pro"],
+        ];
+
+        var fix = Assert.Single(Fixes(set, table));
+
+        Assert.Equal(TitleFixKind.MergeAlias, fix.Kind);
+        Assert.NotEqual(fix.SampleBefore, fix.SampleAfter);
+    }
+
+    // -----------------------------------------------------------------
+    // Two ways a card can go missing without saying so
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// A card's preview is produced by re-compiling an edited copy of the rule set, and that compile
+    /// has to be handed the same reference lists the original had. Without them a rule naming a list
+    /// is refused, the refusal is caught as "this fix does not work", and <b>every</b> card on the
+    /// file disappears — not only the ones touching that column. Silent, and it looked like the
+    /// suggester had simply stopped working.
+    /// </summary>
+    [Fact]
+    public void ARuleNamingAReferenceListDoesNotSilenceEveryCard()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("İşlemci", ReferenceList: "İşlemciler"),
+            new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias, Aliases: [["İndüksiyonlu Ocak"]]),
+        ]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "İşlemci", "Ürün Tipi"],
+            ["Teka IR 8430 İndüksiyon Ocak", "Intel Core i5", "İndüksiyonlu ocak"],
+        ];
+
+        var lists = new[] { new TitleReferenceList("İşlemciler", "test", ["Intel Core i5-13420H"]) };
+        var rules = CompiledRuleSet.Compile(set, lists);
+
+        Assert.NotEmpty(TitleFixSuggester.Suggest(rules, TitleCleanBuilder.Clean(rules, table)));
+    }
+
+    /// <summary>
+    /// The RuleSet's spellings join the group this row's cell already belongs to, whatever that group
+    /// is headed by.
+    ///
+    /// <para>A column carrying "Notebook" from an earlier file, against a marketplace group headed
+    /// "Laptop", is what this is for. Heading a second group with the marketplace's canonical left the
+    /// cell resolving to one value and the title's "Dizüstü Bilgisayar" to another, so the card
+    /// changed nothing on the row it was measured against and was dropped as useless — the feature
+    /// looked absent on exactly the files that needed it.</para>
+    /// </summary>
+    [Fact]
+    public void TheRuleSetsSpellingsJoinTheGroupTheCellAlreadyBelongsTo()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias, Aliases: [["Notebook"]])]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "Ürün Tipi"],
+            ["Lenovo ThinkPad T16 Dizüstü Bilgisayar", "Notebook"],
+        ];
+
+        var rules = CompiledRuleSet.Compile(set);
+        var rows = TitleCleanBuilder.Clean(rules, table);
+
+        var categories = new[]
+        {
+            new CategoryTypeRule("NOTEBOOKS", "DİZÜSTÜ BİLGİSAYARLAR",
+                ["Laptop", "Notebook", "Dizüstü Bilgisayar"]),
+        };
+
+        var fix = Assert.Single(
+            TitleFixSuggester.SuggestCategoryTypes(rules, rows, categories, "DİZÜSTÜ BİLGİSAYARLAR"));
+
+        // Joined the existing group, so the cell and the title now say the same thing and the title
+        // actually loses the words.
+        Assert.Equal("Notebook", fix.CellValue);
+        Assert.DoesNotContain("Dizüstü", fix.SampleAfter, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
     // Anchoring a proposed spelling
     // -----------------------------------------------------------------
 

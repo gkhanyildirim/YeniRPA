@@ -206,6 +206,59 @@ public class TitleRuleStoreTests
         Assert.Equal("İşlemciler", rule.ReferenceList);
     }
 
+    /// <summary>
+    /// "Tekrarı Sil" belongs to the set rather than to a rule, so it is written on every row of that
+    /// set and read back off the first — the same shape the decimal separator has always had.
+    /// </summary>
+    [Fact]
+    public void TheRepeatSettingSurvivesTheExcelRoundTrip()
+    {
+        var set = new TitleRuleSet("Laptop", "Başlık",
+            [new TitleAttributeRule("Marka"), new TitleAttributeRule("İşlemci")],
+            ".", CollapseRepeats: true);
+
+        var bytes = TitleRuleStore.BuildWorkbook([set]);
+
+        using var stream = new MemoryStream(bytes);
+        Assert.True(TitleRuleStore.ReadWorkbook(stream, "kural-setleri.xlsx").Single().CollapseRepeats);
+    }
+
+    /// <summary>
+    /// The setting rides on the rule set the browser posts with the upload, so it has to survive
+    /// that JSON. It is a whole-set setting rather than a per-rule one, which is the shape most
+    /// likely to be dropped somewhere along the wire.
+    /// </summary>
+    [Fact]
+    public void TheRepeatSettingSurvivesThePostedRuleSet()
+    {
+        const string json = """
+            {
+              "name": "Laptop",
+              "titleColumn": "Başlık",
+              "decimalSeparator": ".",
+              "collapseRepeats": true,
+              "attributes": [{ "column": "Marka", "kind": "Text" }]
+            }
+            """;
+
+        Assert.True(TitleRuleStore.ParseRuleSetForm(json).CollapseRepeats);
+    }
+
+    /// <summary>A sheet exported before the column existed reads with it off — the safe default, and
+    /// the behaviour that sheet was written under.</summary>
+    [Fact]
+    public void ASheetWithoutTheRepeatColumnReadsWithItOff()
+    {
+        var csv = new StringBuilder()
+            .AppendLine("Kural Seti;Başlık Kolonu;Kolon;Tip")
+            .AppendLine("Laptop;Başlık;Marka;Metin")
+            .ToString();
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        Assert.False(TitleRuleStore.ReadWorkbook(stream, "kurallar.csv").Single().CollapseRepeats);
+    }
+
     /// <summary>And an empty cell comes back as no list rather than as a list named nothing.</summary>
     [Fact]
     public void ARuleWithNoReferenceListComesBackWithNone()
@@ -302,18 +355,64 @@ public class TitleRuleStoreTests
         AssertSameAsLaptop(TitleRuleStore.FromForm(TitleRuleStore.ToForm(Laptop())));
     }
 
+    /// <summary>
+    /// One entry per line, because the editor's box is where forty alias groups have to be read and
+    /// on one line they cannot be. The workbook keeps ";" — a cell is one line — and the parser takes
+    /// either, so there is still one implementation of the format rather than one per destination.
+    /// </summary>
     [Fact]
-    public void TheEditorShapeFlattensUnitsAndAliasesIntoOneCellEach()
+    public void TheEditorShapeFlattensUnitsAndAliasesOnePerLine()
     {
         var form = TitleRuleStore.ToForm(Laptop());
 
         var storage = form.AttributeList.First(a => a.Column == "Sabit Disk Kapasitesi");
-        Assert.Equal("GB=gb|gigabayt@1 ; TB=tb|terabayt@1024", storage.Units);
+        Assert.Equal("GB=gb|gigabayt@1\nTB=tb|terabayt@1024", storage.Units);
 
         var os = form.AttributeList.First(a => a.Column == "İşletim Sistemi");
-        Assert.Equal("W11P|Windows 11 Pro ; W11H|Windows 11 Home", os.Aliases);
+        Assert.Equal("W11P|Windows 11 Pro\nW11H|Windows 11 Home", os.Aliases);
         Assert.Equal("Alias", os.Kind);
         Assert.False(os.Correct);
+    }
+
+    /// <summary>The workbook stays on ";" — one cell, one line — however the editor shows it.</summary>
+    [Fact]
+    public void TheWorkbookStillWritesOneCellPerRule()
+    {
+        var bytes = TitleRuleStore.BuildWorkbook([Laptop()]);
+
+        using var stream = new MemoryStream(bytes);
+        var read = TitleRuleStore.ReadWorkbook(stream, "kural-setleri.xlsx").Single();
+
+        AssertSameAsLaptop(read);
+    }
+
+    /// <summary>
+    /// Both separators reach the same rule set. A workbook written before the editor moved to lines
+    /// still reads, and a value typed with ";" by hand keeps working.
+    /// </summary>
+    [Fact]
+    public void LinesAndSemicolonsParseToTheSameThing()
+    {
+        TitleRuleSet Read(string units, string aliases) => TitleRuleStore.FromForm(
+            new TitleRuleSetForm("Test", "Başlık",
+            [
+                new TitleAttributeForm("Ölçü", "Measure", Units: units),
+                new TitleAttributeForm("Liste", "Alias", Aliases: aliases),
+            ]));
+
+        var lines = Read("GB=gb@1\nTB=tb@1024", "W11P|Windows 11 Pro\nW11H|Windows 11 Home");
+        var semis = Read("GB=gb@1 ; TB=tb@1024", "W11P|Windows 11 Pro ; W11H|Windows 11 Home");
+
+        Assert.Equal(
+            TitleRuleStore.EncodeUnits(semis.AttributeList[0].UnitList),
+            TitleRuleStore.EncodeUnits(lines.AttributeList[0].UnitList));
+
+        Assert.Equal(
+            TitleRuleStore.EncodeAliases(semis.AttributeList[1].AliasGroups),
+            TitleRuleStore.EncodeAliases(lines.AttributeList[1].AliasGroups));
+
+        Assert.Equal(2, lines.AttributeList[0].UnitList.Count);
+        Assert.Equal(2, lines.AttributeList[1].AliasGroups.Count);
     }
 
     /// <summary>A row typed into the editor with the optional cells left blank is a plain text

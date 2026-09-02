@@ -68,7 +68,52 @@ public class TitleCleanerRealFileTests
             // The card's own brand is dropped in a title — "GeForce RTX™ 4050" is written "RTX4050" —
             // so this column is one of the few where part of the value answers for the whole.
             new TitleAttributeRule("Grafik Kartı", AllowPartial: true),
-        ]);
+        ],
+        // This seller types the series twice on two rows ("Ideapad Ideapad Slim3").
+        CollapseRepeats: true);
+
+    /// <summary>
+    /// A second seller's laptop export. Same template, different habits: two disks in one cell, the
+    /// family and the model code joined with a hyphen, a hundred-character cut landing wherever it
+    /// lands, and one row whose title column holds a warranty advert instead of a product name.
+    ///
+    /// <para>The product-type column is <b>one group with Düzelt off</b>, which is the shape a laptop
+    /// category actually needs. Every word a title uses for its own kind belongs together so the
+    /// title loses it whichever one it wrote; and the cell keeps what it holds, because rewriting a
+    /// "Gaming" row's cell to "Notebook" would throw away what that row says it is.</para>
+    /// </summary>
+    static TitleRuleSet SecondSellerRules() => new(
+        "Dizüstü — ikinci satıcı",
+        "Başlık",
+        [
+            new TitleAttributeRule("Ürün Tipi (tr_TR)", TitleAttributeKind.Alias, Correct: false,
+                Aliases:
+                [
+                    [
+                        "Notebook", "Laptop", "Gaming", "İş İstasyonu",
+                        "Dizüstü Bilgisayar", "Taşınabilir Bilgisayar", "Taşınabilir İş İstasyonu",
+                        "Dizüstü",
+                    ],
+                ]),
+            new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
+                Aliases:
+                [
+                    ["Windows 11 Pro", "W11P"],
+                    ["Windows 11 Home", "W11H", "W11"],
+                    ["FreeDOS", "FDOS"],
+                ]),
+            new TitleAttributeRule("İşlemci (tr_TR)", AllowPartial: true, ReferenceList: "İşlemciler"),
+            new TitleAttributeRule("İşlemci Modeli"),
+            new TitleAttributeRule("Marka"),
+            new TitleAttributeRule("Sabit disk kapasitesi", TitleAttributeKind.Measure, Units: [Gb, Tb]),
+            new TitleAttributeRule("RAM Bellek Boyutu", TitleAttributeKind.Measure, Units: [Gb, Tb]),
+            new TitleAttributeRule("Ekran Boyutu (inç)", TitleAttributeKind.Measure, Units: [Inch]),
+            new TitleAttributeRule("Sabit disk tipi", TitleAttributeKind.Alias, Aliases: [["SSD"], ["HDD"]]),
+            new TitleAttributeRule("Renk (temel)"),
+            new TitleAttributeRule("Grafik Kartı", AllowPartial: true),
+        ],
+        ".",
+        CollapseRepeats: true);
 
     // -----------------------------------------------------------------
 
@@ -123,6 +168,9 @@ public class TitleCleanerRealFileTests
     [InlineData(22, "Omnibook 3 DY0G7EA003 FHD")]
     // i5-13420H — the catalogue joins family and model with a hyphen, the cell says only "Intel Core i5"
     [InlineData(50, "Nitro V15 ANV15-51 NH.QNBEY.006 FHD")]
+    // The marketplace cut this title at 100 characters, mid-word: "… W11P Dizüstü Bi"
+    [InlineData(7, "Aspire Lite AL16-51P-580H NX.DCLEY.001A006 15.6\" FullHD")]
+    [InlineData(39, "Aspire Lite AL16-51P-580H NX.DCLEY.001 15.6\" FullHD")]
     public void TheLaptopExportCleansToTheModelAndWhatNoColumnClaims(int rowNumber, string expected)
     {
         Assert.Equal(expected, Title(Clean(LaptopRules(), "teknoraks0109.xlsx"), rowNumber));
@@ -136,8 +184,9 @@ public class TitleCleanerRealFileTests
     [Theory]
     // The cell says "AMD Ryzen 3"; the title says Ryzen7 3700U, and it is the cell that is wrong.
     [InlineData(20, "IdeaPad 3 81W1005QTX Ryzen7 3700U FullHD")]
-    // "Ryzen3-30" is not a processor anybody makes. Ryzen3 goes, the typo stays and is reported.
-    [InlineData(11, "Ideapad Ideapad Slim3 82XQ0129TX002 -30 FHD")]
+    // "Ryzen3-30" is not a processor anybody makes. Ryzen3 goes, the typo stays and is reported —
+    // and the series the seller typed twice goes, because this rule set asks for that.
+    [InlineData(11, "Ideapad Slim3 82XQ0129TX002 -30 FHD")]
     public void RowsWhoseCellAndTitleDisagreeKeepTheirTitle(int rowNumber, string expected)
     {
         Assert.Equal(expected, Title(Clean(LaptopRules(), "teknoraks0109.xlsx"), rowNumber));
@@ -171,17 +220,19 @@ public class TitleCleanerRealFileTests
     /// </summary>
     [Theory]
     [InlineData("teknoraks0109.xlsx")]
+    [InlineData("laptop-test.xlsx")]
     [InlineData("dizüstü-per4mance.xlsx")]
     [InlineData("ocaklar.xlsx")]
     public void NothingReportedAsRemovedIsStillInTheTitle(string fileName)
     {
-        var rows = fileName == "teknoraks0109.xlsx"
-            ? Clean(LaptopRules(), fileName)
-            : Suggested(fileName);
+        var rules = fileName switch
+        {
+            "teknoraks0109.xlsx" => CompiledRuleSet.Compile(LaptopRules(), [Processors()]),
+            "laptop-test.xlsx" => CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]),
+            _ => CompiledRuleSet.Compile(TitleRuleSuggester.Suggest(Table(fileName), fileName).RuleSet),
+        };
 
-        var rules = fileName == "teknoraks0109.xlsx"
-            ? CompiledRuleSet.Compile(LaptopRules(), [Processors()])
-            : CompiledRuleSet.Compile(TitleRuleSuggester.Suggest(Table(fileName), fileName).RuleSet);
+        var rows = TitleCleanBuilder.Clean(rules, Table(fileName));
 
         var removing = rules.Attributes
             .Where(a => a.Rule.Remove)
@@ -190,6 +241,12 @@ public class TitleCleanerRealFileTests
 
         foreach (var row in rows)
         {
+            // A row whose title is not a product name keeps everything it had, on purpose. Its
+            // attributes still report what they found — the match was real — and the one thing that
+            // did match is exactly what stays put.
+            if (row.TitleSuspect)
+                continue;
+
             var words = row.CleanTitle
                 .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                 .Select(FoldedTitle.Fold)
@@ -212,16 +269,135 @@ public class TitleCleanerRealFileTests
         }
     }
 
+    // -----------------------------------------------------------------
+    // The second seller's export
+    // -----------------------------------------------------------------
+
+    static IReadOnlyList<TitleCleanRow> SecondSeller() =>
+        TitleCleanBuilder.Clean(
+            CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]),
+            Table("laptop-test.xlsx"));
+
+    /// <summary>One row per way this file breaks what came before it.</summary>
+    [Theory]
+    // Two disks in one cell, written "1TBSSD+1TBSSD" — and a title cut at 100 characters mid-word
+    [InlineData(3, "ThinkPad P16 Gen3 21RQ000JTX001 WUXGA")]
+    // Two *different* disks, and the cut landing on a space instead
+    [InlineData(8, "ThinkPad P16 Gen3 21RQ000JTX008 WUXGA")]
+    // "128SSD+1TBSSD": one disk written with no unit at all, beside one that has it
+    [InlineData(9, "ThinkPad P16 Gen3 21RQ000JTX004 WUXGA")]
+    // The family and the model code joined with a hyphen where the catalogue uses a space
+    [InlineData(14, "LOQ 83S0002YTR FullHD")]
+    // …and the mirror: a space where the catalogue uses a hyphen ("i5 14450HX")
+    [InlineData(74, "OMEN 15 D2QD1EA003 15.3\" WUXGA")]
+    // "Intel Core Ultra 5 225" sits before "…225U" in the catalogue and used to block it
+    [InlineData(93, "ProBook 4 G1i D21PFET WUXGA")]
+    public void TheSecondSellersExportCleansToItsModel(int rowNumber, string expected)
+    {
+        Assert.Equal(expected, Title(SecondSeller(), rowNumber));
+    }
+
+    /// <summary>
+    /// The card the operator needs when the product-type column is empty, on the file that could not
+    /// produce one before.
+    ///
+    /// <para>Eleven rows carry "İş İstasyonu" and the marketplace cut every one of their titles
+    /// before "İstasyonu" finished, so no row spells the seller's phrase out. Nothing anchored, no
+    /// card, and the leftover report could only say "nothing claims this" about "Taşınabilir" —
+    /// while "İş", at two letters, never reached the report at all.</para>
+    /// </summary>
+    [Fact]
+    public void TheTruncatedProductTypeIsOfferedAsASpelling()
+    {
+        // The same rules with that column's catalogue emptied — where an operator starts.
+        var bare = SecondSellerRules() with
+        {
+            Attributes = SecondSellerRules().AttributeList
+                .Select(a => a.Column == "Ürün Tipi (tr_TR)" ? a with { Aliases = null } : a)
+                .ToList(),
+        };
+
+        var rules = CompiledRuleSet.Compile(bare, [Processors()]);
+        var rows = TitleCleanBuilder.Clean(rules, Table("laptop-test.xlsx"));
+
+        var fix = Assert.Single(
+            TitleFixSuggester.Suggest(rules, rows),
+            f => f.Column == "Ürün Tipi (tr_TR)" && f.Value == "Taşınabilir İş İstasyonu");
+
+        Assert.Equal(TitleFixKind.AdoptPhrase, fix.Kind);
+        Assert.DoesNotContain("Taşınabilir", fix.SampleAfter, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// No protector is offered for the double-disk token, and it takes two things to get there.
+    ///
+    /// <para>One row of this file has a disk-capacity cell reading "2 TB" while its title carries two
+    /// disks, so the second "SSD" has nothing to anchor it and the repeat is real as far as the row
+    /// is concerned. But both occurrences sit inside one token — there is no phrase around the other
+    /// one to hand to anybody — so the honest answer is no card, and the row stays in review.</para>
+    ///
+    /// <para>It used to offer "350 32GB 1TBSSD+2TBSSD": the phrase search joined two words to find a
+    /// value that sat whole inside the second, then reached left over the RAM. That is how one rule
+    /// set acquired "1TBSSD+2TBSSD" as a disk type.</para>
+    /// </summary>
+    [Fact]
+    public void NoProtectorIsOfferedForTheDoubleDiskToken()
+    {
+        var rules = CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]);
+        var rows = TitleCleanBuilder.Clean(rules, Table("laptop-test.xlsx"));
+
+        Assert.DoesNotContain(
+            TitleFixSuggester.Suggest(rules, rows),
+            f => f.Kind == TitleFixKind.ProtectPhrase);
+    }
+
+    /// <summary>
+    /// And no card offers to teach the catalogue that "Ryzen7" is a spelling of "Ryzen™ 3". Those two
+    /// rows are a genuine data error — the cell says one processor and the title another — and taking
+    /// the card would clean every Ryzen 7 title as a Ryzen 3 from then on.
+    /// </summary>
+    [Fact]
+    public void NoCardAdoptsAProcessorSpellingThatDiffersByItsDigit()
+    {
+        var rules = CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]);
+        var rows = TitleCleanBuilder.Clean(rules, Table("laptop-test.xlsx"));
+
+        Assert.DoesNotContain(
+            TitleFixSuggester.Suggest(rules, rows),
+            f => f.Column == "İşlemci Modeli");
+    }
+
+    /// <summary>
+    /// The row whose title column holds a warranty advert. Its brand cell says LENOVO and the line
+    /// does contain LENOVO, so the cleaner would faithfully cut it out and write the rest back — a
+    /// mangled sentence, to the marketplace. One match out of twelve filled cells is not a product
+    /// title, and the row is handed over untouched instead.
+    /// </summary>
+    [Fact]
+    public void TheRowWhoseTitleIsAnAdvertIsHandedOverUntouched()
+    {
+        var row = SecondSeller().Single(r => r.RowNumber == 13);
+
+        Assert.True(row.TitleSuspect);
+        Assert.Equal(row.OriginalTitle, row.CleanTitle);
+        Assert.Contains("LENOVO", row.CleanTitle, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// Cleaning the result again takes nothing further out. A second pass that kept eating characters
     /// would corrupt a catalogue one re-run at a time, and every individual run would look like it had
     /// worked — so it is checked on real files, not only on the constructed one.
     /// </summary>
-    [Fact]
-    public void ASecondPassOverTheLaptopExportChangesNothing()
+    [Theory]
+    [InlineData("teknoraks0109.xlsx")]
+    [InlineData("laptop-test.xlsx")]
+    public void ASecondPassOverALaptopExportChangesNothing(string fileName)
     {
-        var rules = CompiledRuleSet.Compile(LaptopRules(), [Processors()]);
-        var table = Table("teknoraks0109.xlsx");
+        var rules = fileName == "teknoraks0109.xlsx"
+            ? CompiledRuleSet.Compile(LaptopRules(), [Processors()])
+            : CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]);
+
+        var table = Table(fileName);
         var first = TitleCleanBuilder.Clean(rules, table);
 
         var titleIndex = TabularFile.BuildHeaderIndex(table[0])["Başlık"];
@@ -276,5 +452,172 @@ public class TitleCleanerRealFileTests
             a.Column == "RAM Bellek Boyutu" && a.Status == TitleAttributeStatus.Ambiguous);
 
         Assert.Contains("8GB 8GB", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
+    // 7. The operator's own rule set
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// The saved "Laptop" set as it stands in the operator's own <c>title-rules.json</c>, copied here
+    /// verbatim.
+    ///
+    /// <para>Every other fixture in this file is a set <em>I</em> wrote, and they are all tidy: one
+    /// product-type group, a processor column that leans on the catalogue, a disk-type column holding
+    /// nothing but "SSD". A set that has been in daily use does not look like that. This one has two
+    /// product-type groups whose members overlap ("Gaming Laptop" against a group holding both
+    /// "Gaming" and "Laptop"), a bare "Ultra9" standing alone under the processor column, and a
+    /// "1TBSSD+2TBSSD" under disk type — every one of them added by accepting a suggestion card, and
+    /// every one of them a shape no fixture of mine ever produced. The
+    /// <c>"Notebook" başlıkta 2 kez geçiyor</c> report on a title containing no such word got through
+    /// because of that gap, so the messy set is now a fixture and stays one.</para>
+    /// </summary>
+    static TitleRuleSet MessyLaptopRules() => new(
+        "Laptop",
+        "Başlık",
+        [
+            new TitleAttributeRule("Grafik Kartı", TitleAttributeKind.Alias, Remove: false, Correct: false,
+                Aliases:
+                [
+                    ["GeForce RTX™ 5070", "RTX 5070 8GB"],
+                    ["GeForce RTX™ 3050", "RTX 3050 6GB"],
+                    ["Radeon™ Onboard Graphics"],
+                    ["Arc™ Onboard Graphics"],
+                    ["Radeon™ 890M"],
+                    ["Onboard Graphics"],
+                ]),
+            // Two groups, and the second holds both words of the first. This is the pair that
+            // produced the phantom repeat.
+            new TitleAttributeRule("Ürün Tipi (tr_TR)", TitleAttributeKind.Alias,
+                Aliases:
+                [
+                    ["Gaming Laptop", "Oyun Bilgisayarı"],
+                    [
+                        "Notebook", "Laptop", "Gaming", "İş İstasyonu", "Dizüstü Bilgisayar",
+                        "Taşınabilir Bilgisayar", "Taşınabilir İş İstasyonu", "Dizüstü",
+                    ],
+                ]),
+            new TitleAttributeRule("İşletim Sistemi", TitleAttributeKind.Alias,
+                Aliases:
+                [
+                    ["FreeDOS", "FDOS", "İşletim Sistemi Bulunmuyor"],
+                    ["Windows 11 Pro", "W11P"],
+                    ["Windows 11 Home", "W11H"],
+                ]),
+            new TitleAttributeRule("İşlemci (tr_TR)", TitleAttributeKind.Alias, ReferenceList: "İşlemciler",
+                Aliases:
+                [
+                    ["AMD Ryzen 7 8745HX", "8745HX", "R7 8745HX"],
+                    ["Intel Core 5 210H", "210H", "C5 210H"],
+                    ["Intel Core Ultra 7 258V", "258V", "U7 258V"],
+                    ["Intel Core Ultra 5 225H", "225H", "U5 225H"],
+                    ["AMD Ryzen AI 7 445", "445", "R AI 7 445", "AI 7 445"],
+                    ["AMD Ryzen AI 9 465", "465", "R AI 9 465", "AI 9 465"],
+                    ["AMD Ryzen AI 9 HX 370", "370", "R AI 9 HX370", "HX370"],
+                    ["AMD Ryzen 7", "Ryzen7 170"],
+                    // Standing alone under the processor column, so no cell ever resolves to it and
+                    // every "Ultra9" title conflicts. Kept because the operator's file keeps it.
+                    ["Ultra9"],
+                ]),
+            new TitleAttributeRule("Sabit disk kapasitesi", TitleAttributeKind.Measure, Units: [Gb, Tb]),
+            new TitleAttributeRule("RAM Bellek Boyutu", TitleAttributeKind.Measure, Units: [Gb, Tb]),
+            new TitleAttributeRule("Ekran Boyutu (inç)", TitleAttributeKind.Measure,
+                Units: [new MeasureUnit("inç", ["inc", "\"", "''", "inch", "inches"])]),
+            new TitleAttributeRule("Sabit disk tipi", TitleAttributeKind.Alias, Correct: false,
+                Aliases: [["SSD"], ["1TBSSD+2TBSSD"]]),
+            new TitleAttributeRule("Marka", Aliases: [["TUF A16"]]),
+        ]);
+
+    /// <summary>The catalogue under the name the operator's set refers to it by.</summary>
+    static TitleReferenceList MessyReference() =>
+        Processors() with { Name = "İşlemciler" };
+
+    static IReadOnlyList<TitleCleanRow> Messy(string fileName) =>
+        TitleCleanBuilder.Clean(
+            CompiledRuleSet.Compile(MessyLaptopRules(), [MessyReference()]), Table(fileName));
+
+    /// <summary>
+    /// "Gaming Laptop" is one product type spelled out, not the word "Gaming" plus the word "Laptop".
+    /// The operator's group holds both, and counting them separately reported the value twice — under
+    /// the group's canonical name, which the title never used.
+    /// </summary>
+    [Theory]
+    [InlineData("Asus TUF Gaming Laptop A16 FA608WI", "Dizüstü", "Asus TUF A16 FA608WI")]
+    [InlineData("MSI Katana 15 Gaming Notebook", "Laptop", "MSI Katana 15")]
+    [InlineData("Lenovo V15 Dizüstü Bilgisayar Notebook", "Notebook", "Lenovo V15")]
+    public void TwoSpellingsOfOneGroupSideBySideAreOneProductType(
+        string title, string cell, string expected)
+    {
+        var rules = CompiledRuleSet.Compile(
+            new TitleRuleSet("Laptop", "Başlık",
+                MessyLaptopRules().AttributeList.Where(a => a.Column == "Ürün Tipi (tr_TR)").ToList()),
+            [MessyReference()]);
+
+        var row = TitleCleanBuilder.Clean(rules, [["Başlık", "Ürün Tipi (tr_TR)"], [title, cell]]).Single();
+
+        Assert.Empty(row.Errors);
+        Assert.Equal(expected, row.CleanTitle);
+    }
+
+    /// <summary>
+    /// The same word written twice is still a repeat. Folding the phrase must not fold this, or it
+    /// would hide the case the guard exists for.
+    /// </summary>
+    [Fact]
+    public void TheSameSpellingTwiceInARowIsStillAmbiguous()
+    {
+        var rules = CompiledRuleSet.Compile(
+            new TitleRuleSet("Laptop", "Başlık",
+                MessyLaptopRules().AttributeList.Where(a => a.Column == "Ürün Tipi (tr_TR)").ToList()),
+            [MessyReference()]);
+
+        var row = TitleCleanBuilder
+            .Clean(rules, [["Başlık", "Ürün Tipi (tr_TR)"], ["Lenovo V15 Notebook Notebook", "Notebook"]])
+            .Single();
+
+        Assert.Contains(row.Attributes, a =>
+            a.Column == "Ürün Tipi (tr_TR)" && a.Status == TitleAttributeStatus.Ambiguous);
+    }
+
+    /// <summary>
+    /// Every phrase a message attributes to the title is in the title. The rule's canonical spelling
+    /// is what the group is called, not what the seller typed, and quoting it as "what the title says"
+    /// sends the operator looking for a word that is not on the page.
+    /// </summary>
+    [Theory]
+    [InlineData("laptop-test.xlsx")]
+    [InlineData("teknoraks0109.xlsx")]
+    public void AMessageOnlyQuotesTheTitleForWhatTheTitleActuallySays(string fileName)
+    {
+        foreach (var row in Messy(fileName))
+        {
+            var quoted = row.Attributes
+                .Where(a => a.Reason is TitleAttributeReason.ValueRepeated
+                                     or TitleAttributeReason.Disagreement)
+                .SelectMany(a => (a.TitleSaid ?? "").Split(", ", StringSplitOptions.RemoveEmptyEntries));
+
+            foreach (var phrase in quoted)
+            {
+                Assert.Contains(phrase, row.OriginalTitle, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The rows the operator was looking at. Their titles end in a cut-off "Taşınabilir İ" and hold
+    /// two disks apiece, and they come out clean — no product-type report, and the fragment gone.
+    /// </summary>
+    [Theory]
+    [InlineData(5, "ThinkPad P16 Gen3 21RQ000JTX010 WUXGA")]
+    [InlineData(6, "ThinkPad P16 Gen3 21RQ000JTX003 WUXGA")]
+    [InlineData(7, "ThinkPad P16 Gen3 21RQ000JTX009 WUXGA")]
+    [InlineData(8, "ThinkPad P16 Gen3 21RQ000JTX008 WUXGA")]
+    public void TheOperatorsOwnSetCleansTheWorkstationRows(int rowNumber, string expected)
+    {
+        var row = Messy("laptop-test.xlsx").First(r => r.RowNumber == rowNumber);
+
+        Assert.Equal(expected, row.CleanTitle);
+        Assert.DoesNotContain(row.Attributes, a => a.Column == "Ürün Tipi (tr_TR)" &&
+            a.Status is TitleAttributeStatus.Ambiguous or TitleAttributeStatus.Conflict);
     }
 }

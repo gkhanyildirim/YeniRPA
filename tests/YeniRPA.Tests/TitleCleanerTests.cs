@@ -378,8 +378,194 @@ public class TitleCleanerTests
     }
 
     // -----------------------------------------------------------------
+    // A cell that holds more than one measurement
+    // -----------------------------------------------------------------
+
+    static TitleRuleSet Disks() => new("Test", "Başlık",
+    [
+        new TitleAttributeRule("Marka"),
+        new TitleAttributeRule("Sabit Disk Kapasitesi", TitleAttributeKind.Measure, Units: [Gb, Tb]),
+        new TitleAttributeRule("Sabit Disk Tipi", TitleAttributeKind.Alias, Aliases: [["SSD"]]),
+    ]);
+
+    /// <summary>
+    /// A machine with two disks says so in one cell. Reading only the front of it made the second
+    /// "1TBSSD" look like a repeat nobody had asked for, and the row went out uncleaned.
+    /// </summary>
+    [Fact]
+    public void ACellHoldingTwoDisksRemovesBoth()
+    {
+        var row = Run(
+            Disks(),
+            "Lenovo ThinkPad P16 21RQ000JTX001 1TBSSD+1TBSSD WUXGA",
+            ("Marka", "Lenovo"),
+            ("Sabit Disk Kapasitesi", "1 TB + 1 TB"),
+            ("Sabit Disk Tipi", "SSD"));
+
+        Assert.Equal("ThinkPad P16 21RQ000JTX001 WUXGA", row.CleanTitle);
+    }
+
+    /// <summary>And two different ones, each answering its own half of the title.</summary>
+    [Fact]
+    public void ACellHoldingTwoDifferentDisksRemovesEach()
+    {
+        var row = Run(
+            Disks(),
+            "Lenovo ThinkPad P16 21RQ000JTX008 1TBSSD+2TBSSD WUXGA",
+            ("Marka", "Lenovo"),
+            ("Sabit Disk Kapasitesi", "2 TB + 1 TB"),
+            ("Sabit Disk Tipi", "SSD"));
+
+        Assert.Equal("ThinkPad P16 21RQ000JTX008 WUXGA", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// The guard this had every chance of breaking. A cell that says "8 GB" once asserts one 8 GB,
+    /// and the second one in the title is a graphics card's own memory — still reported, still not
+    /// removed. What changed is only that the number of occurrences a row is entitled to is read off
+    /// the cell rather than assumed to be one.
+    /// </summary>
+    [Fact]
+    public void ARepeatTheCellDoesNotAssertIsStillAmbiguous()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("RAM", TitleAttributeKind.Measure, Units: [Gb])]);
+
+        var row = Run(rules, "Asus TUF RTX 5070 8GB 8GB FHD", ("RAM", "8 GB"));
+
+        Assert.Equal(TitleAttributeStatus.Ambiguous, Attr(row, "RAM").Status);
+        Assert.Equal("Asus TUF RTX 5070 8GB 8GB FHD", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// A multi-valued cell is never rewritten. One match has one canonical form, and writing it back
+    /// over "1 TB + 1 TB" would throw the second disk away.
+    /// </summary>
+    [Fact]
+    public void AMultiValueCellIsNeverRewritten()
+    {
+        var row = Run(
+            Disks(),
+            "Lenovo ThinkPad 1TBSSD+1TBSSD",
+            ("Marka", "Lenovo"),
+            ("Sabit Disk Kapasitesi", "1 TB + 1 TB"),
+            ("Sabit Disk Tipi", "SSD"));
+
+        var disk = Attr(row, "Sabit Disk Kapasitesi");
+
+        Assert.Equal(TitleAttributeStatus.Ok, disk.Status);
+        Assert.Equal("1 TB + 1 TB", disk.Value);
+    }
+
+    // -----------------------------------------------------------------
     // Values the title glues together
     // -----------------------------------------------------------------
+
+    /// <summary>
+    /// Which character separates a processor family from its model number is arbitrary, and one file
+    /// writes it all three ways: the catalogue says "AMD Ryzen 7 7735HS" and "Intel Core i5-14450HX",
+    /// the titles say "Ryzen7-7735HS" and "i5 14450HX".
+    /// </summary>
+    [Theory]
+    [InlineData("Acer Predator Helios Ultra9-275HX 64GB", "Intel Core Ultra 9", "Intel Core Ultra 9 275HX")]
+    [InlineData("HP OMEN 15 i5 14450HX 32GB", "Intel Core i5", "Intel Core i5-14450HX")]
+    [InlineData("Lenovo LOQ Ryzen7-7735HS 16GB", "AMD Ryzen 7", "AMD Ryzen 7 7735HS")]
+    public void AHyphenAndASpaceAreTheSameSeparator(string title, string cell, string entry)
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("İşlemci", AllowPartial: true, ReferenceList: "İşlemciler")]);
+
+        var list = new TitleReferenceList("İşlemciler", "test", [entry]);
+
+        var row = TitleCleanBuilder.CleanRow(
+            CompiledRuleSet.Compile(rules, [list]), 2, title, _ => cell);
+
+        Assert.DoesNotContain("HX", row.CleanTitle, StringComparison.Ordinal);
+        Assert.DoesNotContain("HS", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A catalogue entry earns its place by carrying the words the cell does not. "Intel Core Ultra
+    /// 5 225" is a real processor listed before "…225U", and it matched nothing but the "Ultra5" the
+    /// cell alone would have found — then stopped the search, so the entry that would have taken the
+    /// model code never got a turn.
+    /// </summary>
+    [Fact]
+    public void AReferenceEntryThatAddsNothingDoesNotBlockTheOneThatDoes()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("İşlemci", AllowPartial: true, ReferenceList: "İşlemciler")]);
+
+        // Catalogue order, shorter first — which is how the published list has them.
+        var list = new TitleReferenceList("İşlemciler", "test",
+            ["Intel Core Ultra 5 225", "Intel Core Ultra 5 225U"]);
+
+        var row = TitleCleanBuilder.CleanRow(
+            CompiledRuleSet.Compile(rules, [list]), 2,
+            "HP ProBook D21PFET Ultra5 225U WUXGA", _ => "Intel Core Ultra 5");
+
+        Assert.Equal("HP ProBook D21PFET WUXGA", row.CleanTitle);
+    }
+
+    // -----------------------------------------------------------------
+    // A title that is not a product name
+    // -----------------------------------------------------------------
+
+    static TitleRuleSet Wide() => new("Test", "Başlık",
+    [
+        new TitleAttributeRule("Marka"),
+        new TitleAttributeRule("Renk"),
+        new TitleAttributeRule("İşletim Sistemi"),
+        new TitleAttributeRule("Ürün Tipi"),
+        new TitleAttributeRule("RAM", TitleAttributeKind.Measure, Units: [Gb]),
+    ]);
+
+    /// <summary>
+    /// A real export puts marketing copy in the title column. The one thing such a line has in common
+    /// with its row is the brand, so cleaning it faithfully cut the brand out and wrote the rest back
+    /// to the marketplace.
+    /// </summary>
+    [Fact]
+    public void ATitleThatMatchesOnlyOneOfManyFilledCellsIsLeftAlone()
+    {
+        const string title = "2 YIL LENOVO TÜRKİYE GARANTİLİ - ADINIZA FATURALI - HIZLI KARGO";
+
+        var row = Run(Wide(), title,
+            ("Marka", "LENOVO"), ("Renk", "Siyah"), ("İşletim Sistemi", "Windows 11 Pro"),
+            ("Ürün Tipi", "Notebook"), ("RAM", "64 GB"));
+
+        Assert.True(row.TitleSuspect);
+        Assert.True(row.HasConflict);
+        Assert.Equal(title, row.CleanTitle);
+    }
+
+    /// <summary>A title that answers its row properly is untouched by the guard.</summary>
+    [Fact]
+    public void AProperTitleIsNotSuspected()
+    {
+        var row = Run(Wide(), "LENOVO Siyah Notebook 64GB Windows 11 Pro",
+            ("Marka", "LENOVO"), ("Renk", "Siyah"), ("İşletim Sistemi", "Windows 11 Pro"),
+            ("Ürün Tipi", "Notebook"), ("RAM", "64 GB"));
+
+        Assert.False(row.TitleSuspect);
+        Assert.Equal("", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// And a rule set too small to draw the conclusion from. One column of two matching is an
+    /// ordinary row, not a broken title.
+    /// </summary>
+    [Fact]
+    public void ASmallRuleSetIsNotSuspectedOfANonTitle()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Marka"), new TitleAttributeRule("Renk")]);
+
+        var row = Run(rules, "LENOVO Bir Şey", ("Marka", "LENOVO"), ("Renk", "Siyah"));
+
+        Assert.False(row.TitleSuspect);
+        Assert.Equal("Bir Şey", row.CleanTitle);
+    }
 
     /// <summary>
     /// The marketplace writes "Ryzen™ 5" and "Core™ 5" in its processor column; the seller's titles
@@ -433,6 +619,124 @@ public class TitleCleanerTests
 
         Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "İşlemci").Status);
         Assert.Equal("Acer Aspire Lite 125H Notebook", row.CleanTitle);
+    }
+
+    // -----------------------------------------------------------------
+    // Repeated words
+    // -----------------------------------------------------------------
+
+    static TitleRuleSet Repeats(bool on) => new(
+        "Test", "Başlık", [new TitleAttributeRule("Marka")], ".", CollapseRepeats: on);
+
+    /// <summary>
+    /// A seller typed the series twice. This is the one thing the module removes without a column
+    /// claiming it, so it happens only where the rule set asks for it.
+    /// </summary>
+    [Fact]
+    public void ARepeatedWordIsCollapsedOnlyWhenTheSettingIsOn()
+    {
+        const string title = "Lenovo Ideapad Ideapad Slim3 82XQ0129TX002";
+
+        Assert.Equal(
+            "Ideapad Ideapad Slim3 82XQ0129TX002",
+            Run(Repeats(false), title, ("Marka", "Lenovo")).CleanTitle);
+
+        Assert.Equal(
+            "Ideapad Slim3 82XQ0129TX002",
+            Run(Repeats(true), title, ("Marka", "Lenovo")).CleanTitle);
+    }
+
+    /// <summary>
+    /// The danger this rule has to survive. "RTX 5070 8GB 8GB" is a graphics card's own memory beside
+    /// the system RAM on a row where the two are the same size — collapsing it deletes the card's
+    /// memory, and only on some rows, which is the hardest kind of damage to notice.
+    /// </summary>
+    [Fact]
+    public void ARepeatedMeasurementIsNeverCollapsed()
+    {
+        var row = Run(Repeats(true), "Asus TUF RTX 5070 8GB 8GB FHD", ("Marka", "Asus"));
+
+        Assert.Equal("TUF RTX 5070 8GB 8GB FHD", row.CleanTitle);
+    }
+
+    /// <summary>
+    /// Read off the original title, not the cleaned one. Cutting the middle out of "Ocak Siyah Ocak"
+    /// leaves two words nobody wrote together, and collapsing those would delete a word the operator
+    /// never accounted for.
+    /// </summary>
+    [Fact]
+    public void CleaningNeverCreatesARepeatToCollapse()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Renk")], ".", CollapseRepeats: true);
+
+        var row = Run(rules, "Ocak Siyah Ocak", ("Renk", "Siyah"));
+
+        Assert.Equal("Ocak Ocak", row.CleanTitle);
+    }
+
+    // -----------------------------------------------------------------
+    // Titles the marketplace cut short
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// A marketplace caps its title field, and a seller writing up to the cap loses the last word
+    /// mid-letter — five of forty-eight rows in one real export end "Dizüstü Bi". Nothing else here
+    /// can find those: every other step compares whole words.
+    /// </summary>
+    [Theory]
+    [InlineData("Acer Aspire Lite FreeDOS Dizüstü Bi", "Aspire Lite FreeDOS")]
+    [InlineData("Acer Aspire Lite FreeDOS Dizüstü Bil", "Aspire Lite FreeDOS")]
+    [InlineData("Acer Aspire Lite FreeDOS Dizüstü Bilgisayar", "Aspire Lite FreeDOS")]
+    public void ATruncatedTrailingValueIsTakenWithWhatIsLeftOfIt(string title, string expected)
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("Marka"),
+            new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias,
+                Aliases: [["Notebook", "Dizüstü Bilgisayar"]]),
+        ]);
+
+        var row = Run(rules, title, ("Marka", "Acer"), ("Ürün Tipi", "Notebook"));
+
+        Assert.Equal(expected, row.CleanTitle);
+    }
+
+    /// <summary>
+    /// Only at the end, and only mid-word. A title that stops on a word boundary is saying less than
+    /// the cell does, which is what the Kısmi permission is for — this must not answer it and take
+    /// the decision away from the column's own setting.
+    /// </summary>
+    [Fact]
+    public void ATitleEndingOnAWholeWordIsLeftToThePartialSetting()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("Marka"),
+            new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias,
+                Aliases: [["Notebook", "Dizüstü Bilgisayar"]]),
+        ]);
+
+        var row = Run(rules, "Acer Aspire Lite Dizüstü", ("Marka", "Acer"), ("Ürün Tipi", "Notebook"));
+
+        Assert.Equal("Aspire Lite Dizüstü", row.CleanTitle);
+    }
+
+    /// <summary>A cut-off word in the middle of a title is a word, not a truncation — nothing gets
+    /// cut short except the end of the field.</summary>
+    [Fact]
+    public void AShortWordInTheMiddleOfATitleIsNotReadAsATruncation()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("Marka"),
+            new TitleAttributeRule("Ürün Tipi", TitleAttributeKind.Alias,
+                Aliases: [["Notebook", "Dizüstü Bilgisayar"]]),
+        ]);
+
+        var row = Run(rules, "Acer Dizüstü Bi Aspire Lite", ("Marka", "Acer"), ("Ürün Tipi", "Notebook"));
+
+        Assert.Equal("Dizüstü Bi Aspire Lite", row.CleanTitle);
     }
 
     // -----------------------------------------------------------------
@@ -667,7 +971,11 @@ public class TitleCleanerTests
         var ram = Attr(row, "RAM");
         Assert.Equal(TitleAttributeStatus.Conflict, ram.Status);
         Assert.Equal("32GB", ram.Value);
-        Assert.Contains("16 GB", ram.Message);
+
+        // Both sides quoted as each of them wrote it. The title spelled it "16GB", so that is what
+        // the operator is shown — not the rule's canonical "16 GB", which is a form nobody typed.
+        Assert.Contains("16GB", ram.Message);
+        Assert.DoesNotContain("16 GB", ram.Message);
         Assert.Contains("32GB", ram.Message);
 
         Assert.Contains("16GB", row.CleanTitle, StringComparison.Ordinal);

@@ -51,8 +51,8 @@ public static class TitleLeftoverReport
 
                 if (!found.TryGetValue(folded, out var entry))
                 {
-                    var (column, cause) = Explain(rules, row, folded);
-                    entry = new Entry(word, column, cause, row.OriginalTitle);
+                    var (column, cause, hint) = Explain(rules, row, folded, word);
+                    entry = new Entry(word, column, cause, hint, row.OriginalTitle);
                     found[folded] = entry;
                 }
 
@@ -67,15 +67,21 @@ public static class TitleLeftoverReport
             .ThenByDescending(e => e.Rows)
             .ThenBy(e => e.Word, StringComparer.Ordinal)
             .Select(e => new TitleLeftover(
-                e.Word, e.Rows, e.Column, e.Cause, Reason(e.Cause, e.Column), e.Sample))
+                e.Word, e.Rows, e.Column, e.Cause, Reason(e.Cause, e.Column, e.Hint), e.Sample))
             .ToList();
     }
 
-    sealed class Entry(string word, string? column, TitleLeftoverCause cause, string sample)
+    sealed class Entry(
+        string word, string? column, TitleLeftoverCause cause, string? hint, string sample)
     {
         public string Word { get; } = word;
         public string? Column { get; } = column;
         public TitleLeftoverCause Cause { get; } = cause;
+
+        /// <summary>The value that would have to be added, where the cause is one the operator closes
+        /// by adding something.</summary>
+        public string? Hint { get; } = hint;
+
         public string Sample { get; } = sample;
         public int Rows { get; set; }
     }
@@ -90,8 +96,8 @@ public static class TitleLeftoverReport
     /// cell reading "Cam" is making a far more specific claim on the word "Cam" than one reading
     /// "Cam seramik ve emaye karışımı", and the specific claim is the one worth reporting.</para>
     /// </summary>
-    static (string? Column, TitleLeftoverCause Cause) Explain(
-        CompiledRuleSet rules, TitleCleanRow row, string word)
+    static (string? Column, TitleLeftoverCause Cause, string? Hint) Explain(
+        CompiledRuleSet rules, TitleCleanRow row, string word, string original)
     {
         var candidates = row.Attributes
             .Select(a => (Attribute: a, Words: Words(a.OriginalValue)))
@@ -124,11 +130,11 @@ public static class TitleLeftoverReport
             {
                 return (rule.Column, rule.Remove
                     ? TitleLeftoverCause.Unmatched
-                    : TitleLeftoverCause.RemoveOff);
+                    : TitleLeftoverCause.RemoveOff, null);
             }
 
             if (inflected && !rule.AllowSuffix)
-                return (rule.Column, TitleLeftoverCause.NeedsSuffix);
+                return (rule.Column, TitleLeftoverCause.NeedsSuffix, null);
 
             // Part of a longer value, with the rest of it nowhere in this title — the case the
             // partial setting exists for. Checked against the original title, not the cleaned one:
@@ -139,19 +145,93 @@ public static class TitleLeftoverReport
                 var titleWords = Words(row.OriginalTitle);
 
                 if (!others.Any(w => titleWords.Contains(w, StringComparer.Ordinal)))
-                    return (rule.Column, TitleLeftoverCause.NeedsPartial);
+                    return (rule.Column, TitleLeftoverCause.NeedsPartial, null);
             }
 
             if (!rule.Remove)
-                return (rule.Column, TitleLeftoverCause.RemoveOff);
+                return (rule.Column, TitleLeftoverCause.RemoveOff, null);
 
-            return (rule.Column, TitleLeftoverCause.Unmatched);
+            return (rule.Column, TitleLeftoverCause.Unmatched, null);
         }
 
-        return (null, TitleLeftoverCause.Unclaimed);
+        return Prefixed(rules, row, word, original) ?? (null, TitleLeftoverCause.Unclaimed, null);
     }
 
-    static string Reason(TitleLeftoverCause cause, string? column) => cause switch
+    /// <summary>
+    /// A column whose value is the <b>start</b> of this word, where no column carries it outright —
+    /// "AMD Ryzen 3" against a title's "Ryzen3-30".
+    ///
+    /// <para>Reported apart from "nothing claims this" because the two send the operator somewhere
+    /// completely different. Unclaimed means look for a column; this means the column is already
+    /// right and what follows its value is missing from the catalogue — or the title is wrong, which
+    /// on a real export it usually is. The report names the decision and the value that would close
+    /// it, and stops there: whether a model exists is not something this tool can know.</para>
+    ///
+    /// <para>Any tail of the cell's words counts, not just the whole of it. Titles drop the
+    /// manufacturer — "Ryzen5 220" for a cell reading "AMD Ryzen 5" — so the run that reaches the
+    /// title is rarely the one the cell starts with. The longest match wins, being the most specific
+    /// claim on the word.</para>
+    /// </summary>
+    static (string? Column, TitleLeftoverCause Cause, string? Hint)? Prefixed(
+        CompiledRuleSet rules, TitleCleanRow row, string word, string original)
+    {
+        (string Column, string Hint)? best = null;
+        var longest = 0;
+
+        foreach (var attribute in row.Attributes)
+        {
+            var rule = rules.Attributes.FirstOrDefault(a =>
+                string.Equals(a.Rule.Column, attribute.Column, StringComparison.Ordinal))?.Rule;
+
+            if (rule is null || !rule.Remove)
+                continue;
+
+            var cell = attribute.OriginalValue.Trim();
+            var cellWords = Words(cell);
+
+            for (var skip = 0; skip < cellWords.Count; skip++)
+            {
+                var prefix = string.Concat(cellWords.Skip(skip));
+
+                if (prefix.Length <= longest ||
+                    prefix.Length < ShortestWord ||
+                    prefix.Length >= word.Length ||
+                    !word.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                longest = prefix.Length;
+                best = (rule.Column, $"{cell} {Rest(original, prefix.Length)}".Trim());
+            }
+        }
+
+        return best is null
+            ? null
+            : (best.Value.Column, TitleLeftoverCause.ReferenceMissing, best.Value.Hint);
+    }
+
+    /// <summary>What is left of a title word once the first <paramref name="count"/> of its letters
+    /// and digits are accounted for — the "30" of "Ryzen3-30" behind "Ryzen3". Taken off the original
+    /// spelling rather than the folded one, because this ends up in a value somebody types into a
+    /// catalogue.</summary>
+    static string Rest(string word, int count)
+    {
+        var seen = 0;
+        var at = 0;
+
+        while (at < word.Length && seen < count)
+        {
+            if (char.IsLetterOrDigit(word[at]))
+                seen++;
+
+            at++;
+        }
+
+        return word[at..].TrimStart('-', '_', '.', '/', '+');
+    }
+
+    static string Reason(TitleLeftoverCause cause, string? column, string? hint) => cause switch
     {
         TitleLeftoverCause.RemoveOff =>
             $"{column} hücresinde de yazıyor ama o kolonda \"Çıkar\" kapalı",
@@ -161,6 +241,9 @@ public static class TitleLeftoverReport
             $"{column} değerinin bir parçası — o kolonda \"Kısmi\" kapalı",
         TitleLeftoverCause.Unmatched =>
             $"{column} hücresinde geçiyor ama başlıktaki yazım kataloğa girilmemiş",
+        TitleLeftoverCause.ReferenceMissing =>
+            $"{column} değeri bu kelimenin başında, devamı referans listesinde yok — " +
+            $"listeye eklenecek değer: \"{hint}\". Böyle bir ürün yoksa hatalı olan başlıktır.",
         _ => "Hiçbir kolon bu kelimeyi talep etmiyor",
     };
 

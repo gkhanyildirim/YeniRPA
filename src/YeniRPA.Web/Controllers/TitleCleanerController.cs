@@ -156,7 +156,9 @@ public sealed class TitleCleanerController(
     [HttpGet("unit-presets")]
     public IActionResult GetUnitPresets() => Ok(
         TitleRuleSuggester.Families
-            .Select(f => new MeasureFamilyDto(f.Label, TitleRuleStore.EncodeUnits(f.Units)))
+            // Line form, because the browser writes this straight into the editor's box and that box
+            // now holds one unit per line.
+            .Select(f => new MeasureFamilyDto(f.Label, TitleRuleStore.EncodeUnitLines(f.Units)))
             .ToList());
 
     [HttpPut("rules")]
@@ -312,7 +314,7 @@ public sealed class TitleCleanerController(
         var overrides = ParseOverrides(targetColumns);
         var resolved = suggested
             .Select(f => overrides.TryGetValue(f.Id, out var choice)
-                ? f with { TargetColumn = choice.Column ?? f.TargetColumn, Value = choice.Value ?? f.Value }
+                ? f with { TargetColumn = Target(f, choice.Column), Value = choice.Value ?? f.Value }
                 : f)
             .ToList();
 
@@ -320,6 +322,23 @@ public sealed class TitleCleanerController(
 
         return Ok(TitleRuleStore.ToForm(updated));
     }
+
+    /// <summary>
+    /// The column a chosen fix acts on: what the browser picked, unless that is the column which
+    /// reported the problem.
+    ///
+    /// <para>A protector hands a phrase to some <em>other</em> column and switches that column's
+    /// removal off. Pointed back at the reporting column it turns off the very removal the operator
+    /// is trying to get working, and leaves behind a catalogue value no cell resolves to — one real
+    /// rule set ended up with a bare "Ultra9" under its processor column that way, conflicting on
+    /// every row. The picker no longer offers it; this is the half that does not depend on the
+    /// browser behaving.</para>
+    /// </summary>
+    static string Target(TitleFix fix, string? chosen) =>
+        string.IsNullOrWhiteSpace(chosen) ||
+        string.Equals(chosen, fix.Column, StringComparison.Ordinal)
+            ? fix.TargetColumn
+            : chosen;
 
     /// <summary>Reads the per-fix choices as <c>id=column=value</c> lines.</summary>
     static Dictionary<string, (string? Column, string? Value)> ParseOverrides(string? raw)

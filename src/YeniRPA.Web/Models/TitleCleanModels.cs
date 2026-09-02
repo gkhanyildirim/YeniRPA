@@ -116,11 +116,25 @@ public sealed record TitleAttributeRule(
 /// <param name="DecimalSeparator">What a corrected fractional value is written with. Turkish
 /// catalogues are usually kept on ",", the reference titles on "." — it is one setting rather than a
 /// guess per row, so a file cannot come back carrying both.</param>
+/// <param name="CollapseRepeats">
+/// Whether a word written twice in a row — "Lenovo Ideapad Ideapad Slim3" — loses its second copy.
+///
+/// <para><b>Off by default, and it is the one setting that bends this module's central promise.</b>
+/// Everything else here removes only what a column's own cell claims; this removes text nobody
+/// claimed, on the strength of the repetition alone. That is a judgement about the seller's typing
+/// rather than about the catalogue, so it is an explicit choice per rule set rather than something
+/// the engine assumes.</para>
+///
+/// <para>Only repeats with no digit in them are ever collapsed. "RTX 5070 8GB 8GB" is a graphics
+/// card's own memory beside the system RAM — the case this module already goes out of its way to
+/// protect — and a rule that could not tell it from "Ideapad Ideapad" would not be worth having.</para>
+/// </param>
 public sealed record TitleRuleSet(
     string Name,
     string TitleColumn,
     IReadOnlyList<TitleAttributeRule> Attributes,
-    string DecimalSeparator = ".")
+    string DecimalSeparator = ".",
+    bool CollapseRepeats = false)
 {
     public IReadOnlyList<TitleAttributeRule> AttributeList => Attributes ?? [];
 }
@@ -251,7 +265,8 @@ public sealed record TitleRuleSetForm(
     string Name,
     string TitleColumn,
     IReadOnlyList<TitleAttributeForm> Attributes,
-    string DecimalSeparator = ".")
+    string DecimalSeparator = ".",
+    bool CollapseRepeats = false)
 {
     public IReadOnlyList<TitleAttributeForm> AttributeList => Attributes ?? [];
 }
@@ -367,14 +382,24 @@ public sealed record TitleAttributeResult(
 
 /// <summary>One row's outcome. <paramref name="CleanTitle"/> is what the title becomes; the original
 /// is kept beside it so the change is always reversible.</summary>
+/// <param name="TitleSuspect">
+/// Set where the title does not look like a product name at all — a row whose many filled cells the
+/// title matches exactly one of. A real export carries such rows ("2 YIL LENOVO TÜRKİYE GARANTİLİ -
+/// HIZLI KARGO" in a title column), and the one thing they do match is usually the brand, so
+/// cleaning them writes a mangled sentence back to the marketplace.
+///
+/// <para>Carried as its own flag rather than as a verdict on some attribute, because it is a
+/// judgement about the <em>title</em> and no single column is at fault.</para>
+/// </param>
 public sealed record TitleCleanRow(
     int RowNumber,
     string OriginalTitle,
     string CleanTitle,
     IReadOnlyList<TitleAttributeResult> Attributes,
-    IReadOnlyList<string> Errors)
+    IReadOnlyList<string> Errors,
+    bool TitleSuspect = false)
 {
-    public bool HasConflict => Attributes.Any(a =>
+    public bool HasConflict => TitleSuspect || Attributes.Any(a =>
         a.Status is TitleAttributeStatus.Conflict or TitleAttributeStatus.Ambiguous);
 
     public bool Changed => !string.Equals(OriginalTitle.Trim(), CleanTitle, StringComparison.Ordinal);
@@ -469,6 +494,18 @@ public enum TitleLeftoverCause
     /// <summary>A column carries it and none of the above explains the miss — the title spells it some
     /// way the catalogue has no entry for.</summary>
     Unmatched,
+
+    /// <summary>
+    /// A column's value is the <em>start</em> of this word — "AMD Ryzen 3" against a title's
+    /// "Ryzen3-30" — and what follows it is not in that column's reference list.
+    ///
+    /// <para>Told apart from <see cref="Unclaimed"/> because the advice is completely different.
+    /// "Nothing claims this" sends the operator looking for a column to add; here the column is
+    /// already right and the question is whether the catalogue is short an entry or the title is
+    /// simply wrong. Only a person can answer that, so the report says which decision it is rather
+    /// than making one.</para>
+    /// </summary>
+    ReferenceMissing,
 }
 
 /// <summary>

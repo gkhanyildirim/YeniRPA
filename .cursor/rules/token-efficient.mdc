@@ -1,0 +1,17 @@
+---
+description: Token-efficient, minimal-diff working rules for this repository.
+alwaysApply: true
+---
+
+- Work on one narrowly scoped task at a time.
+- Before editing, open only the files you need, found via targeted search.
+- Never scan the whole repository, large directories, or git history unless explicitly asked.
+- Reuse existing patterns, helpers and dependencies already in the codebase.
+- Do not add new dependencies without approval.
+- Do not touch unrelated files, generated output, lockfiles or project files.
+- Do not run repo-wide formatting or reordering.
+- Make the smallest safe change that satisfies the request.
+- Run only the single most relevant check (here: `dotnet build`).
+- Stop the running app first if the build fails because the exe is locked.
+- If a task touches more than 3 files or changes architecture, propose a short plan and wait for approval.
+- Keep answers short: files changed, check run, risk if any.

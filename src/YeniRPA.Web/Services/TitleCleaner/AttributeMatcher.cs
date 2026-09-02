@@ -56,9 +56,41 @@ public sealed record TitleMatch(
 /// <param name="Unit">The unit the cell was written in, where it named one. Kept so a title that
 /// omitted the unit entirely — "512SSD" against a cell of "512 GB" — can still be canonicalised and
 /// keyed as the cell's own unit rather than as a number with no identity.</param>
+/// <param name="Parts">
+/// Every measurement the cell holds, where it holds more than one — a disk column reading
+/// "1 TB + 1 TB" for a machine with two of them. Null for the ordinary single-valued cell, and the
+/// first part is always this value itself.
+///
+/// <para>It is what says how many times the title may carry the value. A repeat is normally
+/// ambiguous — "RTX 5070 8GB 8GB" is a graphics card's own memory beside the system RAM — and that
+/// guard is not loosened here but sharpened: the number of occurrences a row is entitled to is read
+/// off the cell rather than assumed to be one.</para>
+/// </param>
 public sealed record AttributeValue(
     string Canonical, string Key, double? BareQuantity = null, double? BaseQuantity = null,
-    MeasureUnit? Unit = null);
+    MeasureUnit? Unit = null,
+    IReadOnlyList<AttributeValue>? Parts = null)
+{
+    /// <summary>The measurements this cell holds: its parts, or itself.</summary>
+    public IReadOnlyList<AttributeValue> PartList => Parts ?? [this];
+
+    /// <summary>
+    /// How many times in the title this cell accounts for <paramref name="key"/>.
+    ///
+    /// <para><b>One, unless the cell genuinely lists several.</b> Counting keys on an ordinary cell
+    /// would be wrong twice over: a bare number has no key at all, and a rounded match carries the
+    /// title's key rather than the cell's — both would come out as nought and turn a perfectly good
+    /// single match into a repeat.</para>
+    /// </summary>
+    public int Allowed(string key)
+    {
+        if (Parts is null)
+            return 1;
+
+        var counted = Parts.Count(p => string.Equals(p.Key, key, StringComparison.Ordinal));
+        return counted > 0 ? counted : 1;
+    }
+}
 
 /// <summary>Quantity parsing, comparison keys and canonical formatting for measured attributes.</summary>
 public static class Measures
@@ -171,14 +203,29 @@ public sealed class CompiledAttribute
 /// <summary>A rule set with every regex and lookup table built, ready to run over a whole file.</summary>
 public sealed class CompiledRuleSet
 {
-    CompiledRuleSet(TitleRuleSet source, IReadOnlyList<CompiledAttribute> attributes)
+    CompiledRuleSet(
+        TitleRuleSet source,
+        IReadOnlyList<CompiledAttribute> attributes,
+        IReadOnlyList<TitleReferenceList> referenceLists)
     {
         Source = source;
         Attributes = attributes;
+        ReferenceLists = referenceLists;
     }
 
     public TitleRuleSet Source { get; }
     public IReadOnlyList<CompiledAttribute> Attributes { get; }
+
+    /// <summary>
+    /// The lists this set was compiled against, carried so that anything re-compiling a variant of it
+    /// can hand them straight back.
+    ///
+    /// <para>Without this the suggester went silent the moment any rule named a list: it re-compiles
+    /// an edited copy of the set to preview each card, that compile had no lists to give, a rule
+    /// naming one is refused, and the refusal is caught and read as "this fix does not work". Every
+    /// card on the file disappeared — not just the ones touching that column.</para>
+    /// </summary>
+    public IReadOnlyList<TitleReferenceList> ReferenceLists { get; }
     public string DecimalSeparator => Source.DecimalSeparator == "," ? "," : ".";
 
     /// <param name="referenceLists">The reference lists available to this run, by name. Omitted
@@ -226,7 +273,7 @@ public sealed class CompiledRuleSet
             index++;
         }
 
-        return new CompiledRuleSet(source, attributes);
+        return new CompiledRuleSet(source, attributes, referenceLists ?? []);
     }
 }
 
@@ -371,16 +418,32 @@ public static class AttributeMatcher
         {
             case TitleAttributeKind.Measure:
             {
-                var match = attr.MeasureRegex!.Match(FoldedTitle.Fold(text));
-                if (match.Success && Measures.TryParseQuantity(match.Groups["n"].Value, out var quantity))
+                // Every measurement in the cell, not just the first. A machine with two disks has
+                // "1 TB + 1 TB" in one column, and reading only the front of it made the second one
+                // in the title look like a repeat nobody had asked for.
+                var parts = new List<AttributeValue>();
+
+                foreach (Match m in attr.MeasureRegex!.Matches(FoldedTitle.Fold(text)))
                 {
-                    var unit = attr.UnitBySpelling[match.Groups["u"].Value];
-                    return new AttributeValue(
+                    if (!Measures.TryParseQuantity(m.Groups["n"].Value, out var quantity))
+                        continue;
+
+                    var unit = attr.UnitBySpelling[m.Groups["u"].Value];
+
+                    parts.Add(new AttributeValue(
                         Measures.Format(quantity, unit, decimalSeparator),
                         Measures.Key(quantity, unit),
                         BaseQuantity: Measures.Base(quantity, unit),
-                        Unit: unit);
+                        Unit: unit));
                 }
+
+                if (parts.Count == 1)
+                    return parts[0];
+
+                // The head keeps its own canonical spelling so nothing downstream has to know about
+                // the rest; what the extra parts add is how many matches the row is entitled to.
+                if (parts.Count > 1)
+                    return parts[0] with { Parts = parts };
 
                 if (Measures.TryParseQuantity(text, out var bare))
                     return new AttributeValue(text, "", bare);
@@ -508,10 +571,12 @@ public static class AttributeMatcher
         if (consistent.Count == 0)
             return;
 
-        var tokens = Words(title.Folded)
-            .Select(w => Bare(title.Folded[w.Start..w.End]))
-            .ToHashSet(StringComparer.Ordinal);
-
+        // The title reduced to its letters and digits. A set of whole words was too strict: the same
+        // model code is written "Ryzen7-7735HS" in one title and "i5 14450HX" in the next, so the
+        // word "7735hs" the entry adds is a token in one and buried in another. This is only the
+        // cheap sieve — AddSpellings still has to find the entry properly, and BoundaryOk still
+        // refuses a span that cuts into a word.
+        var letters = Bare(title.Folded);
         var said = Bare(folded);
 
         // Longest first: the most of the entry the title turns out to carry is what it means, and a
@@ -535,12 +600,12 @@ public static class AttributeMatcher
             // back to the one word both sides did share: the bare "220". A reference entry that
             // matches nothing but an unqualified number is the exact deletion this module refuses
             // everywhere else, and it cost the whole file its processor removal.
-            if (!tail.Skip(needle.Length).All(w => tokens.Contains(Bare(w))))
+            if (!tail.Skip(needle.Length).All(w => letters.Contains(Bare(w), StringComparison.Ordinal)))
                 continue;
 
             // And the end of it, which for a catalogue written "Intel Core i5-13420H" is inside the
             // last word rather than a word of its own.
-            if (!tokens.Contains(Bare(tail[^1])))
+            if (!letters.Contains(Bare(tail[^1]), StringComparison.Ordinal))
                 continue;
 
             var before = matches.Count;
@@ -560,8 +625,21 @@ public static class AttributeMatcher
                 attr.Rule.AllowSuffix,
                 allowPartial: true);
 
-            if (matches.Count > before)
+            if (matches.Count == before)
+                continue;
+
+            // The entry has to have earned its place: what it matched must actually carry the words
+            // it adds to the cell, or it is the ordinary search wearing a catalogue's name.
+            //
+            // Without this the first entry to match at all won and the loop stopped there. Against a
+            // title reading "Ultra5 225U", the catalogue's "Intel Core Ultra 5 225" — a real
+            // processor, listed before "…225U" — matched nothing but the "Ultra5" the cell alone
+            // would have found, and blocked the entry that would have taken the model code with it.
+            var end = Bare(FoldedTitle.Fold(matches[^1].Text));
+            if (end.Contains(Bare(tail[^1]), StringComparison.Ordinal))
                 return;
+
+            matches.RemoveRange(before, matches.Count - before);
         }
     }
 
@@ -644,8 +722,18 @@ public static class AttributeMatcher
     {
         // No unit in the cell either means there is nothing to canonicalise to. That case is the
         // cell's problem, not the title's, and it is already reported as such.
-        if (value?.Unit is not { } unit || value.BareQuantity.HasValue)
+        if (value is null || value.Unit is null || value.BareQuantity.HasValue)
             return;
+
+        // Every measurement the cell holds, so "128SSD+1TBSSD" gets its bare 128 from a cell reading
+        // "1 TB + 128 GB" rather than only from the part that happens to be written first.
+        // Keyed, so "1 TB + 1 TB" — which is two parts saying one thing — does not try to register
+        // the same key twice. How many occurrences the title may carry is settled later, against the
+        // cell's own count; here we only need to know which values to look for.
+        var wanted = value.PartList
+            .Where(p => p.Unit is not null)
+            .DistinctBy(p => p.Key, StringComparer.Ordinal)
+            .ToDictionary(p => p.Key, p => p.Unit!, StringComparer.Ordinal);
 
         foreach (Match m in AnyNumber.Matches(title.Folded))
         {
@@ -656,9 +744,13 @@ public static class AttributeMatcher
             if (!Measures.TryParseQuantity(m.Value, out var quantity))
                 continue;
 
-            var key = Measures.Key(quantity, unit);
-            if (!string.Equals(key, value.Key, StringComparison.Ordinal))
+            var hit = wanted.FirstOrDefault(p =>
+                string.Equals(Measures.Key(quantity, p.Value), p.Key, StringComparison.Ordinal));
+
+            if (hit.Value is not { } unit)
                 continue;
+
+            var key = hit.Key;
 
             // Glued to a word on one side or the other. A number standing on its own is a model
             // number as often as anything else, and there would be nothing to support it with.
@@ -719,11 +811,95 @@ public static class AttributeMatcher
         foreach (var (folded, canonical, key) in unwritten)
             AddScattered(matches, title, folded, canonical, key, allowSuffix);
 
-        if (matches.Count > 0 || !allowPartial)
+        if (matches.Count == 0 && allowPartial)
+        {
+            foreach (var (folded, canonical, key) in spellings)
+                AddPartial(matches, title, folded, canonical, key);
+        }
+
+        // Offered alongside whatever else was found rather than only when nothing was, because a
+        // catalogue routinely holds both "Dizüstü Bilgisayar" and "Dizüstü". A title cut to
+        // "… Dizüstü Bi" matches the short spelling outright, so gating truncation on "nothing
+        // matched" meant the short one always won and the "Bi" stayed behind on every such row. The
+        // truncated span is the longer and more specific reading of the same text; letting both into
+        // the pool lets the ordinary arbitration prefer it.
+        foreach (var (folded, canonical, key) in spellings)
+            AddTruncated(matches, title, folded, canonical, key);
+    }
+
+    /// <summary>
+    /// A value the title ran out of room for — "Dizüstü Bilgisayar" written "Dizüstü Bi".
+    ///
+    /// <para>A marketplace caps its title field, and a seller who writes up to the cap gets the last
+    /// word cut off mid-letter. Five of the forty-eight rows in one real export end that way. Nothing
+    /// else in this class can find those: every other step compares whole words, and half a word is
+    /// not one.</para>
+    ///
+    /// <para><b>Three conditions, and each of them is holding something back.</b></para>
+    ///
+    /// <list type="number">
+    ///   <item>The match runs to the <b>exact end</b> of the title. The end of the field is the only
+    ///   place anything gets cut; a short spelling in the middle of a title is a different word.</item>
+    ///   <item><b>More of the value survived than was lost.</b> The first attempt used no such
+    ///   measure and a product-description column promptly matched an entire title with its opening
+    ///   sentence, claimed every character of it, and evicted every other rule on the row — a whole
+    ///   white-goods file came out uncleaned. A description is hundreds of characters against a
+    ///   title's dozen, so it can never clear half.</item>
+    ///   <item>Every <b>whole word</b> the cut left behind is absent from the title. This is the same
+    ///   honesty <see cref="AddPartial"/> insists on, and it is what stops a cell reading
+    ///   "Windows 11 Pro" answering a title that ends "Windows 11" while going on to say "Pro"
+    ///   elsewhere.</item>
+    /// </list>
+    ///
+    /// <para>The cut may fall between two words as easily as inside one — a field that runs out at
+    /// exactly 100 characters does not care where the spaces are, and "… Taşınabilir İş" is as
+    /// truncated as "… Taşınabilir İ".</para>
+    /// </summary>
+    static void AddTruncated(
+        List<TitleMatch> matches, FoldedTitle title, string folded, string canonical, string key)
+    {
+        var words = folded.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length < 2)
             return;
 
-        foreach (var (folded, canonical, key) in spellings)
-            AddPartial(matches, title, folded, canonical, key);
+        var titleWords = Words(title.Folded)
+            .Select(w => Bare(title.Folded[w.Start..w.End]))
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Longest first: the most of the value the title had room for is what it was writing. Stops
+        // at half, which is where a value stops being recognisable as itself.
+        for (var take = folded.Length - 1; take * 2 > folded.Length; take--)
+        {
+            // A cut that leaves a trailing space is the same cut one character earlier.
+            if (char.IsWhiteSpace(folded[take - 1]))
+                continue;
+
+            // Whatever whole words the cut discarded must be nowhere in the title.
+            var kept = folded[..take].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+            if (words.Skip(kept).Any(w => titleWords.Contains(Bare(w), StringComparer.Ordinal)))
+                continue;
+
+            var needle = folded[..take];
+            var from = 0;
+
+            while (from < title.Folded.Length)
+            {
+                var at = IndexOfLoose(title.Folded, needle, from, out var length);
+                if (at < 0)
+                    break;
+
+                // Has to be what the title ends with. An earlier occurrence is a word in its own
+                // right, not a cut-off one, so the search carries on past it rather than giving up.
+                if (at + length == title.Folded.Length)
+                {
+                    var (start, end) = title.ToOriginal(at, at + length);
+                    matches.Add(new TitleMatch(start, end, title.Original[start..end], canonical, key));
+                    return;
+                }
+
+                from = at + 1;
+            }
+        }
     }
 
     static void AddLiteral(
@@ -775,14 +951,16 @@ public static class AttributeMatcher
             return;
 
         var words = Words(title.Folded);
-        var texts = words.Select(w => Bare(title.Folded[w.Start..w.End])).ToList();
+        var raw = words.Select(w => title.Folded[w.Start..w.End]).ToList();
+        var texts = raw.Select(Bare).ToList();
 
         // Longest first: the most of the value the title turns out to carry is what it means.
         for (var take = needles.Length - 1; take >= 1; take--)
         {
             for (var skip = 0; skip + take <= needles.Length; skip++)
             {
-                var run = needles.Skip(skip).Take(take).Select(Bare).ToList();
+                var slice = needles.Skip(skip).Take(take).ToList();
+                var run = slice.Select(Bare).ToList();
 
                 if (run.All(w => w.Length < MeaningfulWord))
                     continue;
@@ -792,7 +970,14 @@ public static class AttributeMatcher
                 if (rest.Any(w => w.Length > 0 && texts.Contains(w, StringComparer.Ordinal)))
                     continue;
 
+                // Punctuation-stripped first, then as written. Stripping is what lets a cell's
+                // "(vitroseramik)" be compared as the word it is; keeping it is what lets a
+                // catalogue's "i5-14450HX" meet a title's "i5 14450HX", because the hyphen is the
+                // separator the two sides disagree about and Bare would have thrown it away.
                 var (first, last) = IndexOfRun(texts, run);
+                if (first < 0)
+                    (first, last) = IndexOfRun(raw, slice);
+
                 if (first < 0)
                     continue;
 
@@ -821,7 +1006,12 @@ public static class AttributeMatcher
     static (int First, int Last) IndexOfRun(List<string> words, List<string> run)
     {
         var needle = string.Join(' ', run);
-        var letters = needle.Count(c => !char.IsWhiteSpace(c));
+
+        // Letters and digits only. Counting separators would make "ultra9-275hx" look longer than
+        // "ultra 9 275hx" and break out of the search before comparing them — which is exactly the
+        // pair this has to be able to compare, since which separator gets typed is the thing the two
+        // sides disagree about.
+        var letters = needle.Count(char.IsLetterOrDigit);
 
         for (var i = 0; i < words.Count; i++)
         {
@@ -833,7 +1023,7 @@ public static class AttributeMatcher
 
                 // Only ever grows, so once it carries more characters than the value does there is
                 // nothing further to try from this starting word.
-                if (text.Count(c => !char.IsWhiteSpace(c)) > letters)
+                if (text.Count(char.IsLetterOrDigit) > letters)
                     break;
 
                 if (GlueEquals(text, needle))
@@ -1011,14 +1201,14 @@ public static class AttributeMatcher
 
             while (j < needle.Length)
             {
-                if (char.IsWhiteSpace(needle[j]))
+                if (IsGap(needle[j]))
                 {
-                    while (j < needle.Length && char.IsWhiteSpace(needle[j]))
+                    while (j < needle.Length && IsGap(needle[j]))
                         j++;
 
-                    if (i < haystack.Length && char.IsWhiteSpace(haystack[i]))
+                    if (i < haystack.Length && IsGap(haystack[i]))
                     {
-                        while (i < haystack.Length && char.IsWhiteSpace(haystack[i]))
+                        while (i < haystack.Length && IsGap(haystack[i]))
                             i++;
                     }
                     else if (!ClassChanges(haystack, i))
@@ -1027,10 +1217,10 @@ public static class AttributeMatcher
                         break;
                     }
                 }
-                else if (i < haystack.Length && char.IsWhiteSpace(haystack[i]) && ClassChanges(needle, j))
+                else if (i < haystack.Length && IsGap(haystack[i]) && ClassChanges(needle, j))
                 {
                     // The mirror case: the cell writes "Ryzen5" and the title writes "Ryzen 5".
-                    while (i < haystack.Length && char.IsWhiteSpace(haystack[i]))
+                    while (i < haystack.Length && IsGap(haystack[i]))
                         i++;
                 }
                 else
@@ -1055,6 +1245,20 @@ public static class AttributeMatcher
 
         return -1;
     }
+
+    /// <summary>
+    /// A character that only separates two others: whitespace, or the punctuation a model code is
+    /// joined with.
+    ///
+    /// <para>Which one gets typed between a processor family and its model number is arbitrary, and
+    /// the same product is written all three ways in one file — the catalogue says
+    /// "AMD Ryzen 7 7735HS" and "Intel Core i5-14450HX", the titles say "Ryzen7-7735HS",
+    /// "i5 14450HX" and "Ryzen5 220". Treating a hyphen as a space here is the same tolerance for
+    /// typography the whitespace rule already is, and it stops short of the characters that carry
+    /// meaning: a letter or a digit is never a gap.</para>
+    /// </summary>
+    static bool IsGap(char ch) =>
+        char.IsWhiteSpace(ch) || ch is '-' or '_' or '/' or '.';
 
     /// <summary>
     /// Whether <paramref name="at"/> sits on a letter/digit change — the character before it and the

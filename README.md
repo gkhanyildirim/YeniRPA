@@ -294,6 +294,71 @@ export happened to carry it (`İşlemci (tr_TR) = 8745HX`); this one carries `In
 instead, and no rule built out of that file can remove what the file does not contain. See
 [Reference lists](#reference-lists).
 
+**The word the field ran out of room for.** A marketplace caps its title, and a seller who writes up
+to the cap loses the last word mid-letter: five of the forty-eight rows end `Dizüstü Bi` or
+`Dizüstü Bil`. Every other step here compares whole words, and half a word is not one. A value may
+now answer a title that stops inside its **final** word — every earlier word present in full, the
+match running to the exact end of the title, and the cut landing strictly inside that last word.
+
+Those three conditions are the whole of it, and the first attempt had only two. Allowing the cut
+anywhere in the value let a product-description column match an entire title with its opening
+sentence, claim every character, and evict every other rule on the row; a whole white-goods file came
+out uncleaned, and `TitleCleanerRealFileTests` is what caught it. Truncation means the field ran out
+on the last word, and saying exactly that is what keeps this from being a prefix search.
+
+A truncated span is offered **alongside** whatever else matched rather than only when nothing did. A
+catalogue routinely holds both `Dizüstü Bilgisayar` and `Dizüstü`; a title cut to `… Dizüstü Bi`
+matches the short spelling outright, so gating truncation on "nothing matched" left the `Bi` behind
+on every such row. The longer span is the better reading of the same text, and the ordinary
+arbitration is already there to prefer it.
+
+### What a second seller's file changed
+
+A hundred laptops from a different seller, same template, different habits. Four things only that
+file could have taught the module:
+
+**A cell can hold two measurements.** A machine with two disks says so in one column: `1 TB + 1 TB`,
+`2 TB + 128 GB`. Reading only the front of it made the second `1TBSSD` in the title look like a repeat
+nobody had asked for, and the row went out uncleaned. A `Measure` cell now reads **every** number and
+unit in it, and the repeat guard is not loosened by that but sharpened: how many occurrences a row is
+entitled to is read off the cell rather than assumed to be one. `RTX 5070 8GB 8GB` against a cell
+saying `8 GB` once is still ambiguous, still untouched.
+
+The disk *type* column cannot follow suit — it says `SSD` however many disks there are — so a second
+occurrence earns its place a different way: **a value written hard against another confirmed value is
+anchored to it.** The `SSD` in `1TBSSD` is not a free-floating repeat, it is half of a compound whose
+other half the row confirmed. Two such compounds are two disks; two loose `8GB` are not.
+
+**Which character separates a family from its model is arbitrary.** The catalogue writes
+`AMD Ryzen 7 7735HS` and `Intel Core i5-14450HX`; the titles write `Ryzen7-7735HS`, `i5 14450HX` and
+`Ryzen5 220`. A hyphen is now a gap wherever a space is, both ways round — the same tolerance for
+typography the whitespace rule already was, and it stops at the characters that carry meaning.
+
+**A catalogue entry has to earn its place.** `Intel Core Ultra 5 225` is a real processor and the
+published list has it before `Intel Core Ultra 5 225U`. Against a title reading `Ultra5 225U` it
+matched nothing but the `Ultra5` the cell alone would have found — and then stopped the search, so
+the entry that would have taken the model code never got a turn. An entry is only accepted when what
+it matched actually carries the words it adds.
+
+**Not every title column holds a title.** One row's reads
+`2 YIL LENOVO TÜRKİYE GARANTİLİ - ADINIZA FATURALI - HIZLI KARGO`. Its brand cell says LENOVO and the
+line does contain LENOVO, so the cleaner faithfully cut it out and wrote the rest back. The test is
+arithmetic and knows nothing about brands: **of the cells a row filled, the title matches one.** Such
+a row is handed over untouched and goes to review. A genuine title matches half its columns or better,
+and a rule set of fewer than four filled cells is too small to draw the conclusion from at all.
+
+### A word the seller typed twice
+
+`Lenovo Ideapad Ideapad Slim3` — the series written back to back. Collapsing that removes text **no
+column claimed**, which is the one thing this module otherwise never does, so it is a rule-set setting
+(`Tekrarı Sil`) that is off by default rather than something the engine assumes.
+
+Two things keep it narrow. **A repeat carrying a digit is never touched:** `RTX 5070 8GB 8GB` is a
+graphics card's own memory beside the system RAM on the rows where the two are the same size, the
+case this module already has a verdict and a paragraph of its own for. And it is **read off the
+original title, not the cleaned one** — cutting the middle out of `Ocak Siyah Ocak` leaves `Ocak
+Ocak`, which is not a repetition anybody typed.
+
 `FoldedTitle` exists because neither fold already in the app can be used here. `SellerGroupMap.FoldName`
 collapses whitespace and `CarrierNames.Fold` turns punctuation into spaces — both right for comparing
 two whole names, both fatal for a module that cuts spans out of a string rather than comparing them.
@@ -371,9 +436,26 @@ A rule naming a list that is not loaded is **refused at compile time** rather th
 exists because the column cannot be cleaned without it, and running on quietly would leave every title
 in the file carrying the value the operator asked to have removed.
 
+That refusal has a reach worth writing down. `CompiledRuleSet` carries the lists it was built with,
+because the fix suggester re-compiles an edited copy of the set to preview each card — and a compile
+with no lists to give refuses any rule naming one, the refusal is caught as "this fix does not work",
+and **every** card on the file disappears rather than just the ones touching that column. Silent, and
+indistinguishable from the suggester having nothing to say.
+
 Narrowing five thousand entries happens once per **distinct cell value**, not once per row: a file
 names ten or so processors across thousands of products, and `CompiledAttribute.ConsistentWith` caches
 on that.
+
+**When the list comes up short, the leftover report says so by name.** A title reading `Ryzen3-30`
+against a cell reading `AMD Ryzen 3` used to be reported as "nothing claims this word", which is
+wrong and sends the operator looking for a column to add. The column is already right; what is
+missing is the rest of the entry. `TitleLeftoverCause.ReferenceMissing` says that instead, names the
+column, and prints the value that would close it — `AMD Ryzen 3 30`.
+
+It stops there, and deliberately. On the export this came from, looking that value up shows there is
+no such processor: `AMD Ryzen 3 7330U` exists and `AMD Ryzen 3 30` does not, so the title is wrong and
+the right outcome is the one the tool already produces — leave it, report it. Whether a model exists
+is not something a cleaner can know, so the report names the decision rather than making it.
 
 ### Rule sets
 
@@ -502,6 +584,13 @@ Four things about it are deliberate:
 - **Only changes that generalise are suggested.** A fix is written into the rule set and therefore
   acts on the whole file, so "the cell on this row is wrong" — a data error in one product — is never
   offered. Those stay in the review list and go out with the workbook.
+- **A fix that would leave the rule set exactly as it was is not a fix.** `AddSpelling` refuses to
+  move a spelling that already belongs to a different value — "FreeDOS" is not another way of writing
+  "Windows 11 Pro", and the catalogue carrying both as their own values is what says so. Offering the
+  merge anyway produced a card that could not be got rid of: applying it changed nothing, the row
+  came back unfixed, and the card was drawn again. `Build` now compares the edited rule set against
+  the one it started from and drops the card, so such a row — one product whose cell disagrees with
+  its own twin — stays in the review list with nothing offered.
 - **The card's before/after is produced by the real engine**, by cleaning a sample row under the
   changed rule set. What the operator is shown is what they get.
 - **The cell's own spelling stays at the head of a merged group.** It is what a cell gets rewritten
@@ -519,6 +608,61 @@ That is also the guard that keeps this from being a correlation. On the same exp
 `Aspire Lite` appear on exactly the same rows, and anything that proposed a phrase because it *turns
 up alongside* a value would offer to make a model name the spelling of a colour. A value with one
 spelling gets one spelling's worth of anchor words, and a colour shares none of them with a model name.
+
+**A title the field cut short still gets a card.** The proposers all want a whole word: one wants a
+title word that equals a word of the cell's value, the other wants a word one letter off. A
+hundred-character cut leaves neither. On the second seller's file all eleven `İş İstasyonu` rows were
+cut before `İstasyonu` finished — nothing anchored, no card, and the leftover report could only say
+"nothing claims this" about `Taşınabilir`, while `İş` at two letters never reached the report at all.
+The operator saw the residue with no way to learn what to do about it.
+
+So a third proposer reconstructs the phrase: the title's own unclaimed words, with the word the cut
+broke completed from the cell. Two conditions, and the second is what keeps it sane — the last word
+must be a *proper* prefix of the cell's last word, and the words before it must spell the rest of the
+value in order. Without the second, a title ending `… Taşınabilir İş` reads its `İş` as a cut-off
+`İstasyonu` and proposes `Taşınabilir İstasyonu`, eating a word. It also reads across the scenario's
+rows rather than only the first: a cut lands wherever it lands, and the row that can answer is rarely
+the first one.
+
+**Worked example — the product type, which every category asks about.** A laptop file's titles end
+`Dizüstü Bilgisayar`, `Taşınabilir Bilgisayar`, `Dizüstü` and `Dizüstü Bi`, and the cell says
+`Notebook`. That is four spellings of one value, and none of them has to be typed twice: the work is
+**per category, not per file**.
+
+1. Upload the marketplace's RuleSet. It already defines
+   `Ürün Tipi = Laptop OR Notebook OR Dizüstü Bilgisayar OR Dönüştürebilir Dizüstü Bilgisayar OR …`
+   for that category, and `SuggestCategoryTypes` offers the whole group as one card. Those spellings
+   join **the group this row's cell already belongs to**, whatever it is headed by: a column carrying
+   `Notebook` from an earlier file must not end up with a second group headed `Laptop`, or the cell
+   would resolve to one value and the title's `Dizüstü Bilgisayar` to another and every row would
+   read as a conflict.
+2. The spellings the marketplace has never heard of — `Taşınabilir Bilgisayar` is this seller's own —
+   arrive as one `AdoptPhrase` card each, anchored on the group rather than on the cell.
+3. The cut-off ones (`Dizüstü Bi`) need nothing: see
+   [the word the field ran out of room for](#three-ways-a-title-writes-a-value-the-cell-does-not).
+4. To have the **cell** rewritten to `Laptop`, put `Laptop` first in that group's `Değerler` box —
+   the first spelling is the canonical one — and leave `Düzelt` on.
+
+**A protector never hands its phrase back to the column that reported the problem.** That card gives a
+phrase to some *other* column and switches that column's removal off; pointed at the reporting column
+it turns off the very removal the operator is trying to get working, and leaves behind a catalogue
+value no cell resolves to. One real rule set acquired a bare `Ultra9` under its processor column that
+way — after which every row read as a conflict, because the cell said `Intel Core Ultra 9` and the
+title's `Ultra9` now named a different value. The picker no longer offers that column and the apply
+endpoint refuses it, so the browser behaving is not what stands between the two.
+
+**A phrase is read off the title, not out of a concatenation of it.** The search that finds where a
+value sits used to join two adjacent words to look for it, which is right for a value written across
+a gap — and wrong when the value sits whole inside the second word. `32GB 1TBSSD+2TBSSD` answered
+`SSD` by claiming both words, and the phrase came back carrying the RAM the row had already removed.
+The pair is now only tried where neither word holds the value on its own. `ClaimedWords` also folds a
+value's spaces out (`32 GB` → `32gb`), or a column that had plainly removed something looked as
+though it had claimed nothing.
+
+**A digit is never a typo.** `Ryzen7` and `Ryzen 3` are one character apart and are two different
+processors; adopting one as a spelling of the other would clean every Ryzen 7 title as a Ryzen 3 from
+then on. `OneLetterApart` spends its one difference only on letters — which is what people actually
+mistype, `Emaya` for `Emaye`.
 
 The apply endpoint **recomputes the suggestions server-side** and takes only ids from the browser, so
 a page cannot hand over a rule edit of its own. Fix ids are derived from the scenario rather than its
@@ -642,6 +786,18 @@ Things worth knowing before changing it:
   the hero.
 - Motion is one orchestrated entrance per report (`RPA.revealResults`) plus small state
   transitions, and all of it is switched off under `prefers-reduced-motion`.
+- **The Title Cleaner rule editor is the one screen in this app that edits rather than reports**, and
+  it is the one place a `<table>` was the wrong container. A rule is a form with ten fields, one of
+  which holds forty alias groups; as eleven columns behind a 720px minimum the boxes were too narrow
+  to read what was in them and the whole thing scrolled sideways. It is now a `.tc-rules` list: a
+  summary line you can scan forty of — name, type, four flag letters, the match badge — with the
+  editing underneath it at full width. The two catalogues are auto-growing textareas holding **one
+  entry per line**; `;` still separates them in a workbook cell, and `TitleRuleStore` remains the only
+  implementation of that format (`EncodeAliasLines` is the same encoder with a different join, and
+  the parser takes either separator). Every colour is borrowed: `--accent` for a lit flag, the app's
+  own `.badge` for the match count, and the dashed disabled treatment for a field the row's type does
+  not use. Nothing is hidden when it is locked — what was typed into a box survives a change of mind
+  about the type.
 
 ```
 src/YeniRPA.Web/

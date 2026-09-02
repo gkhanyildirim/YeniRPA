@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -139,10 +139,13 @@ public sealed class TitleRuleStore
             rule.FillFromTitle,
             rule.AllowSuffix,
             rule.AllowPartial,
-            EncodeUnits(rule.UnitList),
-            EncodeAliases(rule.AliasGroups),
+            // One entry per line: the editor's box is where forty alias groups have to be read, and
+            // on one line they cannot be.
+            EncodeUnitLines(rule.UnitList),
+            EncodeAliasLines(rule.AliasGroups),
             rule.ReferenceList ?? "")).ToList(),
-        set.DecimalSeparator == "," ? "," : ".");
+        set.DecimalSeparator == "," ? "," : ".",
+        set.CollapseRepeats);
 
     public static TitleRuleSet FromForm(TitleRuleSetForm form)
     {
@@ -165,7 +168,8 @@ public sealed class TitleRuleStore
                     ParseAliases(a.Aliases),
                     string.IsNullOrWhiteSpace(a.ReferenceList) ? null : a.ReferenceList.Trim()))
                 .ToList(),
-            form.DecimalSeparator == "," ? "," : ".");
+            form.DecimalSeparator == "," ? "," : ".",
+            form.CollapseRepeats);
     }
 
     public static TitleRuleFileForm ToForm(TitleRuleFile file) =>
@@ -241,11 +245,15 @@ public sealed class TitleRuleStore
     const int PartialColumn = 12;
     const int ReferenceColumn = 13;
 
+    /// <summary>A rule-set setting rather than a per-rule one, written on every row of that set — the
+    /// same shape as "Ondalık Ayracı", which the sheet has always repeated the same way.</summary>
+    const int RepeatColumn = 14;
+
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
         "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek", "Kısmi",
-        "Referans Listesi",
+        "Referans Listesi", "Tekrarı Sil",
     ];
 
     /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
@@ -272,7 +280,7 @@ public sealed class TitleRuleStore
 
         // Text throughout: a unit spelling of "11" or a set named "2024" must not come back as a
         // number, and the encoded unit/alias cells must survive verbatim.
-        sheet.Columns(SetColumn, ReferenceColumn).Style.NumberFormat.Format = "@";
+        sheet.Columns(SetColumn, RepeatColumn).Style.NumberFormat.Format = "@";
 
         var row = 2;
         foreach (var set in sets)
@@ -292,11 +300,12 @@ public sealed class TitleRuleStore
                 sheet.Cell(row, SuffixColumn).SetValue(Yes(rule.AllowSuffix));
                 sheet.Cell(row, PartialColumn).SetValue(Yes(rule.AllowPartial));
                 sheet.Cell(row, ReferenceColumn).SetValue(rule.ReferenceList ?? "");
+                sheet.Cell(row, RepeatColumn).SetValue(Yes(set.CollapseRepeats));
                 row++;
             }
         }
 
-        sheet.Columns(SetColumn, ReferenceColumn).AdjustToContents();
+        sheet.Columns(SetColumn, RepeatColumn).AdjustToContents();
         foreach (var column in sheet.ColumnsUsed())
             column.Width = Math.Clamp(column.Width, 10, 52);
 
@@ -334,10 +343,12 @@ public sealed class TitleRuleStore
         // Optional like the rest: a workbook exported before reference lists existed carries no such
         // column, and it has to keep importing rather than being refused for a column it predates.
         var cReference = Optional(header, Headers[ReferenceColumn - 1]);
+        var cRepeat = Optional(header, Headers[RepeatColumn - 1]);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
-        var sets = new List<(string Name, string Title, string Separator, List<TitleAttributeRule> Rules)>();
+        var sets = new List<(string Name, string Title, string Separator, bool Repeats,
+            List<TitleAttributeRule> Rules)>();
 
         foreach (var row in table.Skip(1))
         {
@@ -349,13 +360,14 @@ public sealed class TitleRuleStore
 
             var titleColumn = TabularFile.GetCell(row, cTitle).Trim();
             var separator = TabularFile.GetCell(row, cDecimal).Trim() == "," ? "," : ".";
+            var repeats = ParseBool(TabularFile.GetCell(row, cRepeat), fallback: false);
 
             var existing = sets.FirstOrDefault(s =>
                 string.Equals(FoldedTitle.Fold(s.Name), FoldedTitle.Fold(setName), StringComparison.Ordinal));
 
             if (existing.Rules is null)
             {
-                existing = (setName, titleColumn, separator, []);
+                existing = (setName, titleColumn, separator, repeats, []);
                 sets.Add(existing);
             }
 
@@ -376,7 +388,7 @@ public sealed class TitleRuleStore
             throw new InvalidOperationException("The rule set file carries no rows.");
 
         return sets
-            .Select(s => new TitleRuleSet(s.Name, s.Title, s.Rules, s.Separator))
+            .Select(s => new TitleRuleSet(s.Name, s.Title, s.Rules, s.Separator, s.Repeats))
             .ToList();
     }
 
@@ -418,6 +430,11 @@ public sealed class TitleRuleStore
     //
     // In both, ";" separates entries and "|" separates spellings. For a unit, what precedes "="
     // is the canonical spelling and what follows "@" is its size in the base unit.
+    //
+    // A newline separates entries too, and the editor uses that form: one value per line is
+    // readable where forty of them on one line are not. The workbook keeps ";" because a cell is
+    // one line, and the *parser* accepts both — so there is still exactly one implementation of
+    // this format, and a cell somebody typed by hand reads back either way.
 
     internal static string Yes(bool value) => value ? "Evet" : "Hayır";
 
@@ -447,20 +464,28 @@ public sealed class TitleRuleStore
         _ => TitleAttributeKind.Text,
     };
 
-    internal static string EncodeUnits(IReadOnlyList<MeasureUnit> units)
-    {
-        if (units.Count == 0)
-            return "";
+    /// <summary>The separators an entry list may be written with. ";" is what a spreadsheet cell
+    /// holds; a newline is what the editor shows.</summary>
+    static readonly char[] EntrySeparators = [';', '\n', '\r'];
 
-        return string.Join(" ; ", units.Select(unit =>
+    internal static string EncodeUnits(IReadOnlyList<MeasureUnit> units) =>
+        string.Join(" ; ", UnitEntries(units));
+
+    /// <summary>The same entries, one per line — the form the rule editor's box holds.</summary>
+    internal static string EncodeUnitLines(IReadOnlyList<MeasureUnit> units) =>
+        string.Join("\n", UnitEntries(units));
+
+    static IEnumerable<string> UnitEntries(IReadOnlyList<MeasureUnit> units)
+    {
+        foreach (var unit in units ?? [])
         {
             var spellings = (unit.Spellings ?? []).Where(s => !string.IsNullOrWhiteSpace(s));
             var text = unit.Canonical + "=" + string.Join("|", spellings);
 
-            return unit.Factor > 0
+            yield return unit.Factor > 0
                 ? text + "@" + unit.Factor.ToString("0.##########", CultureInfo.InvariantCulture)
                 : text;
-        }));
+        }
     }
 
     static IReadOnlyList<MeasureUnit>? ParseUnits(string raw)
@@ -471,7 +496,8 @@ public sealed class TitleRuleStore
 
         var units = new List<MeasureUnit>();
 
-        foreach (var entry in text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var entry in text.Split(
+            EntrySeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var body = entry;
             double factor = 0;
@@ -501,15 +527,17 @@ public sealed class TitleRuleStore
         return units.Count > 0 ? units : null;
     }
 
-    internal static string EncodeAliases(IReadOnlyList<IReadOnlyList<string>> groups)
-    {
-        if (groups.Count == 0)
-            return "";
+    internal static string EncodeAliases(IReadOnlyList<IReadOnlyList<string>> groups) =>
+        string.Join(" ; ", AliasEntries(groups));
 
-        return string.Join(" ; ", groups
+    /// <summary>The same groups, one per line — the form the rule editor's box holds.</summary>
+    internal static string EncodeAliasLines(IReadOnlyList<IReadOnlyList<string>> groups) =>
+        string.Join("\n", AliasEntries(groups));
+
+    static IEnumerable<string> AliasEntries(IReadOnlyList<IReadOnlyList<string>> groups) =>
+        (groups ?? [])
             .Where(group => group is { Count: > 0 })
-            .Select(group => string.Join("|", group.Where(s => !string.IsNullOrWhiteSpace(s)))));
-    }
+            .Select(group => string.Join("|", group.Where(s => !string.IsNullOrWhiteSpace(s))));
 
     static IReadOnlyList<IReadOnlyList<string>>? ParseAliases(string raw)
     {
@@ -519,7 +547,8 @@ public sealed class TitleRuleStore
 
         var groups = new List<IReadOnlyList<string>>();
 
-        foreach (var entry in text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var entry in text.Split(
+            EntrySeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var spellings = entry
                 .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

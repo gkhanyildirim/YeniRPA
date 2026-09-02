@@ -719,6 +719,19 @@
                                 <option value=",">15,6</option>
                             </select>
                         </div>
+                        @* The one setting that removes text no column claimed, so it is off by
+                           default and sits here rather than on a rule: it belongs to the whole set,
+                           like the decimal separator.
+
+                           A labelled chip rather than a bare checkbox in a .field — stretched by the
+                           column layout that box came out 67px wide and empty, which reads as a text
+                           input nobody filled in rather than as a switch. Same shape as the four
+                           permission chips on a rule. *@
+                        <label class="tc-check tc-setting" for="tc-collapse"
+                               title="Başlıkta arka arkaya iki kez yazılmış aynı kelimenin ikincisini siler — &quot;Ideapad Ideapad Slim3&quot;. Rakam içeren tekrarlara asla dokunmaz: &quot;RTX 5070 8GB 8GB&quot; ekran kartının kendi belleğinin yanındaki sistem RAM'idir.">
+                            <input type="checkbox" id="tc-collapse" />
+                            <span>Tekrarı sil</span>
+                        </label>
                     </div>
 
                     <div class="actions">
@@ -745,37 +758,22 @@
 
                 <div id="tc-notes" hidden></div>
 
-                <div class="table-scroll is-full">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width: 18%" title="Excel dosyanızdaki kolonun adı — birebir aynı yazılmalı">Kolon</th>
-                                <th style="width: 9%" title="Bu kolonun başlıkta nasıl aranacağı">Tip</th>
-                                <th style="width: 6%" title="Bulunca başlıktan silinsin mi. Kapalıysa metin korunur.">Çıkar</th>
-                                <th style="width: 6%" title="Hücredeki yazım standarda çevrilsin mi (16 → 16 GB). Tip = Metin olan satırlarda kullanılmaz.">Düzelt</th>
-                                <th style="width: 5%" title="Başlıktaki &quot;Ocaklar&quot; kelimesi &quot;Ocak&quot; değerini karşılasın mı — Türkçe çekim ekli yazımlar. Model kodu taşıyan kolonlarda kapalı bırakın.">Ek</th>
-                                <th style="width: 5%" title="Değerin bir parçası tamamının yerine geçsin mi — hücrede &quot;CETINTAS EVII&quot; yazarken başlıkta yalnızca &quot;Çetintaş&quot; geçmesi. Yalnızca marka, malzeme gibi kolonlarda açın; ürün tipinde açmayın.">Kısmi</th>
-                                <th style="width: 7%" title="Son taramada bu kural kaç satırda karşılık buldu">Eşleşme</th>
-                                <th style="width: 17%" title="Yalnızca Tip = Ölçü olan satırlarda kullanılır. Hazır bir set seçip düzenleyebilirsiniz.">Birimler</th>
-                                <th style="width: 16%" title="Yalnızca Tip = Değer Listesi olan satırlarda kullanılır">Değerler</th>
-                                <th style="width: 9%" title="Hücrenin yazmadığı uzun yazımlar için katalog — hücrede &quot;Intel Core Ultra 5&quot; yazarken başlıkta &quot;Ultra5 125H&quot; geçmesi. Kayıt yalnızca hücrenin değerini içeriyorsa kullanılır.">Referans</th>
-                                <th style="width: 5%"></th>
-                            </tr>
-                        </thead>
-                        <tbody id="tc-rules-body"></tbody>
-                    </table>
+                @* A rule is a form with ten fields, one of which holds forty alias groups — not a
+                   table row. As a table it needed eleven columns and a 720px minimum, so on any
+                   ordinary screen the boxes were too narrow to read what was in them and the whole
+                   thing scrolled sideways. Here the summary line stays scannable and the editing
+                   happens underneath it, at full width. *@
+                <div class="tc-rules" id="tc-rules">
+                    <div class="tc-rules-head" aria-hidden="true">
+                        <span>Kolon</span>
+                        <span>Tip</span>
+                        <span>Durum</span>
+                        <span class="num">Eşleşme</span>
+                    </div>
+                    <div id="tc-rules-body"></div>
                 </div>
 
-                @* The ready-made sets cover the common units; this is for the columns they do not,
-                   so the format is written down somewhere other than a placeholder. *@
                 <p class="note">
-                    <strong>Birimler:</strong> &quot;=&quot; öncesi standart yazım,
-                    &quot;|&quot; kabul edilen diğer yazımlar,
-                    &quot;@@&quot; taban birime göre katsayı (1 TB = 1024 GB),
-                    &quot;;&quot; birimleri ayırır.
-                    <strong>Değerler:</strong> &quot;|&quot; aynı şeyin yazımlarını,
-                    &quot;;&quot; farklı değerleri ayırır; her grubun ilki standart yazımdır.
-                    <br />
                     <strong>RuleSet:</strong> <span id="tc-ruleset-status">yüklenmedi</span>
                     <br />
                     <strong>Referans listeleri:</strong> <span id="tc-reference-status">yüklenmedi</span>
@@ -784,29 +782,41 @@
                 @* A reference list supplies the spellings a cell does not carry — a processor
                    catalogue's "Intel Core Ultra 5 125H" against a column reading "Intel Core Ultra 5".
                    The column is asked for rather than guessed: a catalogue workbook carries source
-                   URLs and family names beside the values. *@
-                <div class="filter-bar">
-                    @* "örn:" is not decoration. These two boxes sit empty and their examples name the
-                       very values the list is usually built from, so without it they read as already
-                       filled — the same trap the rule table's Birimler/Değerler boxes fell into. *@
-                    <div class="field">
-                        <label for="tc-reference-name">Liste adı</label>
-                        <input type="text" id="tc-reference-name" placeholder="örn: İşlemciler"
-                               title="Kural tablosundaki Referans kutusunda bu adla görünür" />
-                    </div>
-                    <div class="field">
-                        <label for="tc-reference-column">Değer kolonu</label>
-                        <input type="text" id="tc-reference-column" placeholder="örn: Tam İşlemci Adı"
-                               title="Değerlerin bulunduğu kolonun, çalışma kitabının başlık satırındaki adı. Her sayfada aranır." />
-                    </div>
-                    <div class="field">
-                        <button type="button" class="btn btn-ghost" id="tc-reference-import"
-                                title="Değer kataloğu çalışma kitabı — her sayfada adı verilen kolon okunur">
-                            <span class="spinner" aria-hidden="true"></span>
-                            <span class="btn-text">Referans listesi yükle</span>
-                        </button>
-                        <input type="file" id="tc-reference-file" accept=".xlsx,.xls,.csv" hidden
-                               aria-label="Referans listesi çalışma kitabı" />
+                   URLs and family names beside the values.
+
+                   Its own titled block rather than a second filter-bar: side by side with the rule
+                   set's own settings the two looked like one thing, and the upload read as a setting
+                   of the set it sits under. *@
+                <div class="tc-subcard">
+                    <h4>Referans listesi yükle</h4>
+                    <p class="sub">
+                        Hücrenin yazmadığı uzun yazımlar için katalog — hücrede
+                        &quot;Intel Core Ultra 5&quot; yazarken başlıkta &quot;Ultra5 125H&quot;
+                        geçmesi. Bir kayıt yalnızca hücrenin değerini içeriyorsa kullanılır.
+                    </p>
+                    <div class="filter-bar is-plain">
+                        @* "örn:" is not decoration. These two boxes sit empty and their examples name
+                           the very values the list is usually built from, so without it they read as
+                           already filled — the same trap the rule editor's boxes fell into. *@
+                        <div class="field">
+                            <label for="tc-reference-name">Liste adı</label>
+                            <input type="text" id="tc-reference-name" placeholder="örn: İşlemciler"
+                                   title="Kural satırlarındaki Referans kutusunda bu adla görünür" />
+                        </div>
+                        <div class="field">
+                            <label for="tc-reference-column">Değer kolonu</label>
+                            <input type="text" id="tc-reference-column" placeholder="örn: Tam İşlemci Adı"
+                                   title="Değerlerin bulunduğu kolonun, çalışma kitabının başlık satırındaki adı. Her sayfada aranır." />
+                        </div>
+                        <div class="field">
+                            <button type="button" class="btn btn-ghost" id="tc-reference-import"
+                                    title="Değer kataloğu çalışma kitabı — her sayfada adı verilen kolon okunur">
+                                <span class="spinner" aria-hidden="true"></span>
+                                <span class="btn-text">Referans listesi yükle</span>
+                            </button>
+                            <input type="file" id="tc-reference-file" accept=".xlsx,.xls,.csv" hidden
+                                   aria-label="Referans listesi çalışma kitabı" />
+                        </div>
                     </div>
                 </div>
 

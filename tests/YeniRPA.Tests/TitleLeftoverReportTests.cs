@@ -22,6 +22,53 @@ public class TitleLeftoverReportTests
     static TitleLeftover Word(IReadOnlyList<TitleLeftover> report, string word) =>
         report.First(l => string.Equals(l.Word, word, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// A word the column's own value starts — "AMD Ryzen 3" against a title's "Ryzen3-30" — where a
+    /// reference list would be the thing that finished it off.
+    ///
+    /// <para>Reported apart from "nothing claims this" because the two send the operator somewhere
+    /// completely different. Unclaimed means go and find a column; this means the column is already
+    /// right and either the catalogue is short an entry or the title is wrong. The message carries
+    /// the value that would close it so the operator can look that up and decide — and on the export
+    /// this came from the answer was that no such processor exists.</para>
+    /// </summary>
+    [Fact]
+    public void AWordTheReferenceListLacksNamesTheColumnItBelongsTo()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Marka"), new TitleAttributeRule("İşlemci")]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "Marka", "İşlemci"],
+            ["Lenovo Ideapad Slim3 Ryzen3-30 Notebook", "Lenovo", "AMD Ryzen 3"],
+        ];
+
+        var leftover = Word(Report(set, table), "Ryzen3-30");
+
+        Assert.Equal(TitleLeftoverCause.ReferenceMissing, leftover.Cause);
+        Assert.Equal("İşlemci", leftover.Column);
+        Assert.Contains("AMD Ryzen 3 30", leftover.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>A word no column's value even begins is still plainly unclaimed.</summary>
+    [Fact]
+    public void AWordNoColumnBeginsIsStillUnclaimed()
+    {
+        var set = new TitleRuleSet("Test", "Başlık", [new TitleAttributeRule("Marka")]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "Marka"],
+            ["Lenovo Ideapad Slim3 WUXGA", "Lenovo"],
+        ];
+
+        var leftover = Word(Report(set, table), "WUXGA");
+
+        Assert.Equal(TitleLeftoverCause.Unclaimed, leftover.Cause);
+        Assert.Null(leftover.Column);
+    }
+
     /// <summary>A column that found its value and was told to keep it.</summary>
     [Fact]
     public void AColumnThatMayNotRemoveIsNamedAsTheReason()
