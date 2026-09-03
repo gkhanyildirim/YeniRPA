@@ -147,6 +147,26 @@ public static class Measures
 /// <summary>One entry of a reference list, split into the words a cell value is matched against.</summary>
 internal sealed record ReferenceEntry(string Canonical, IReadOnlyList<string> Words);
 
+/// <summary>
+/// Two sizes an operator has declared to be the same product — a <see cref="TitleAttributeKind.Measure"/>
+/// rule's alias group, resolved to the keys its spellings measure out to.
+///
+/// <para>A marketplace's screen-size attribute is a list of whole inches, so a 15.6" panel is filed
+/// under 16 and the title and the cell disagree by construction. Neither
+/// <see cref="Measures.Key"/> nor the rounding check can bridge that: rounding runs one way only —
+/// the cell is assumed to be the precise side — and an inch unit carries no conversion factor, so
+/// there is not even a base quantity to compare on.</para>
+///
+/// <para>So it is not bridged by inference. The operator is shown both values, picks the one that is
+/// right, and that decision is what this pair records. <see cref="Canonical"/> is their choice: the
+/// spelling <c>Düzelt</c> writes back into the cell.</para>
+/// </summary>
+internal sealed record MeasurePair(string Canonical, IReadOnlyList<string> Keys)
+{
+    public bool Holds(string? key) =>
+        key is { Length: > 0 } && Keys.Contains(key, StringComparer.Ordinal);
+}
+
 /// <summary>One attribute rule with its scanning machinery built once for the whole file.</summary>
 public sealed class CompiledAttribute
 {
@@ -167,7 +187,8 @@ public sealed class CompiledAttribute
         Regex? measureRegex,
         IReadOnlyDictionary<string, MeasureUnit> unitBySpelling,
         IReadOnlyList<(string Folded, string Canonical, string Key)> aliasSpellings,
-        IReadOnlyList<ReferenceEntry> referenceEntries)
+        IReadOnlyList<ReferenceEntry> referenceEntries,
+        IReadOnlyList<MeasurePair> measurePairs)
     {
         Rule = rule;
         Index = index;
@@ -175,6 +196,7 @@ public sealed class CompiledAttribute
         UnitBySpelling = unitBySpelling;
         AliasSpellings = aliasSpellings;
         ReferenceEntries = referenceEntries;
+        MeasurePairs = measurePairs;
     }
 
     public TitleAttributeRule Rule { get; }
@@ -186,6 +208,30 @@ public sealed class CompiledAttribute
     internal IReadOnlyDictionary<string, MeasureUnit> UnitBySpelling { get; }
     internal IReadOnlyList<(string Folded, string Canonical, string Key)> AliasSpellings { get; }
     internal IReadOnlyList<ReferenceEntry> ReferenceEntries { get; }
+
+    /// <summary>Sizes the operator has declared equal on this column. Empty on every other kind.</summary>
+    internal IReadOnlyList<MeasurePair> MeasurePairs { get; }
+
+    /// <summary>
+    /// The operator's decision covering these two readings of one measurement, if they made one.
+    ///
+    /// <para>Both keys must sit in the same group. A column may carry several pairs — 15.6" against
+    /// 16 inches and 15.3" against 15 — and a group that holds only one of the two is a decision
+    /// about some other size.</para>
+    /// </summary>
+    internal MeasurePair? PairFor(string? cellKey, string? titleKey)
+    {
+        if (MeasurePairs.Count == 0 || cellKey is null || titleKey is null)
+            return null;
+
+        foreach (var pair in MeasurePairs)
+        {
+            if (pair.Holds(cellKey) && pair.Holds(titleKey))
+                return pair;
+        }
+
+        return null;
+    }
 
     internal IReadOnlyList<ReferenceEntry> ConsistentWith(
         string foldedValue, Func<IReadOnlyList<ReferenceEntry>> narrow)
@@ -303,6 +349,7 @@ public static class AttributeMatcher
         Regex? measureRegex = null;
         var unitBySpelling = new Dictionary<string, MeasureUnit>(StringComparer.Ordinal);
         var aliasSpellings = new List<(string Folded, string Canonical, string Key)>();
+        IReadOnlyList<MeasurePair> measurePairs = [];
 
         if (rule.Kind == TitleAttributeKind.Measure)
         {
@@ -325,6 +372,7 @@ public static class AttributeMatcher
             }
 
             measureRegex = BuildMeasureRegex(unitBySpelling.Keys);
+            measurePairs = MeasureGroups(rule, measureRegex, unitBySpelling);
         }
 
         if (rule.Kind == TitleAttributeKind.Alias)
@@ -370,7 +418,65 @@ public static class AttributeMatcher
         }
 
         return new CompiledAttribute(
-            rule, index, measureRegex, unitBySpelling, aliasSpellings, entries);
+            rule, index, measureRegex, unitBySpelling, aliasSpellings, entries, measurePairs);
+    }
+
+    /// <summary>
+    /// A measured rule's value list, read as declarations that two sizes are the same product.
+    ///
+    /// <para>Each group is one decision and its first spelling is the operator's answer — the one
+    /// <c>Düzelt</c> writes back into the cell. Everything is resolved to
+    /// <see cref="Measures.Key"/> here rather than at match time, because a group is fixed for the
+    /// whole file and a row is not.</para>
+    ///
+    /// <para>Every spelling has to be a measurement this column can read. A line the column's own
+    /// units cannot parse is refused rather than dropped: it was typed to make a row come out a
+    /// certain way, and silently ignoring it leaves the operator looking at the unchanged row with
+    /// no idea why.</para>
+    /// </summary>
+    static IReadOnlyList<MeasurePair> MeasureGroups(
+        TitleAttributeRule rule, Regex regex, IReadOnlyDictionary<string, MeasureUnit> unitBySpelling)
+    {
+        var pairs = new List<MeasurePair>();
+
+        foreach (var group in rule.AliasGroups)
+        {
+            if (group is null || group.Count == 0)
+                continue;
+
+            var keys = new List<string>();
+            var canonical = "";
+
+            foreach (var spelling in group)
+            {
+                var text = (spelling ?? "").Trim();
+                if (text.Length == 0)
+                    continue;
+
+                var match = regex.Match(FoldedTitle.Fold(text));
+
+                if (!match.Success ||
+                    !Measures.TryParseQuantity(match.Groups["n"].Value, out var quantity))
+                {
+                    throw new InvalidOperationException(
+                        $"Column '{rule.Column}' lists \"{text}\" as a value, but that is not a " +
+                        "measurement this column can read. On a measured column every value line " +
+                        "holds sizes that mean the same thing, written with this column's own units " +
+                        "— for example \"15.6\\\"|16 inç\".");
+                }
+
+                keys.Add(Measures.Key(quantity, unitBySpelling[match.Groups["u"].Value]));
+
+                if (canonical.Length == 0)
+                    canonical = text;
+            }
+
+            // One size on its own declares nothing; it takes two readings to make an equivalence.
+            if (keys.Count > 1)
+                pairs.Add(new MeasurePair(canonical, keys));
+        }
+
+        return pairs;
     }
 
     static IEnumerable<string> Spellings(MeasureUnit unit)

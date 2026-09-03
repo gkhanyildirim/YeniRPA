@@ -182,7 +182,13 @@
 
     lock(row.querySelector('.tc-units'), kind === 'Measure', 'GB=gb|gigabayt@1\nTB=tb@1024');
     lock(row.querySelector('.tc-unit-preset'), kind === 'Measure');
-    lock(row.querySelector('.tc-aliases'), kind === 'Alias', 'W11P|Windows 11 Pro\nW11H|Windows 11 Home');
+    // Open on a measured rule too, where a line means something narrower: two sizes the operator has
+    // declared to be the same product, because the marketplace files a 15.6" panel under 16 inches.
+    // The "hangi değer doğru?" card writes these, and this is where they can be read and corrected.
+    lock(
+      row.querySelector('.tc-aliases'),
+      kind === 'Alias' || kind === 'Measure',
+      kind === 'Measure' ? '15.6"|16 inç\n15.3"|15 inç' : 'W11P|Windows 11 Pro\nW11H|Windows 11 Home');
     lock(row.querySelector('.tc-correct'), kind !== 'Text');
 
     // A measured value is matched as a number and its unit, so a word ending has nothing to say
@@ -373,7 +379,8 @@
               '<textarea class="tc-aliases" rows="1" spellcheck="false">' +
                 RPA.escapeHtml(r.aliases || '') + '</textarea>' +
               '<span class="tc-hint">Her satır bir değer; satırın ilk yazımı standart olan. ' +
-                '&quot;|&quot; aynı şeyin diğer yazımlarını ayırır.</span>' +
+                '&quot;|&quot; aynı şeyin diğer yazımlarını ayırır. Ölçü tipinde her satır ' +
+                'aynı sayılan iki ölçüdür.</span>' +
             '</div>' +
 
             '<div class="tc-field">' +
@@ -800,6 +807,21 @@
         '</select></label>'
       : '';
 
+    // A card that asks instead of proposing. Picking an option writes that option into the same
+    // value box every other card carries, so nothing downstream has to know these exist — and the
+    // box stays visible, because the operator may still want to correct what they picked.
+    const options = fix.choices || [];
+    const picker = options.length
+      ? '<div class="tc-fix-choices" role="radiogroup">' +
+        options.map(c =>
+          '<label class="tc-fix-choice">' +
+            '<input type="radio" name="pick-' + RPA.escapeHtml(fix.id) + '"' +
+              ' value="' + RPA.escapeHtml(c.value) + '" />' +
+            '<span>' + RPA.escapeHtml(c.label) + '</span>' +
+          '</label>').join('') +
+        '</div>'
+      : '';
+
     return '<div class="tc-fix" data-id="' + RPA.escapeHtml(fix.id) + '">' +
       '<label class="tc-fix-pick">' +
         // Unticked when the card is incomplete (a column still to choose) or doubtful (the RuleSet
@@ -811,6 +833,7 @@
       '<div class="tc-fix-body">' +
         '<div class="tc-fix-problem">' + RPA.escapeHtml(fix.problem) + '</div>' +
         '<div class="tc-fix-action">' + RPA.escapeHtml(fix.action) + '</div>' +
+        picker +
         '<div class="tc-fix-fields">' +
           chooser +
           '<label class="tc-fix-field">Yazılacak değer' +
@@ -891,6 +914,17 @@
 
     if (missing) {
       RPA.showError('tc-alert', 'Seçtiğiniz bir düzeltme için önce kolon belirtmeniz gerekiyor.');
+      return;
+    }
+
+    // A card that asks which value is right must not be answered by default. Its value box is
+    // seeded with the first option so the preview has something to show, and applying that without
+    // the operator having picked it would write a size nobody chose into the catalogue.
+    const unanswered = picked.find(c =>
+      c.querySelector('.tc-fix-choices') && !c.querySelector('.tc-fix-choices input:checked'));
+
+    if (unanswered) {
+      RPA.showError('tc-alert', 'Seçtiğiniz bir düzeltme için önce hangi değerin doğru olduğunu seçin.');
       return;
     }
     RPA.clearError('tc-alert');
@@ -1147,9 +1181,18 @@
     el('tc-fixes-apply').addEventListener('click', applyFixes);
 
     el('tc-fixes-list').addEventListener('change', function (event) {
+      const card = event.target.closest('.tc-fix');
+
       // Choosing a column is what makes that card actionable, so it ticks itself.
       if (event.target.classList.contains('tc-fix-column') && event.target.value)
-        event.target.closest('.tc-fix').querySelector('.tc-fix-on').checked = true;
+        card.querySelector('.tc-fix-on').checked = true;
+
+      // Answering the question is the same thing on a card that asks one: the answer becomes the
+      // value that gets written, and the card ticks itself.
+      if (event.target.type === 'radio' && card && card.contains(event.target)) {
+        card.querySelector('.tc-fix-value').value = event.target.value;
+        card.querySelector('.tc-fix-on').checked = true;
+      }
 
       updateFixCount();
     });

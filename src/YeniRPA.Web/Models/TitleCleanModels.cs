@@ -434,6 +434,17 @@ public enum TitleFixKind
     /// column needs.</para>
     /// </summary>
     EnableMatching,
+
+    /// <summary>
+    /// A measured column where the title and the cell name two different sizes — "15.6"" against
+    /// "16 inç" — because the marketplace's attribute is a list of whole inches and the panel is not.
+    ///
+    /// <para>Alone among these, this card asks rather than proposes. Which side is right is a fact
+    /// about the product that nothing in the file settles, and the engine guessing it would either
+    /// delete a real disagreement or write a made-up size into the catalogue. The operator picks, and
+    /// their answer becomes the value list entry that pairs the two.</para>
+    /// </summary>
+    MatchMeasure,
 }
 
 /// <summary>
@@ -473,7 +484,22 @@ public sealed record TitleFix(
     string SampleAfter,
     bool NeedsColumnChoice = false,
     string? Warning = null,
-    bool Preselected = true);
+    bool Preselected = true,
+    IReadOnlyList<TitleFixChoice>? Choices = null)
+{
+    public IReadOnlyList<TitleFixChoice> ChoiceList => Choices ?? [];
+}
+
+/// <summary>
+/// One answer to a card that asks a question rather than proposing an edit.
+///
+/// <para>Where a card has these, the operator picks one and <see cref="TitleFix.Value"/> becomes that
+/// choice's <paramref name="Value"/> — the same field a free-text card lets them correct, so the
+/// choice needs nothing of its own on the wire or in the apply path.</para>
+/// </summary>
+/// <param name="Label">What the operator reads. Says where the value came from, because that is the
+/// whole basis on which they can tell which one is right.</param>
+public sealed record TitleFixChoice(string Label, string Value);
 
 /// <summary>Why a word is still standing in the cleaned titles.</summary>
 public enum TitleLeftoverCause

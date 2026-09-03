@@ -251,7 +251,7 @@ public static class TitleCleanBuilder
             foreach (var match in AttributeMatcher.Scan(attr, title, value, separator))
             {
                 if (match.End > match.Start)
-                    pool.Add(new Candidate(match, attr, IsValueMatch(value, match)));
+                    pool.Add(new Candidate(match, attr, IsValueMatch(attr, value, match)));
             }
         }
 
@@ -579,7 +579,13 @@ public static class TitleCleanBuilder
                 TitleAttributeReason.ValueRepeated);
         }
 
-        var canonical = hits[0].Match.Canonical;
+        // Normally the title's own reading, formatted. Where the operator has declared these two
+        // sizes equal, their answer replaces it — the whole point of being asked was to say which of
+        // the two goes in the cell, and taking the title's would make the question decorative.
+        var canonical =
+            attr.PairFor(value.Key, hits[0].Match.Key)?.Canonical
+            ?? hits[0].Match.Canonical;
+
         var differs = !string.Equals(original, canonical, StringComparison.Ordinal);
 
         // A rounded match agrees about the product and disagrees about the precision, and the cell is
@@ -642,7 +648,7 @@ public static class TitleCleanBuilder
             found[0].Match.Canonical);
     }
 
-    static bool IsValueMatch(AttributeValue? value, TitleMatch match)
+    static bool IsValueMatch(CompiledAttribute attr, AttributeValue? value, TitleMatch match)
     {
         if (value is null)
             return false;
@@ -652,9 +658,13 @@ public static class TitleCleanBuilder
 
         // Any of them: a disk column reading "2 TB + 1 TB" asserts both, and a title writing either
         // is writing something the row says it has.
+        //
+        // The third way in is the only one that is not the engine's own reasoning: a pair the
+        // operator declared after being shown both readings. Nothing infers these — see MeasurePair.
         return value.PartList.Any(part =>
             part.Key.Length > 0 && string.Equals(part.Key, match.Key, StringComparison.Ordinal) ||
-            Rounded(part, match));
+            Rounded(part, match) ||
+            attr.PairFor(part.Key, match.Key) is not null);
     }
 
     /// <summary>

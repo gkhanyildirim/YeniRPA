@@ -1163,6 +1163,31 @@ select:disabled {
 
 .tc-fix-action { font-weight: 600; margin-bottom: 10px; }
 
+/* The two answers to a card that asks which value is right. Wraps rather than shrinks: the labels
+   carry the values themselves, so truncating one would hide the thing being chosen between. */
+.tc-fix-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+
+.tc-fix-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: .78rem;
+  cursor: pointer;
+}
+
+.tc-fix-choice:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tc-fix-choice input { margin: 0; }
+
 .tc-fix-fields { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 
 .tc-fix-field {

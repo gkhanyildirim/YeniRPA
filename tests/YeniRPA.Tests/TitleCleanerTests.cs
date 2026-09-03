@@ -1656,4 +1656,100 @@ public class TitleCleanerTests
 
     static TitleAttributeResult Attr(TitleCleanRow row, string column) =>
         row.Attributes.First(a => string.Equals(a.Column, column, StringComparison.Ordinal));
+
+    // -----------------------------------------------------------------
+    // Two sizes the operator has declared equal
+    // -----------------------------------------------------------------
+    //
+    // A marketplace's screen-size attribute is a list of whole inches, so a 15.6" panel is filed
+    // under 16 and the title and the cell disagree on every row. Nothing in the file says which of
+    // them is right — the operator is asked, and their answer is the value-list line these exercise.
+
+    static TitleRuleSet ScreenRules(params string[] pairs) => new(
+        "Laptop",
+        "Başlık",
+        [
+            new TitleAttributeRule("Ekran Boyutu", TitleAttributeKind.Measure, Units: [Inch],
+                Aliases: pairs.Select(p => (IReadOnlyList<string>)p.Split('|')).ToList()),
+        ]);
+
+    /// <summary>The operator picked the title's reading: the title loses it and the cell is pulled
+    /// onto the size that is actually true of the product.</summary>
+    [Fact]
+    public void ADeclaredPairLetsTheTitleWinAndRewritesTheCell()
+    {
+        var row = Run(
+            ScreenRules("15.6\"|16\""),
+            "Acer Aspire Lite AL16-51P NX.DCLEY 15.6\" FullHD",
+            ("Ekran Boyutu", "16 inç"));
+
+        var screen = Attr(row, "Ekran Boyutu");
+
+        Assert.Equal(TitleAttributeStatus.Corrected, screen.Status);
+        Assert.Equal("15.6\"", screen.Value);
+        Assert.Equal("Acer Aspire Lite AL16-51P NX.DCLEY FullHD", row.CleanTitle);
+        Assert.False(row.HasConflict);
+    }
+
+    /// <summary>The other answer. The title still loses the size — both readings name one screen —
+    /// but the cell keeps what the marketplace filed it under.</summary>
+    [Fact]
+    public void ADeclaredPairCanKeepTheCellsReadingInstead()
+    {
+        var row = Run(
+            ScreenRules("16\"|15.6\""),
+            "Acer Aspire Lite AL16-51P NX.DCLEY 15.6\" FullHD",
+            ("Ekran Boyutu", "16 inç"));
+
+        var screen = Attr(row, "Ekran Boyutu");
+
+        Assert.Equal("16\"", screen.Value);
+        Assert.Equal("Acer Aspire Lite AL16-51P NX.DCLEY FullHD", row.CleanTitle);
+        Assert.False(row.HasConflict);
+    }
+
+    /// <summary>
+    /// Without a declaration the row is reported exactly as it was before. This is the guard that
+    /// matters most: the feature exists because the engine must <em>not</em> decide which side is
+    /// right on its own, and a pair that silently generalised would delete real data errors.
+    /// </summary>
+    [Fact]
+    public void AnUndeclaredSizeDifferenceIsStillAConflict()
+    {
+        var row = Run(
+            ScreenRules(),
+            "Acer Aspire Lite AL16-51P NX.DCLEY 15.6\" FullHD",
+            ("Ekran Boyutu", "16 inç"));
+
+        Assert.Equal(TitleAttributeStatus.Conflict, Attr(row, "Ekran Boyutu").Status);
+        Assert.Contains("15.6\"", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>A pair says nothing about any other size. 17.3" against a cell of 17 is a different
+    /// question, and it keeps its place in the review list until it is asked.</summary>
+    [Fact]
+    public void ADeclaredPairDoesNotCoverASizeItDoesNotName()
+    {
+        var row = Run(
+            ScreenRules("15.6\"|16\""),
+            "Hp Omen C2EZ2EA003 17.3\" FHD",
+            ("Ekran Boyutu", "17 inç"));
+
+        Assert.Equal(TitleAttributeStatus.Conflict, Attr(row, "Ekran Boyutu").Status);
+    }
+
+    /// <summary>
+    /// A value line the column's own units cannot read is refused at compile time. It was typed to
+    /// make a row come out a certain way; dropping it quietly leaves the operator staring at an
+    /// unchanged row with nothing to explain it.
+    /// </summary>
+    [Fact]
+    public void AMeasuredValueLineThatIsNotAMeasurementIsRefused()
+    {
+        var error = Assert.Throws<InvalidOperationException>(
+            () => CompiledRuleSet.Compile(ScreenRules("16\"|1 TB")));
+
+        Assert.Contains("Ekran Boyutu", error.Message, StringComparison.Ordinal);
+        Assert.Contains("1 TB", error.Message, StringComparison.Ordinal);
+    }
 }

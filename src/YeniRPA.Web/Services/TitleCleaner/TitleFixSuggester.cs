@@ -123,6 +123,11 @@ public static class TitleFixSuggester
 
         return attribute.Reason switch
         {
+            // A measured column disagrees about a number, not about a spelling, so merging two
+            // spellings has nothing to work with. It gets its own card, and that one asks a question.
+            TitleAttributeReason.Disagreement when rule.Kind == TitleAttributeKind.Measure =>
+                ProposeMatchMeasure(rules, scenario, rule),
+
             TitleAttributeReason.Disagreement => ProposeMerge(rules, scenario, rule),
             TitleAttributeReason.ValueRepeated => ProposeProtect(rules, scenario, rule),
             TitleAttributeReason.BareNumber => ProposeAdopt(rules, scenario, rule),
@@ -207,6 +212,79 @@ public static class TitleFixSuggester
     }
 
     /// <summary>
+    /// The title and the cell name two different sizes. Ask which one is right.
+    ///
+    /// <para>Every other card here proposes; this one asks, and the difference is not stylistic. A
+    /// marketplace's screen-size attribute is a list of whole inches, so a 15.6" panel is filed under
+    /// 16 and the two sides disagree on every row of the file — but a title reading 15.6" against a
+    /// cell reading 17 is a real data error that looks identical from here. Nothing in the file tells
+    /// them apart, so the operator is shown both readings and picks.</para>
+    ///
+    /// <para>Their answer heads the value-list entry, which is what makes it the size <c>Düzelt</c>
+    /// writes back into the cell.</para>
+    /// </summary>
+    static TitleFix? ProposeMatchMeasure(
+        CompiledRuleSet rules, Scenario scenario, TitleAttributeRule rule)
+    {
+        var attribute = scenario.Attribute;
+        var said = (attribute.TitleSaid ?? "").Trim();
+
+        // Two sizes in one title is not one question with two answers.
+        if (said.Length == 0 || said.Contains(", ", StringComparison.Ordinal))
+            return null;
+
+        var attr = rules.Attributes.FirstOrDefault(a =>
+            string.Equals(a.Rule.Column, attribute.Column, StringComparison.Ordinal));
+
+        if (attr is null)
+            return null;
+
+        var cell = AttributeMatcher.ReadValue(attr, attribute.OriginalValue, rules.DecimalSeparator);
+
+        // A cell holding several measurements — a two-disk machine — has no single size to weigh the
+        // title against, and one holding no readable measurement has nothing to offer as an answer.
+        if (cell is null || cell.Parts is not null || cell.Key.Length == 0)
+            return null;
+
+        var title = AttributeMatcher
+            .Scan(attr, FoldedTitle.Of(scenario.Sample.OriginalTitle), cell, rules.DecimalSeparator)
+            .FirstOrDefault(m => string.Equals(m.Text.Trim(), said, StringComparison.Ordinal));
+
+        if (title is null || title.Key.Length == 0 ||
+            string.Equals(title.Key, cell.Key, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        // Both offered in the column's own canonical form. The cell in this file is written
+        // "16 inç inç" on some rows, and storing that verbatim would put a spelling in the value list
+        // that the column cannot read back.
+        var fromTitle = title.Canonical;
+        var fromCell = cell.Canonical;
+
+        List<TitleFixChoice> choices =
+        [
+            new($"Başlıktaki: {fromTitle}", $"{fromTitle}|{fromCell}"),
+            new($"Hücredeki: {fromCell}", $"{fromCell}|{fromTitle}"),
+        ];
+
+        return Build(
+            rules, scenario, rule.Column,
+            TitleFixKind.MatchMeasure,
+            $"{rule.Column}: başlıkta \"{said}\", özellikte \"{attribute.OriginalValue.Trim()}\"",
+            "Hangisi doğru? Seçtiğiniz değer hücreye yazılır, diğeri başlıktan silinir",
+            choices[0].Value,
+            ApplyMatchMeasure,
+            warning: rule.Correct
+                ? null
+                : "Bu kolonda Düzelt kapalı: seçilen değer başlıktan silinir ama hücreye yazılmaz.",
+            // Never ticked on arrival. The engine has no opinion about which size is right, and a
+            // card that arrives pre-answered would collect the operator's agreement without asking.
+            preselected: false,
+            choices: choices);
+    }
+
+    /// <summary>
     /// The value appears more than once and one of the occurrences belongs to something else. Give
     /// the longer phrase around it to a column that may not remove it.
     /// </summary>
@@ -285,7 +363,8 @@ public static class TitleFixSuggester
         bool needsColumnChoice = false,
         string? warning = null,
         bool preselected = true,
-        string? cellValue = null)
+        string? cellValue = null,
+        IReadOnlyList<TitleFixChoice>? choices = null)
     {
         var id = Identify(scenario.Key, kind);
 
@@ -298,7 +377,8 @@ public static class TitleFixSuggester
 
         var draft = new TitleFix(
             id, kind, scenario.Attribute.Column, targetColumn, problem, action, value, cell,
-            scenario.Rows, scenario.Sample.OriginalTitle, "", needsColumnChoice, warning, preselected);
+            scenario.Rows, scenario.Sample.OriginalTitle, "", needsColumnChoice, warning, preselected,
+            choices);
 
         var after = scenario.Sample.CleanTitle;
 
@@ -1177,12 +1257,37 @@ public static class TitleFixSuggester
                 TitleFixKind.AdoptPhrase => ApplyAdopt(result, candidate),
                 TitleFixKind.AdoptCategoryType => ApplyCategoryType(result, candidate),
                 TitleFixKind.EnableMatching => ApplyEnable(result, candidate),
+                TitleFixKind.MatchMeasure => ApplyMatchMeasure(result, candidate),
                 _ => result,
             };
         }
 
         return result;
     }
+
+    /// <summary>
+    /// The operator's answer becomes a value-list entry pairing the two sizes, headed by the one they
+    /// picked — the head is what <c>Düzelt</c> writes into the cell.
+    ///
+    /// <para>The two spellings ride in one string in the same "|" format the Değerler box uses, so
+    /// the card's chosen value and a line typed by hand are the same thing.</para>
+    /// </summary>
+    static TitleRuleSet ApplyMatchMeasure(TitleRuleSet set, TitleFix fix) =>
+        WithRule(set, fix.TargetColumn, rule =>
+        {
+            var sizes = fix.Value.Split(
+                '|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (sizes.Length < 2)
+                return rule;
+
+            var groups = rule.AliasGroups;
+
+            foreach (var size in sizes.Skip(1))
+                groups = AddSpelling(groups, sizes[0], size);
+
+            return rule with { Aliases = groups };
+        });
 
     static TitleRuleSet ApplyMerge(TitleRuleSet set, TitleFix fix) =>
         WithRule(set, fix.TargetColumn, rule => rule with

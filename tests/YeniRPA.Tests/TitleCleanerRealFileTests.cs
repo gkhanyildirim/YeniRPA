@@ -604,6 +604,85 @@ public class TitleCleanerRealFileTests
     }
 
     /// <summary>
+    /// The screen-size rows: one card per distinct pair of readings, each asking which is right.
+    ///
+    /// <para>Two pairs in this file — 15.6" against a cell of 16 inches and 15.3" against 15 — and
+    /// they are two separate questions, so they must not be collapsed into one card. Neither arrives
+    /// ticked: the engine has no opinion about which side is true.</para>
+    /// </summary>
+    [Fact]
+    public void TheScreenSizeRowsEachAskWhichReadingIsRight()
+    {
+        var rules = CompiledRuleSet.Compile(MessyLaptopRules(), [MessyReference()]);
+        var rows = TitleCleanBuilder.Clean(rules, Table("laptop-test.xlsx"));
+
+        var cards = TitleFixSuggester.Suggest(rules, rows)
+            .Where(f => f.Kind == TitleFixKind.MatchMeasure)
+            .ToList();
+
+        // 15.6" against 16, 15.3" against 15, 17.3" against 17 — three panels, three questions.
+        Assert.Equal(3, cards.Count);
+
+        Assert.All(cards, card =>
+        {
+            Assert.Equal("Ekran Boyutu (inç)", card.Column);
+            Assert.False(card.Preselected);
+            Assert.Equal(2, card.ChoiceList.Count);
+
+            // Both answers offered in the column's own canonical form, and each carries the whole
+            // value-list line it would write — the head being the size that goes into the cell.
+            Assert.All(card.ChoiceList, choice => Assert.Contains('|', choice.Value));
+            Assert.NotEqual(card.ChoiceList[0].Value, card.ChoiceList[1].Value);
+        });
+
+        // The answers are offered in the column's own canonical form. The cell on some of these rows
+        // is written "16 inç inç"; storing that verbatim would put a spelling in the value list that
+        // the column cannot read back, and the next compile would refuse the whole set.
+        Assert.Contains(cards, c =>
+            c.Problem.Contains("15.6\"", StringComparison.Ordinal) &&
+            c.ChoiceList[0].Value == "15.6 inç|16 inç" &&
+            c.ChoiceList[1].Value == "16 inç|15.6 inç");
+
+        Assert.Contains(cards, c => c.Problem.Contains("15.3\"", StringComparison.Ordinal));
+        Assert.Contains(cards, c => c.Problem.Contains("17.3\"", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Taking the answer end to end: pick the title's reading, and the rows it covers come out
+    /// cleaned with the cell pulled onto the size the title named.
+    /// </summary>
+    [Fact]
+    public void AnsweringTheScreenSizeCardCleansTheRowsItCovers()
+    {
+        var rules = CompiledRuleSet.Compile(MessyLaptopRules(), [MessyReference()]);
+        var table = Table("laptop-test.xlsx");
+        var rows = TitleCleanBuilder.Clean(rules, table);
+
+        var card = TitleFixSuggester.Suggest(rules, rows)
+            .First(f => f.Kind == TitleFixKind.MatchMeasure &&
+                        f.Problem.Contains("15.6\"", StringComparison.Ordinal));
+
+        var chosen = card.ChoiceList.First(c => c.Label.StartsWith("Başlıktaki", StringComparison.Ordinal));
+        var applied = TitleFixSuggester.Apply(
+            rules.Source, [card with { Value = chosen.Value }], [card.Id]);
+
+        var after = TitleCleanBuilder.Clean(
+            CompiledRuleSet.Compile(applied, [MessyReference()]), table);
+
+        var before = rows.First(r =>
+            r.Attributes.Any(a => a.Column == "Ekran Boyutu (inç)" &&
+                                  a.Status == TitleAttributeStatus.Conflict &&
+                                  a.TitleSaid == "15.6\""));
+
+        var fixedRow = after.First(r => r.RowNumber == before.RowNumber);
+        var screen = fixedRow.Attributes.First(a => a.Column == "Ekran Boyutu (inç)");
+
+        Assert.Equal(TitleAttributeStatus.Corrected, screen.Status);
+        Assert.Equal("15.6 inç", screen.Value);
+        Assert.DoesNotContain("15.6", fixedRow.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The rows the operator was looking at. Their titles end in a cut-off "Taşınabilir İ" and hold
     /// two disks apiece, and they come out clean — no product-type report, and the fragment gone.
     /// </summary>
