@@ -3,10 +3,42 @@
     ViewData["Title"] = "Reports";
 }
 
-<div class="shell">
+@*
+    One glyph per module, drawn inline so the app keeps its no-external-requests property. The
+    rail and the panel header draw the same path from this one table, so a module cannot end up
+    wearing two different marks.
+*@
+@{
+    var iconPaths = new Dictionary<string, string>
+    {
+        ["order-report"]   = "<path d='M3 3v16a2 2 0 0 0 2 2h16'/><rect x='7' y='11' width='3.2' height='6' rx='1'/><rect x='14' y='6' width='3.2' height='11' rx='1'/>",
+        ["return-sla"]     = "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3.5 2'/>",
+        ["incidents"]      = "<path d='M10.3 3.7 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z'/><path d='M12 9.5v4'/><path d='M12 17h.01'/>",
+        ["ticket-seller"]  = "<path d='M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-6z'/><path d='M14 8v8'/>",
+        ["title-cleaner"]  = "<path d='m5 19 9-9'/><path d='m14.5 4.5 5 5-3 3-5-5z'/><path d='M6 4v3M4.5 5.5h3M18 15v2.5M16.8 16.2h2.4'/>",
+        ["create-return"]  = "<path d='M3 12a9 9 0 1 0 2.6-6.4'/><path d='M3 4v5h5'/>",
+        ["mark-received"]  = "<circle cx='12' cy='12' r='9'/><path d='m8.5 12.2 2.4 2.4 4.6-4.9'/>",
+        ["product-status"] = "<path d='M21 8 12 3 3 8v8l9 5 9-5z'/><path d='m3 8 9 5 9-5M12 13v8'/>",
+        ["late-orders"]    = "<path d='M3 7h10v9H3z'/><path d='M13 10h4l4 3.5V16h-8z'/><circle cx='7' cy='18' r='1.8'/><circle cx='17' cy='18' r='1.8'/>",
+        ["offer-warnings"] = "<path d='M20.6 13.4 13 21a1.9 1.9 0 0 1-2.7 0l-7-7a1.9 1.9 0 0 1-.5-1.3V4.8c0-1 .8-1.8 1.8-1.8h7.9c.5 0 1 .2 1.3.5l6.8 6.8a1.9 1.9 0 0 1 0 2.7z'/><circle cx='7.8' cy='7.8' r='1.3'/>",
+        ["vat-warnings"]   = "<path d='M6 2h12v20l-3-2-3 2-3-2-3 2z'/><path d='m9.5 14.5 5-5'/><circle cx='9.6' cy='9.6' r='1'/><circle cx='14.4' cy='14.4' r='1'/>",
+        ["methodology"]    = "<path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z'/><path d='M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5'/>"
+    };
+
+    Func<string, string, Microsoft.AspNetCore.Html.IHtmlContent> Icon = (cls, key) =>
+        new Microsoft.AspNetCore.Html.HtmlString(
+            "<span class=\"" + cls + "\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" fill=\"none\" " +
+            "stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" " +
+            "stroke-linejoin=\"round\">" + iconPaths[key] + "</svg></span>");
+
+    Func<string, Microsoft.AspNetCore.Html.IHtmlContent> NavIcon = key => Icon("nav-icon", key);
+    Func<string, Microsoft.AspNetCore.Html.IHtmlContent> PageIcon = key => Icon("page-icon", key);
+}
+
+<div class="shell" id="shell">
 
     @* .rail paints the full column height; .rail-inner is what actually sticks. *@
-    <aside class="rail">
+    <aside class="rail" id="rail">
       <div class="rail-inner">
         <div class="brand">
             <img class="brand-mark" src="~/images/brand-mark.png" alt="MediaMarkt Saturn" />
@@ -21,108 +53,132 @@
 
             <button type="button" class="nav-item" role="tab" id="tab-order"
                     aria-controls="panel-order" aria-selected="true" data-module="order-report">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Order Report</span>
+                @NavIcon("order-report")
+                <span class="nav-text">Order Report</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-return"
                     aria-controls="panel-return" aria-selected="false" data-module="return-sla" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Return SLA Report</span>
+                @NavIcon("return-sla")
+                <span class="nav-text">Return SLA Report</span>
+            </button>
+
+            <button type="button" class="nav-item" role="tab" id="tab-incidents"
+                    aria-controls="panel-incidents" aria-selected="false" data-module="incidents" tabindex="-1">
+                @NavIcon("incidents")
+                <span class="nav-text">Incidents Report</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-ticket-seller"
                     aria-controls="panel-ticket-seller" aria-selected="false" data-module="ticket-seller" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Ticket &rarr; Seller</span>
+                @NavIcon("ticket-seller")
+                <span class="nav-text">Ticket &rarr; Seller</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-title-cleaner"
                     aria-controls="panel-title-cleaner" aria-selected="false" data-module="title-cleaner" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Title Cleaner</span>
+                @NavIcon("title-cleaner")
+                <span class="nav-text">Title Cleaner</span>
             </button>
 
             <div class="nav-label">Automation</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-create-return"
                     aria-controls="panel-create-return" aria-selected="false" data-module="create-return" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Create Return</span>
+                @NavIcon("create-return")
+                <span class="nav-text">Create Return</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-mark-received"
                     aria-controls="panel-mark-received" aria-selected="false" data-module="mark-received" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Mark as Received</span>
+                @NavIcon("mark-received")
+                <span class="nav-text">Mark as Received</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-product-status"
                     aria-controls="panel-product-status" aria-selected="false" data-module="product-status" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Product Status</span>
+                @NavIcon("product-status")
+                <span class="nav-text">Product Status</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-late-orders"
                     aria-controls="panel-late-orders" aria-selected="false" data-module="late-orders" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Late Order Warnings</span>
+                @NavIcon("late-orders")
+                <span class="nav-text">Late Order Warnings</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-offer-warnings"
                     aria-controls="panel-offer-warnings" aria-selected="false" data-module="offer-warnings" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Seller Offer Warnings</span>
+                @NavIcon("offer-warnings")
+                <span class="nav-text">Seller Offer Warnings</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-vat-warnings"
                     aria-controls="panel-vat-warnings" aria-selected="false" data-module="vat-warnings" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Seller VAT Warnings</span>
+                @NavIcon("vat-warnings")
+                <span class="nav-text">Seller VAT Warnings</span>
             </button>
 
             <div class="nav-label">Reference</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-methodology"
                     aria-controls="panel-methodology" aria-selected="false" data-module="methodology" tabindex="-1">
-                <span class="dot" aria-hidden="true"></span>
-                <span>Data &amp; Methodology</span>
+                @NavIcon("methodology")
+                <span class="nav-text">Data &amp; Methodology</span>
             </button>
         </nav>
 
+        @* No sign-in exists, so this names the console rather than inventing a person. *@
         <div class="rail-foot">
-            <span class="meta">v1.0</span>
-            <button type="button" class="theme-toggle" id="theme-toggle"
-                    aria-label="Toggle dark mode" title="Toggle dark mode">
-                <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
-                <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="4" />
-                    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-                </svg>
-            </button>
+            <span class="avatar" aria-hidden="true">MO</span>
+            <div class="rail-user">
+                <div class="rail-user-name">Mirakl Ops</div>
+                <div class="rail-user-role">Marketplace Reporting</div>
+            </div>
         </div>
       </div>
     </aside>
 
     <main class="main">
 
+        @* Names whatever panel is open — app.js copies the selected tab's label in here. *@
+        <header class="topbar">
+            <button type="button" class="icon-btn rail-toggle" id="rail-toggle"
+                    aria-controls="rail" aria-expanded="true"
+                    aria-label="Toggle navigation" title="Toggle navigation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" aria-hidden="true">
+                    <path d="M3 6h18M3 12h18M3 18h18" />
+                </svg>
+            </button>
+
+            <h1 class="topbar-title" id="topbar-title">Order Report</h1>
+
+            <div class="topbar-right">
+                <span class="topbar-chip">v1.0</span>
+                <button type="button" class="theme-toggle" id="theme-toggle"
+                        aria-label="Toggle dark mode" title="Toggle dark mode">
+                    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                    </svg>
+                    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4" />
+                        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <div class="main-inner">
+
         @* ================= ORDER REPORT ================= *@
         <section class="panel" id="panel-order" role="tabpanel" aria-labelledby="tab-order">
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Mirakl &middot; Report">Late Shipment &amp; Cancellation Report</h1>
-                    <p class="lede">
-                        Upload the <strong>orders</strong> export from Mirakl. The dashboard is computed in the
-                        browser, so the date filter recalculates every metric instantly. The Excel workbook
-                        contains Summary, Late Shipment Top 5, Canceled Top 5 and Data sheets, with every rate
-                        written as a live Excel formula.
-                    </p>
-                </div>
+                @PageIcon("order-report")
+                <h1>Late Shipment &amp; Cancellation Report</h1>
                 <span class="stamp" id="order-stamp"></span>
             </header>
 
@@ -130,9 +186,8 @@
                 <div class="uploader">
                     <div class="uploader-grid">
                         <label class="drop" id="order-drop">
-                            <span class="drop-step">Input</span>
                             <span class="drop-title">Orders export</span>
-                            <span class="drop-hint">Drop <code>orders.xlsx</code> here, or click to browse</span>
+                            <span class="drop-hint">.xlsx or .csv from Mirakl</span>
                             <span class="drop-file">
                                 <span class="name"></span><span class="size"></span>
                             </span>
@@ -207,18 +262,6 @@
                     <partial name="_ExportButton" model='new ExportButton("order-kpis", "Key metrics")' />
                 </div>
                 <div class="kpi-grid" id="order-kpis"></div>
-                <p class="note">
-                    <strong>Received, rejected and canceled are read from the <code>Status</code> column
-                    alone</strong> (Status = @Model.ReceivedStatus / @Model.RejectedStatus /
-                    @Model.CanceledStatus), and each rate is that count over <em>all</em> order lines.
-                    &ldquo;Late&rdquo; is the one exception: it means the shipping date is filled in and is
-                    later than the shipping deadline, so rows with no shipping date yet are excluded from the
-                    late-shipment rate denominator &mdash; they are neither late nor on time. Shipping
-                    company names are canonicalised first (from the tracking URL where there is one,
-                    otherwise from the name itself), and a carrier counts as integrated when that canonical
-                    name contains @Model.CarrierKeywordList.
-                    A single order with multiple line items counts each line separately.
-                    The Excel button on this row exports all twelve metrics, including the four shown above.
                 </p>
 
                 <div class="section-title" id="sec-volume" data-section="Volume &amp; mix">Volume &amp; status mix</div>
@@ -255,19 +298,13 @@
                     <div class="card">
                         <partial name="_ExportButton" model='new ExportButton("lateChart", "Late shipment top 5")' />
                         <h3>Late shipment &mdash; top 5</h3>
-                        <p class="sub">
-                            Sellers with the most late-shipped order lines &mdash; the percentage beside each
-                            bar is that seller&rsquo;s own late rate, over their shipped lines
-                        </p>
+                        <p class="sub">Most late-shipped lines &mdash; the percentage is that seller&rsquo;s own late rate</p>
                         <div class="chart-box"><canvas id="lateChart"></canvas></div>
                     </div>
                     <div class="card">
                         <partial name="_ExportButton" model='new ExportButton("cancelChart", "Cancellations top 5")' />
                         <h3>Cancellations &mdash; top 5</h3>
-                        <p class="sub">
-                            Sellers with the most canceled order lines &mdash; the percentage beside each bar
-                            is that seller&rsquo;s own cancellation rate, over all of their order lines
-                        </p>
+                        <p class="sub">Most canceled lines &mdash; the percentage is that seller&rsquo;s own cancellation rate</p>
                         <div class="chart-box"><canvas id="cancelChart"></canvas></div>
                     </div>
                 </div>
@@ -276,21 +313,13 @@
                 <div class="card">
                     <partial name="_ExportButton" model='new ExportButton("carrierChart", "Hours to receive by carrier")' />
                     <h3>Avg. hours to receive by carrier</h3>
-                    <p class="sub">
-                        Top 8 carriers by volume &mdash; carriers that report delivery themselves in the
-                        series colour, the ones somebody has to tick by hand in amber
-                    </p>
+                    <p class="sub">Top 8 carriers by volume &mdash; amber marks the ones ticked by hand</p>
                     <div class="chart-box"><canvas id="carrierChart"></canvas></div>
                 </div>
                 <div class="card">
                     <partial name="_ExportButton" model='new ExportButton("carrier-volume-wrap", "Order lines by carrier")' />
                     <h3>Order lines by carrier</h3>
-                    <p class="sub">
-                        How the volume splits across shipping companies &mdash; busiest first, counted over
-                        every order line rather than the delivered ones the chart above measures. Sellers type
-                        the company name by hand, so every spelling of one carrier is counted as that carrier;
-                        hover a name to see which spellings folded into it.
-                    </p>
+                    <p class="sub">Volume by shipping company, busiest first &mdash; hover a name for the spellings folded into it</p>
                     <div class="table-scroll" id="carrier-volume-wrap"></div>
                     <p class="table-note" id="carrier-volume-note" hidden></p>
                 </div>
@@ -309,13 +338,6 @@
                     <partial name="_ExportButton" model='new ExportButton("delivery-kpis", "Delivery quality")' />
                 </div>
                 <div class="kpi-grid" id="delivery-kpis"></div>
-                <p class="note">
-                    Lines the platform closed on its own as &ldquo;Received automatically&rdquo; carry a bulk
-                    system timestamp instead of a real delivery date, so every duration on this row of cards
-                    excludes them. The last card measures those lines <em>on their own</em> &mdash; the gap
-                    between it and <em>Avg. transit</em> is how far they would drag the average if they were
-                    counted, which is the reason they are not. The <em>Avg. hours to receive</em> cards under
-                    &ldquo;Key metrics&rdquo; above are the original ported metric, which does include them.
                 </p>
                 --------------------------------------------------------------------------- *@
 
@@ -323,10 +345,7 @@
                 <div class="card">
                     <partial name="_ExportButton" model='new ExportButton("cancel-class-wrap", "Outcome breakdown")' />
                     <h3>Outcome breakdown</h3>
-                    <p class="sub">
-                        Status alone cannot separate these: a canceled line may never have had a customer
-                        request behind it, and a rejected request leaves the order looking completely normal
-                    </p>
+                    <p class="sub">Status alone cannot separate these three outcomes</p>
                     <div class="table-scroll" id="cancel-class-wrap"></div>
                 </div>
 
@@ -357,22 +376,9 @@
                 <div class="card accent-green">
                     <partial name="_ExportButton" model='new ExportButton("lt-opportunity-wrap", "Sellers who could promise less")' />
                     <h3>Sellers who could promise a shorter lead time</h3>
-                    <p class="sub">
-                        One row per seller, over all of their shipped lines &mdash; shipping at least a full day
-                        earlier than promised, so shortening the promise pulls the delivery date shown on the
-                        product page forward
-                    </p>
+                    <p class="sub">Sellers shipping at least a full day earlier than they promised</p>
                     <div class="table-scroll" id="lt-opportunity-wrap"></div>
                 </div>
-                <p class="note">
-                    Everything on this table is measured across <strong>all</strong> of a seller&rsquo;s shipped
-                    order lines. <em>Promised</em> is the line-weighted average of the lead times they committed
-                    to, and the <em>suggested</em> figure comes from the 90th percentile of their shipping times
-                    rather than the average, so slow days stay inside the promise.
-                    <strong>Read the promise range before acting:</strong> a seller can promise 2 days on
-                    accessories and 15 on white goods, and a single average across the two would recommend
-                    cutting the white-goods promise far too far. Where the range is wide, take the suggestion to
-                    the seller per product group instead of applying it across the board.
                 </p>
 
                 <div class="section-title" id="sec-categories" data-section="Categories">Category performance</div>
@@ -407,17 +413,8 @@
         <section class="panel" id="panel-return" role="tabpanel" aria-labelledby="tab-return" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Mirakl &middot; Report">Return SLA Report</h1>
-                    <p class="lede">
-                        Upload the Mirakl <strong>orders</strong> export plus <strong>at least one</strong> of the two
-                        return tracking templates &mdash; a template you leave out simply contributes no rows. Rows
-                        that carry a tracking code are matched against the orders export by order
-                        number; the SLA runs for <strong>20 days</strong> from the date the return was shipped back
-                        to the seller, with an early warning at <strong>15 days</strong>. Refund time is also
-                        computed for canceled and refunded orders.
-                    </p>
-                </div>
+                @PageIcon("return-sla")
+                <h1>Return SLA Report</h1>
                 <span class="stamp" id="return-stamp"></span>
             </header>
 
@@ -497,29 +494,13 @@
                 @* What each bucket on the line above means — written by the dashboard, because the
                    day counts in it come from the server rather than from this markup. *@
                 <p class="note" id="return-consistency-note"></p>
-                <p class="note">
-                    Every return row is matched to the orders export on the <strong>bare customer order
-                    number</strong>: the templates carry <code>321097726</code> while the export carries the full
-                    <code>01259_321097726-A</code>, and the tables below show the full form the row resolved to.
-                    The SLA verdict comes from that order&rsquo;s status &mdash; a return is
-                    <strong>completed</strong> once its order reads Refused / Canceled / Refunded / Rejected, and
-                    only a return that is still open can breach the 20-day SLA or raise the 15-day warning.
-                    One customer order splits per seller into <code>&hellip;-A</code> / <code>&hellip;-B</code>, so a
-                    bare number can hit several orders; the seller id on the template decides, and where it cannot,
-                    the row is only given a verdict when every candidate agrees. Anything left undecided is listed
-                    under <em>Needs review</em> instead of being counted as a breach.
-                    Return template A has no dedicated ship-date column, so &ldquo;Talep Tarihi&rdquo; (request
-                    date) is used as the closest available proxy for the SLA start date, read day-first.
                 </p>
 
                 <div class="section-title" id="return-sec-breach" data-section="SLA breach">SLA breached &mdash; past 20 days, return not completed</div>
                 <div class="card accent-red">
                     <partial name="_ExportButton" model='new ExportButton("overdue-wrap", "SLA breach")' />
                     <h3>SLA breach</h3>
-                    <p class="sub">
-                        More than 20 days since the return was shipped, and the order still carries no closing
-                        status
-                    </p>
+                    <p class="sub">Over 20 days since the return shipped, order still open</p>
                     <div class="table-scroll" id="overdue-wrap"></div>
                 </div>
 
@@ -535,11 +516,7 @@
                 <div class="card accent-amber">
                     <partial name="_ExportButton" model='new ExportButton("review-wrap", "Needs review")' />
                     <h3>Rows that could not be resolved</h3>
-                    <p class="sub">
-                        A return whose order is not in the uploaded export, or whose bare number matches several
-                        orders that disagree, has no status to be late against &mdash; it is listed here rather
-                        than counted as a breach
-                    </p>
+                    <p class="sub">No status to be late against &mdash; listed here rather than counted as a breach</p>
                     <div class="table-scroll" id="review-wrap"></div>
                 </div>
 
@@ -563,20 +540,270 @@
             </div>
         </section>
 
+        @* ================= INCIDENTS REPORT ================= *@
+        @*
+            Two uploads because the Mirakl incident panel cannot export open and closed incidents
+            together. Either one on its own produces a report; the sections that need the other file
+            drop out rather than printing an empty table.
+        *@
+        <section class="panel" id="panel-incidents" role="tabpanel" aria-labelledby="tab-incidents" hidden>
+
+            <header class="page-head">
+                @PageIcon("incidents")
+                <h1>Incidents Report</h1>
+                <span class="stamp" id="inc-stamp"></span>
+            </header>
+
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="inc-open-drop">
+                            <span class="drop-step">Input 1</span>
+                            <span class="drop-title">Open incidents</span>
+                            <span class="drop-hint">Mirakl incident export, open filter &mdash; optional, at least one of the two</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="inc-open-file" accept=".csv,.xlsx,.xls"
+                                   aria-label="Open incidents file" />
+                        </label>
+
+                        <label class="drop" id="inc-closed-drop">
+                            <span class="drop-step">Input 2</span>
+                            <span class="drop-title">Closed incidents</span>
+                            <span class="drop-hint">Mirakl incident export, closed filter &mdash; optional, at least one of the two</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="inc-closed-file" accept=".csv,.xlsx,.xls"
+                                   aria-label="Closed incidents file" />
+                        </label>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="inc-generate">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Generate dashboard</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="inc-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="skeleton" id="inc-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Report()" />
+            </div>
+
+            <div class="results" id="inc-results" hidden>
+
+                @*
+                    "Closed from" arrives pre-filled by the dashboard from the builder's own constant:
+                    the closed export is a full history dump and only the recent part is wanted. It is
+                    an input rather than a server-side cut so widening it stays a date change.
+                *@
+                <div class="filter-bar">
+                    <div class="field">
+                        <label for="inc-open-from">Opened &mdash; from</label>
+                        <input type="date" id="inc-open-from" />
+                    </div>
+                    <div class="field">
+                        <label for="inc-open-to">Opened &mdash; to</label>
+                        <input type="date" id="inc-open-to" />
+                    </div>
+                    <div class="field">
+                        <label for="inc-closed-from">Closed &mdash; from</label>
+                        <input type="date" id="inc-closed-from" />
+                    </div>
+                    <div class="field">
+                        <label for="inc-lifecycle">Lifecycle</label>
+                        <select id="inc-lifecycle"></select>
+                    </div>
+                    <div class="field">
+                        <label for="inc-status">Status</label>
+                        <select id="inc-status"></select>
+                    </div>
+                    <div class="field">
+                        <label for="inc-reason">Reason</label>
+                        <select id="inc-reason"></select>
+                    </div>
+                    <div class="field">
+                        <label for="inc-seller">Seller</label>
+                        <select id="inc-seller"></select>
+                    </div>
+                    <div class="field">
+                        <label for="inc-waiting">Waiting on</label>
+                        <select id="inc-waiting"></select>
+                    </div>
+                    <div class="field">
+                        <label for="inc-search">Search</label>
+                        <input type="text" id="inc-search" placeholder="Order / customer / product / SKU / e-mail" />
+                    </div>
+                    <button type="button" class="btn btn-ghost" id="inc-reset">Reset</button>
+                    <span class="filter-summary" id="inc-filter-summary"></span>
+
+                    <nav class="section-nav" id="inc-section-nav" aria-label="Report sections"></nav>
+                </div>
+
+                <div class="hero" id="inc-hero"></div>
+                <p class="note" id="inc-warnings"></p>
+
+                <div class="section-title" id="inc-sec-overview" data-section="Overview">
+                    Overview
+                    <partial name="_ExportButton" model='new ExportButton("inc-kpis", "Overview", "Incidents Report")' />
+                </div>
+                <div class="kpi-grid" id="inc-kpis"></div>
+                <p class="table-note" id="inc-consistency"></p>
+
+                <div class="section-title" id="inc-sec-volume" data-section="Volume &amp; mix">Volume &amp; mix</div>
+                <div class="grid-lead">
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("inc-trend-chart", "Opened vs closed per day", "Incidents Report")' />
+                        <h3>Opened vs closed per day</h3>
+                        <p class="sub">Incidents opened, and incidents closed, by date</p>
+                        <div class="chart-box"><canvas id="inc-trend-chart"></canvas></div>
+                        <div class="chart-legend" id="inc-trend-chart-legend"></div>
+                    </div>
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("inc-lifecycle-chart", "Lifecycle mix", "Incidents Report")' />
+                        <h3>Lifecycle</h3>
+                        <p class="sub">Open, resolved awaiting closure, and closed</p>
+                        <div class="chart-box is-donut"><canvas id="inc-lifecycle-chart"></canvas></div>
+                        <div class="chart-legend" id="inc-lifecycle-chart-legend"></div>
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("inc-reason-chart", "Reason mix", "Incidents Report")' />
+                        <h3>Why incidents are raised</h3>
+                        <p class="sub">Share of incidents by reason</p>
+                        <div class="chart-box tall"><canvas id="inc-reason-chart"></canvas></div>
+                    </div>
+                    <div class="card">
+                        <partial name="_ExportButton" model='new ExportButton("inc-waiting-chart", "Who spoke last", "Incidents Report")' />
+                        <h3>Who spoke last</h3>
+                        <p class="sub">Open and resolved incidents, by the party that acted last</p>
+                        <div class="chart-box is-donut"><canvas id="inc-waiting-chart"></canvas></div>
+                        <div class="chart-legend" id="inc-waiting-chart-legend"></div>
+                    </div>
+                </div>
+
+                <div class="section-title" id="inc-sec-aging" data-section="Aging &amp; SLA">Aging &amp; SLA</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-age-chart", "Age distribution", "Incidents Report")' />
+                    <h3>How long open incidents have been open</h3>
+                    <p class="sub">Days since the incident was opened</p>
+                    <div class="chart-box"><canvas id="inc-age-chart"></canvas></div>
+                </div>
+                <div class="card accent-red">
+                    <partial name="_ExportButton" model='new ExportButton("inc-breach-wrap", "SLA breach", "Incidents Report")' />
+                    <h3>Past the breach threshold</h3>
+                    <p class="sub" id="inc-breach-sub"></p>
+                    <div class="table-scroll" id="inc-breach-wrap"></div>
+                </div>
+
+                @*
+                    The team's actual worklist. An incident between a customer and a seller is not our
+                    work; it becomes ours the moment the seller marks it resolved and we owe the
+                    verification and the closure.
+                *@
+                <div class="section-title" id="inc-sec-us" data-section="Waiting on us">Waiting on us</div>
+                <div class="card accent-amber">
+                    <partial name="_ExportButton" model='new ExportButton("inc-us-wrap", "Waiting on us", "Incidents Report")' />
+                    <h3>The seller says it is resolved</h3>
+                    <p class="sub" id="inc-us-sub"></p>
+                    <div class="table-scroll" id="inc-us-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-stale" data-section="Stale">Stale &mdash; nobody has touched them</div>
+                <div class="card accent-amber">
+                    <partial name="_ExportButton" model='new ExportButton("inc-stale-wrap", "Stale", "Incidents Report")' />
+                    <h3>No action for days</h3>
+                    <p class="sub" id="inc-stale-sub"></p>
+                    <div class="table-scroll" id="inc-stale-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-escalation" data-section="Escalation risk">Escalation risk</div>
+                <div class="card accent-red">
+                    <partial name="_ExportButton" model='new ExportButton("inc-escalation-wrap", "Escalation risk", "Incidents Report")' />
+                    <h3>Long threads and high-value orders</h3>
+                    <p class="sub" id="inc-escalation-sub"></p>
+                    <div class="table-scroll" id="inc-escalation-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-seller" data-section="Seller scorecard">Seller scorecard</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-seller-wrap", "Seller scorecard", "Incidents Report")' />
+                    <h3>One row per seller</h3>
+                    <p class="sub">Backlog, close rate and speed side by side &mdash; &ldquo;on us&rdquo; is what that seller has resolved and we have not closed</p>
+                    <div class="table-scroll is-full" id="inc-seller-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-reason" data-section="Reasons">Reason breakdown</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-reason-wrap", "Reasons", "Incidents Report")' />
+                    <h3>One row per reason</h3>
+                    <p class="sub">Which complaints are frequent, which are slow, and what they are worth</p>
+                    <div class="table-scroll" id="inc-reason-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-closing" data-section="Closing reasons">How incidents end</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-closing-wrap", "Closing reasons", "Incidents Report")' />
+                    <h3>Closing reasons</h3>
+                    <p class="sub">Closed incidents only &mdash; a cancellation is a lost order, not a resolution</p>
+                    <div class="table-scroll" id="inc-closing-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-speed" data-section="Resolution speed">Resolution speed</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-speed-wrap", "Resolution speed", "Incidents Report")' />
+                    <h3>Days to close, by seller</h3>
+                    <p class="sub" id="inc-speed-sub"></p>
+                    <div class="table-scroll" id="inc-speed-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-product" data-section="Product hotspots">Product hotspots</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-product-wrap", "Product hotspots", "Incidents Report")' />
+                    <h3>SKUs that keep coming back</h3>
+                    <p class="sub">Products carrying more than one incident, worst first</p>
+                    <div class="table-scroll" id="inc-product-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-actor" data-section="Workload">Workload</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-actor-wrap", "Workload", "Incidents Report")' />
+                    <h3>One row per account</h3>
+                    <p class="sub">Who opens, who closes and who is holding the oldest silence</p>
+                    <div class="table-scroll" id="inc-actor-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-daily" data-section="Daily trend">Daily trend</div>
+                <div class="card">
+                    <partial name="_ExportButton" model='new ExportButton("inc-daily-wrap", "Daily trend", "Incidents Report")' />
+                    <h3>Opened, closed and how the backlog moved</h3>
+                    <p class="sub">Newest day first &mdash; the running figure is the change across the filtered range, not the absolute backlog</p>
+                    <div class="table-scroll" id="inc-daily-wrap"></div>
+                </div>
+
+                <div class="section-title" id="inc-sec-review" data-section="Needs review">Needs review</div>
+                <div class="card accent-amber">
+                    <partial name="_ExportButton" model='new ExportButton("inc-review-wrap", "Needs review", "Incidents Report")' />
+                    <h3>Rows the export contradicts itself on</h3>
+                    <p class="sub">Listed rather than corrected &mdash; the figures above still count them</p>
+                    <div class="table-scroll" id="inc-review-wrap"></div>
+                </div>
+
+                <footer class="page-foot">Marketplace Reporting &middot; Incidents Report</footer>
+            </div>
+        </section>
+
         @* ================= TICKET -> SELLER ================= *@
         <section class="panel" id="panel-ticket-seller" role="tabpanel" aria-labelledby="tab-ticket-seller" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Mirakl &middot; Lookup">Ticket &rarr; Seller</h1>
-                    <p class="lede">
-                        Upload the Oracle <strong>case list</strong> and the Mirakl <strong>orders</strong> export.
-                        Cases in an <strong>HQ queue</strong> are matched to the orders file on their order number,
-                        and the list comes back as case number, order number, subject, seller and queue. A customer
-                        order that split across sellers (<code>&hellip;-A</code> / <code>&hellip;-B</code>) shows the
-                        case once per seller rather than picking one, so the right seller can be chosen by hand.
-                    </p>
-                </div>
+                @PageIcon("ticket-seller")
+                <h1>Ticket &rarr; Seller</h1>
                 <span class="stamp" id="ts-stamp"></span>
             </header>
 
@@ -641,15 +868,6 @@
 
                 <div class="section-title">Overview</div>
                 <div class="kpi-grid" id="ts-kpis"></div>
-                <p class="note">
-                    Only cases whose <code>Kuyruk</code> names an <strong>HQ</strong> queue are listed
-                    (&ldquo;TR MM HQ MediaMarkt Pazaryeri&rdquo;, &ldquo;TR MM HQ Customer Care&rdquo;); everything
-                    in the call-centre, outbound and unassigned queues is left out, including from the Excel export.
-                    Cases are counted by case number, not by row: an order split across two sellers produces two
-                    rows for one case. The case list marks an empty cell with the text &ldquo;Değer Yok&rdquo; and
-                    writes a bare <code>0</code> when no order is attached &mdash; both count as
-                    <strong>no order number</strong> rather than as a failed lookup. A case with no subject of its
-                    own falls back to its category chain.
                 </p>
 
                 <div class="section-title">
@@ -680,9 +898,8 @@
         <section class="panel" id="panel-title-cleaner" role="tabpanel" aria-labelledby="tab-title-cleaner" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Catalogue &middot; Titles">Title Cleaner</h1>
-                </div>
+                @PageIcon("title-cleaner")
+                <h1>Title Cleaner</h1>
                 <span class="stamp" id="tc-stamp"></span>
             </header>
 
@@ -690,7 +907,6 @@
                 <div class="uploader">
                     <div class="uploader-grid">
                         <label class="drop" id="tc-drop">
-                            <span class="drop-step">Input</span>
                             <span class="drop-title">Ürün dosyası</span>
                             <span class="drop-hint">Başlık + özellik kolonları &mdash; .xlsx or .csv</span>
                             <span class="drop-file"><span class="name"></span><span class="size"></span></span>
@@ -789,11 +1005,7 @@
                    of the set it sits under. *@
                 <div class="tc-subcard">
                     <h4>Referans listesi yükle</h4>
-                    <p class="sub">
-                        Hücrenin yazmadığı uzun yazımlar için katalog — hücrede
-                        &quot;Intel Core Ultra 5&quot; yazarken başlıkta &quot;Ultra5 125H&quot;
-                        geçmesi. Bir kayıt yalnızca hücrenin değerini içeriyorsa kullanılır.
-                    </p>
+                    <p class="sub">Hücrede yazmayan uzun yazımlar için katalog &mdash; hücre &quot;Intel Core Ultra 5&quot;, başlık &quot;Ultra5 125H&quot;</p>
                     <div class="filter-bar is-plain">
                         @* "örn:" is not decoration. These two boxes sit empty and their examples name
                            the very values the list is usually built from, so without it they read as
@@ -937,16 +1149,10 @@
         <section class="panel" id="panel-create-return" role="tabpanel" aria-labelledby="tab-create-return" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Mirakl &middot; Automation">Create Return</h1>
-                    <p class="lede">
-                        Files a return on the Mirakl back office for every row of the prepared list, by
-                        driving a real browser window. Unlike the report modules this one
-                        <strong>writes to the marketplace</strong> &mdash; each row it completes creates a
-                        return that can only be undone by hand, so check the list before starting. Progress
-                        streams in below as each order is processed.
-                    </p>
-                </div>
+                @PageIcon("create-return")
+                <h1>Create Return</h1>
+                <span class="badge red"
+                      title="Every row this completes files a return on Mirakl that can only be undone by hand.">Writes to Mirakl</span>
                 <span class="stamp" id="cr-stamp"></span>
             </header>
 
@@ -974,13 +1180,6 @@
                     <strong>Error</strong>
                     <span class="msg"></span>
                 </div>
-
-                <p class="note">
-                    Mirakl signs in through Google SSO, which cannot be scripted. <strong>Open login
-                    window</strong> launches Chrome on the order list &mdash; sign in there, then click
-                    <strong>Save session</strong> and the cookies are encrypted to your Windows user account
-                    and reused by every later run. Chrome is started on demand, so the first click takes a
-                    few seconds.
                 </p>
             </div>
 
@@ -1049,15 +1248,6 @@
                         <span class="msg"></span>
                     </div>
                 </div>
-                <p class="note">
-                    Both templates are filtered to rows that carry a real tracking code and fall inside the
-                    date range, orders that appear twice are dropped entirely, and anything the returns
-                    export already covers is left out. What survives is matched against the orders export to
-                    get the full <code>01259_311911494-A</code> form the automation needs. A request the
-                    marketplace has already <strong>cancelled</strong>, and an order the orders export reports
-                    as <code>Canceled</code>, are both dropped there &mdash; neither can take a return, so
-                    filing one would only cost a failed page. Nothing is uploaded anywhere and nothing is
-                    stored &mdash; leaving this page discards it.
                 </p>
             </div>
 
@@ -1073,10 +1263,7 @@
                 </div>
                 <div class="card">
                     <h3>Each step, and what survived it</h3>
-                    <p class="sub">
-                        The same sequence that used to be done by hand &mdash; read left to right, every drop
-                        is the gap between two columns
-                    </p>
+                    <p class="sub">The same sequence that used to be done by hand</p>
                     <div class="table-scroll is-full" id="cr-funnel-wrap"></div>
                 </div>
 
@@ -1108,10 +1295,7 @@
                 </div>
                 <div class="card accent-amber">
                     <h3>Candidates that were dropped, and why</h3>
-                    <p class="sub">
-                        Only rows that got past the tracking-code and date filters appear here &mdash; those two
-                        drop thousands of rows and are reported as counts in the table above instead
-                    </p>
+                    <p class="sub">Only rows past the tracking-code and date filters</p>
                     <div class="table-scroll" id="cr-excluded-wrap"></div>
                 </div>
             </div>
@@ -1130,20 +1314,13 @@
                     </div>
                     <pre class="console" id="cr-console"></pre>
                 </div>
-                <p class="note">
-                    An order that fails is screenshotted to <code>artifacts/create-return</code> beside the
-                    executable and the run moves on to the next one &mdash; a batch is usually mostly good
-                    rows, and the screenshot is what tells an expired session apart from a changed form.
                 </p>
             </div>
 
             <div class="section-title">What gets filled in</div>
             <div class="card">
                 <h3>Every return is filed the same way</h3>
-                <p class="sub">
-                    Only the order and its tracking number come from the list &mdash; the rest of the form is
-                    fixed, and these are the values to change when the module is tailored further
-                </p>
+                <p class="sub">Only the order and its tracking number come from the list</p>
                 <div class="table-scroll is-full">
                     <table>
                         <thead><tr><th>Field</th><th>Value</th><th>Source</th></tr></thead>
@@ -1158,10 +1335,6 @@
                         </tbody>
                     </table>
                 </div>
-                <p class="note">
-                    The form has no stable ids, so every field is found through its visible English label.
-                    That is the part that breaks when Mirakl changes its UI &mdash; a failed run whose
-                    screenshot shows a perfectly normal page usually means a label was renamed.
                 </p>
             </div>
 
@@ -1172,15 +1345,10 @@
         <section class="panel" id="panel-mark-received" role="tabpanel" aria-labelledby="tab-mark-received" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Mirakl &middot; Automation">Mark as Received</h1>
-                    <p class="lede">
-                        Opens each order on the Mirakl back office and clicks every
-                        <strong>Mark as received</strong> button it finds, confirming where Mirakl asks for
-                        it. Like Create Return, this <strong>writes to the marketplace</strong> and cannot be
-                        undone from here &mdash; check the list before starting.
-                    </p>
-                </div>
+                @PageIcon("mark-received")
+                <h1>Mark as Received</h1>
+                <span class="badge red"
+                      title="Confirms receipt on Mirakl for every order in the list. This cannot be undone from here.">Writes to Mirakl</span>
                 <span class="stamp" id="mr-stamp"></span>
             </header>
 
@@ -1203,9 +1371,6 @@
                         </button>
                     </div>
                 </div>
-                <p class="note">
-                    Shares the same Mirakl login as Create Return &mdash; sign in once from either panel and
-                    both use it.
                 </p>
             </div>
 
@@ -1214,7 +1379,6 @@
                 <div class="uploader">
                     <div class="uploader-grid">
                         <label class="drop" id="mr-drop">
-                            <span class="drop-step">Input</span>
                             <span class="drop-title">Order ID list</span>
                             <span class="drop-hint">.txt &mdash; one order ID per line</span>
                             <span class="drop-file"><span class="name"></span><span class="size"></span></span>
@@ -1241,11 +1405,6 @@
                         <span class="msg"></span>
                     </div>
                 </div>
-                <p class="note">
-                    Picking a file clears the pasted text and vice versa &mdash; only one source is used per
-                    run. Blank lines and lines starting with <code>#</code> are ignored; duplicate order IDs
-                    are counted once. Very large batches are rejected outright rather than silently
-                    truncated &mdash; run them in a few smaller batches instead.
                 </p>
             </div>
 
@@ -1263,9 +1422,6 @@
                     </div>
                     <pre class="console" id="mr-console"></pre>
                 </div>
-                <p class="note">
-                    An order that fails is screenshotted to <code>artifacts/mark-received</code> beside the
-                    executable and the run moves on to the next one.
                 </p>
             </div>
 
@@ -1276,13 +1432,9 @@
         <section class="panel" id="panel-product-status" role="tabpanel" aria-labelledby="tab-product-status" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Mirakl &middot; Automation">Product Status</h1>
-                    <p class="lede">
-                        Reads how many products each seller has in each catalogue status on Mirakl. Read-only
-                        &mdash; nothing is written to the marketplace.
-                    </p>
-                </div>
+                @PageIcon("product-status")
+                <h1>Product Status</h1>
+                <span class="badge green">Read-only</span>
                 <span class="stamp" id="ps-stamp"></span>
             </header>
 
@@ -1312,7 +1464,6 @@
                 <div class="uploader">
                     <div class="uploader-grid">
                         <label class="drop" id="ps-drop">
-                            <span class="drop-step">Input</span>
                             <span class="drop-title">Seller list</span>
                             <span class="drop-hint">.xlsx or .csv &mdash; names in the first column</span>
                             <span class="drop-file"><span class="name"></span><span class="size"></span></span>
@@ -1339,8 +1490,6 @@
                         <span class="msg"></span>
                     </div>
                 </div>
-                <p class="note">
-                    The file's first row is skipped as a header. Names have to match Mirakl's spelling exactly.
                 </p>
             </div>
 
@@ -1378,9 +1527,10 @@
         <section class="panel" id="panel-late-orders" role="tabpanel" aria-labelledby="tab-late-orders" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="WhatsApp &middot; Automation">Late Order Warnings</h1>
-                </div>
+                @PageIcon("late-orders")
+                <h1>Late Order Warnings</h1>
+                <span class="badge red"
+                      title="Sends WhatsApp messages to sellers. A sent message cannot be recalled.">Sends WhatsApp</span>
                 <span class="stamp" id="lo-stamp"></span>
             </header>
 
@@ -1481,7 +1631,6 @@
                 <div class="uploader">
                     <div class="uploader-grid">
                         <label class="drop" id="lo-drop">
-                            <span class="drop-step">Input</span>
                             <span class="drop-title">Orders export</span>
                             <span class="drop-hint">Mirakl orders export (.xlsx or .csv)</span>
                             <span class="drop-file"><span class="name"></span><span class="size"></span></span>
@@ -1639,9 +1788,10 @@
         <section class="panel" id="panel-offer-warnings" role="tabpanel" aria-labelledby="tab-offer-warnings" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Outlook &middot; Automation">Seller Offer Warnings</h1>
-                </div>
+                @PageIcon("offer-warnings")
+                <h1>Seller Offer Warnings</h1>
+                <span class="badge red"
+                      title="Sends mail to sellers through Outlook. A sent mail cannot be recalled.">Sends mail</span>
                 <span class="stamp" id="ow-stamp"></span>
             </header>
 
@@ -1952,9 +2102,10 @@
         <section class="panel" id="panel-vat-warnings" role="tabpanel" aria-labelledby="tab-vat-warnings" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Outlook &middot; Automation">Seller VAT Warnings</h1>
-                </div>
+                @PageIcon("vat-warnings")
+                <h1>Seller VAT Warnings</h1>
+                <span class="badge red"
+                      title="Sends mail to sellers through Outlook. A sent mail cannot be recalled.">Sends mail</span>
                 <span class="stamp" id="vw-stamp"></span>
             </header>
 
@@ -2264,15 +2415,8 @@
         <section class="panel" id="panel-methodology" role="tabpanel" aria-labelledby="tab-methodology" hidden>
 
             <header class="page-head">
-                <div>
-                    <h1 data-eyebrow="Reference">Data &amp; Methodology</h1>
-                    <p class="lede">
-                        Which column every number on these dashboards comes from, how it is calculated, and
-                        what the calculation deliberately excludes. The thresholds and code lists on this page
-                        are read straight from the code that performs the calculation, so they cannot drift
-                        away from what the reports actually do.
-                    </p>
-                </div>
+                @PageIcon("methodology")
+                <h1>Data &amp; Methodology</h1>
                 <span class="stamp">Reference</span>
             </header>
 
@@ -2720,6 +2864,57 @@
                     </div>
                 </div>
 
+                @* ---------- incidents module ---------- *@
+
+                <div class="section-title">Incidents module</div>
+
+                <div class="card">
+                    <h3>Incident rules</h3>
+                    <div class="table-scroll is-full">
+                        <table>
+                            <thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Two uploads</strong></td>
+                                    <td>The Mirakl incident panel cannot export open and closed incidents together, so both downloads are read and reported over as one set. Either may be omitted; the sections that need the missing one hide themselves.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Lifecycle</strong></td>
+                                    <td>Derived from the dates, never from <code>Status</code> &mdash; that column is free text Mirakl extends whenever it adds a state. A <code>Closed on</code> date means <strong>closed</strong>; a <code>Closing reason</code> without one means <strong>resolved</strong> (the seller answered and the closure is not stamped yet); anything else is <strong>open</strong>. Resolved incidents stay out of the open backlog and the aging tables.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Waiting on us</strong></td>
+                                    <td><strong>An open incident is never ours.</strong> While it is open the thread runs between the customer and the seller and our team owes nothing. Our work starts when the seller marks it <em>resolved</em>: from then on the verification and the closure are ours, whoever typed the last message. Only then does &ldquo;Last action by&rdquo; matter &mdash; on an open incident the customer speaking last puts it <em>on the seller</em>, and the seller speaking last puts it <em>on the customer</em>.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Aging</strong></td>
+                                    <td>Measured from <code>Opened on</code> to the moment the dashboard was built. Warning at <strong>@Model.IncidentWarningDays days</strong>, breach at <strong>@Model.IncidentBreachDays days</strong>. An incident nobody has touched for <strong>@Model.IncidentStaleDays days</strong> is stale whatever its age, and a thread of <strong>@Model.IncidentHotThreadMessages messages</strong> or more counts as an escalation risk.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Closed history cut-off</strong></td>
+                                    <td>The closed export is a full history dump going back about a year. The dashboard pre-fills <em>Closed &mdash; from</em> with <strong>@Model.IncidentClosedFrom</strong> and says how many older rows that hides. Nothing is dropped server-side, so clearing the date brings the whole history back.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>No money</strong></td>
+                                    <td>The export's <code>Quantity</code>, order-total and <code>Currency</code> columns are deliberately not read. They describe the <em>order</em> rather than the incident &mdash; the same total repeats on every incident raised against one order, and on a split order on both sellers' halves &mdash; and this report is a queue rather than a financial one. They are not required either: the module requires only the columns it reads, so an export trimmed of them still works.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Who acted</strong></td>
+                                    <td>The role column cannot separate a person at the operator from the automation posting under the same role, so the user decides: <code>@Model.IncidentOperatorMailDomain</code> is the operator, the literal <code>Operator API</code> is automation, a blank user is the customer, and any other mailbox is the seller's.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Resolution speed</strong></td>
+                                    <td>Ranked only for sellers with at least <strong>@Model.IncidentMinSampleSize closed incidents</strong>. A seller below that is left out rather than ranked on a single case.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Required columns</strong></td>
+                                    <td>@foreach (var column in Model.IncidentColumns) {<text><code>@column</code> </text>}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 @* ---------- limits ---------- *@
 
                 <div class="section-title">What this report cannot tell you</div>
@@ -2762,7 +2957,11 @@
             </div>
         </section>
 
+        </div>
     </main>
+
+    @* Only rendered under the mobile drawer; display:none at every other width. *@
+    <div class="rail-scrim" id="rail-scrim"></div>
 </div>
 
 @section Scripts {
@@ -2770,6 +2969,7 @@
     <script src="~/js/app.js" asp-append-version="true"></script>
     <script src="~/js/order-report.js" asp-append-version="true"></script>
     <script src="~/js/return-sla-report.js" asp-append-version="true"></script>
+    <script src="~/js/incidents-report.js" asp-append-version="true"></script>
     <script src="~/js/ticket-seller.js" asp-append-version="true"></script>
     <script src="~/js/title-cleaner.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>

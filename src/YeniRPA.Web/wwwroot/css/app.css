@@ -1,17 +1,56 @@
 /* ==========================================================================
-   Marketplace Reporting — design system
+   Marketplace Reporting — design system  ·  "Aurora"
 
-   Direction: a monitoring console. Calm and hairline-precise by default, loud
-   only where the data is bad. Figures are set in IBM Plex Mono with tabular
-   numerals so columns of numbers line up and stop shifting as they update.
+   Direction: a violet-tinted operations console. The rail is a deep violet
+   panel in BOTH themes; content sits on a faintly tinted canvas in cards that
+   are held up by a coloured shadow rather than outlined by a border. Status
+   is carried by a tinted surface, not a hairline edge.
 
-   Theme contract: every colour is a token on bare :root (the light palette).
-   The dark palette is redefined twice — once under prefers-color-scheme for
-   users who never touch the toggle, once under [data-theme="dark"] so the
-   toggle wins in both directions.
+   Three typefaces, each with one job:
+     Bricolage Grotesque  headings, brand, section titles and the big standalone
+                          figures — proportional, because a hero number is read,
+                          not compared down a column.
+     IBM Plex Sans        body, labels, controls.
+     IBM Plex Mono        anything in a column — table cells, axis ticks — with
+                          tabular numerals so figures stop shifting as they update.
+
+   Colour contract:
+     * Every colour is a token on bare :root (the light palette). The dark
+       palette is redefined twice — once under prefers-color-scheme for users
+       who never touch the toggle, once under [data-theme="dark"] so the toggle
+       wins in both directions. THE TWO BLOCKS MUST STAY IDENTICAL; a test
+       (AppCssThemeTests) parses this file and fails if they drift.
+     * Tokens stay #rrggbb. RPA.palette() reads them straight out of
+       getComputedStyle and RPA.alpha() picks them apart by hand, so a token
+       written as oklch()/color-mix() would reach the charts unparsed.
+     * --series-1..8 and --mark-* are a VALIDATED categorical palette and the
+       slot ORDER is the colour-blindness safety mechanism, not decoration.
+       Re-run the dataviz validator before touching either.
    ========================================================================== */
 
 /* ---------- fonts ---------- */
+
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('../lib/fonts/bricolage-grotesque-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  /* Verified to carry ğ Ğ ş Ş ı İ — a heading face that dropped them would fall back
+     mid-word on half the seller names in the data. */
+  src: url('../lib/fonts/bricolage-grotesque-latin-ext-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
 
 @font-face {
   font-family: 'IBM Plex Sans VF';
@@ -70,6 +109,7 @@
 :root {
   --font-sans: 'IBM Plex Sans VF', ui-sans-serif, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --font-display: 'Bricolage Grotesque', 'IBM Plex Sans VF', ui-sans-serif, 'Segoe UI', system-ui, sans-serif;
 
   /* One spacing rhythm for the whole app; components pick a step rather than a number. */
   --s-1: 4px;
@@ -81,13 +121,23 @@
   --s-7: 44px;
   --s-8: 64px;
 
-  --r-xs: 3px;
-  --r-sm: 6px;
-  --r:    10px;
-  --r-lg: 14px;
-  --r-xl: 20px;
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r:    14px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+  --r-pill: 999px;
 
-  --rail-w: 236px;
+  --rail-w: 248px;
+  --rail-w-mini: 68px;
+  --topbar-h: 60px;
+
+  /* The sticky deck. .filter-bar parks under the topbar, and a section heading has to clear BOTH or
+     it scrolls underneath when a section chip jumps to it.
+     --filterbar-h is MEASURED and republished by initSectionNav (the bar wraps to a different height
+     per module and per width); the value here is only the pre-measurement fallback. */
+  --filterbar-h: 118px;
+  --deck-h: calc(var(--topbar-h) + var(--filterbar-h));
 
   --dur:  .16s;
   --ease: cubic-bezier(.2, .8, .3, 1);
@@ -118,76 +168,90 @@
 /* ---------- tokens: light ---------- */
 
 :root {
-  --bg:            #EDF1F6;
-  --bg-glow-1:     rgba(11, 95, 196, .07);
-  --bg-glow-2:     rgba(74, 58, 167, .05);
-  --grain:         .018;
+  --bg:            #F5F4FB;
 
   --surface:       #FFFFFF;
-  --surface-2:     #F6F8FB;
-  --surface-3:     #EAF0F6;
+  --surface-2:     #FAF9FE;
+  --surface-3:     #F1EFFA;
 
-  --ink:           #0C141C;
-  --ink-2:         #46586A;
-  --ink-3:         #7A8B9C;
+  --ink:           #191627;
+  --ink-2:         #5B5578;
+  --ink-3:         #918BAC;
 
-  --line:          #DEE5EC;
-  --line-strong:   #C3CFDA;
+  --line:          #E9E6F5;
+  --line-strong:   #D6D1EA;
 
-  --accent:        #0B5FC4;
+  --accent:        #6D3BEB;
   --accent-ink:    #FFFFFF;
-  --accent-soft:   #E4EEFC;
-  --accent-glow:   rgba(11, 95, 196, .20);
+  --accent-soft:   #EFEAFD;
+  --accent-glow:   rgba(109, 59, 235, .20);
 
-  --red:           #C0342E;
-  --red-soft:      #FBE8E7;
-  --amber:         #96590A;
-  --amber-soft:    #FBF0DA;
-  --green:         #0A6B45;
-  --green-soft:    #DDF3E8;
+  /* Text-grade status colours, measured against their own -soft background at 4.5:1 and against
+     the surface. Distinct from --mark-* above, which fill bars and arcs. */
+  --red:           #C41F50;
+  --red-soft:      #FDEAF0;
+  --amber:         #9A5B00;
+  --amber-soft:    #FFF2E0;
+  --green:         #0A7A55;
+  --green-soft:    #E1F7EE;
 
-  /* A card is a lit surface: hairline ring, a highlight along its top edge, one soft shadow. */
-  --hi:      inset 0 1px 0 rgba(255, 255, 255, .9);
-  --e-1:     0 1px 2px rgba(12, 20, 28, .05);
-  --e-2:     0 2px 4px rgba(12, 20, 28, .04), 0 14px 30px -18px rgba(12, 20, 28, .30);
+  /* The rail is a deep violet panel in BOTH themes — it is what stops the console reading as a
+     white admin template, and it gives the light theme somewhere for the eye to rest. */
+  --rail-bg:       #1E1638;
+  --rail-bg-2:     #2A1E4E;
+  --rail-ink:      #F2EFFF;
+  --rail-ink-2:    #A79BD4;
+  --rail-active:   #C4B0FF;
+
+  /* Cards are held up by a violet-tinted shadow instead of outlined by a ring: the colour is what
+     makes the elevation read as deliberate rather than as a default box-shadow. */
+  --e-1:     0 1px 2px rgba(25, 22, 39, .06);
+  --e-2:     0 10px 30px -12px rgba(109, 59, 235, .22), 0 3px 8px -4px rgba(25, 22, 39, .06);
+  --e-3:     0 18px 44px -16px rgba(109, 59, 235, .30), 0 4px 12px -6px rgba(25, 22, 39, .08);
   --shadow:  var(--e-2);
 }
 
 /* ---------- tokens: dark ---------- */
 
-/* The dark palette is the one this app is designed around: near-black ink, layered surfaces, a
-   single luminous accent, and colour that only rises when the data is bad. It is declared twice —
-   once for people who never touch the toggle, once for the toggle itself. */
+/* The same layout in a deep violet dark, for people who read the console for long stretches.
+   The series steps are the dark column of the validated palette — the same eight hues re-stepped
+   for a dark surface, not an automatic flip of the light ones.
+
+   DECLARED TWICE, and the two bodies must stay identical: once for people who never touch the
+   toggle, once for the toggle itself. AppCssThemeTests fails the build if they drift. */
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg:          #080B10;
-    --bg-glow-1:   rgba(77, 163, 255, .10);
-    --bg-glow-2:   rgba(122, 92, 255, .07);
-    --grain:       .030;
+    --bg:          #0D0B16;
 
-    --surface:     #10151C;
-    --surface-2:   #151C25;
-    --surface-3:   #1B242F;
+    --surface:     #171432;
+    --surface-2:   #1D1A3C;
+    --surface-3:   #262247;
 
-    --ink:         #E8F0F8;
-    --ink-2:       #9FB2C4;
-    --ink-3:       #6A7E92;
+    --ink:         #EBE8F7;
+    --ink-2:       #A49DC4;
+    --ink-3:       #746C96;
 
-    --line:        #1E2A36;
-    --line-strong: #2C3B4A;
+    --line:        #272348;
+    --line-strong: #383260;
 
-    --accent:      #4DA3FF;
-    --accent-ink:  #04101C;
-    --accent-soft: #12243A;
-    --accent-glow: rgba(77, 163, 255, .30);
+    --accent:      #9B7BFF;
+    --accent-ink:  #120E23;
+    --accent-soft: #241E45;
+    --accent-glow: rgba(155, 123, 255, .28);
 
-    --red:         #FF6B6B;
-    --red-soft:    #2A1418;
-    --amber:       #F5B544;
-    --amber-soft:  #2A2011;
-    --green:       #3DD68C;
-    --green-soft:  #0E2A20;
+    --red:         #FF6B95;
+    --red-soft:    #2E1424;
+    --amber:       #FFC061;
+    --amber-soft:  #2E2214;
+    --green:       #3EDCA0;
+    --green-soft:  #112E24;
+
+    --rail-bg:     #16122E;
+    --rail-bg-2:   #201A47;
+    --rail-ink:    #F2EFFF;
+    --rail-ink-2:  #A79BD4;
+    --rail-active: #C4B0FF;
 
     --series-1: #3987E5;
     --series-2: #D95926;
@@ -197,42 +261,44 @@
     --series-6: #008300;
     --series-7: #9085E9;
     --series-8: #E66767;
-
-    --hi:      inset 0 1px 0 rgba(255, 255, 255, .045);
-    --e-1:     0 1px 2px rgba(0, 0, 0, .5);
-    --e-2:     0 2px 6px rgba(0, 0, 0, .45), 0 20px 44px -26px rgba(0, 0, 0, .95);
+    --e-1:     0 1px 2px rgba(0, 0, 0, .40);
+    --e-2:     0 10px 30px -12px rgba(0, 0, 0, .60), 0 3px 8px -4px rgba(0, 0, 0, .45);
+    --e-3:     0 18px 44px -16px rgba(0, 0, 0, .70), 0 4px 12px -6px rgba(0, 0, 0, .50);
     --shadow:  var(--e-2);
   }
 }
 
 :root[data-theme="dark"] {
-  --bg:          #080B10;
-  --bg-glow-1:   rgba(77, 163, 255, .10);
-  --bg-glow-2:   rgba(122, 92, 255, .07);
-  --grain:       .030;
+  --bg:          #0D0B16;
 
-  --surface:     #10151C;
-  --surface-2:   #151C25;
-  --surface-3:   #1B242F;
+  --surface:     #171432;
+  --surface-2:   #1D1A3C;
+  --surface-3:   #262247;
 
-  --ink:         #E8F0F8;
-  --ink-2:       #9FB2C4;
-  --ink-3:       #6A7E92;
+  --ink:         #EBE8F7;
+  --ink-2:       #A49DC4;
+  --ink-3:       #746C96;
 
-  --line:        #1E2A36;
-  --line-strong: #2C3B4A;
+  --line:        #272348;
+  --line-strong: #383260;
 
-  --accent:      #4DA3FF;
-  --accent-ink:  #04101C;
-  --accent-soft: #12243A;
-  --accent-glow: rgba(77, 163, 255, .30);
+  --accent:      #9B7BFF;
+  --accent-ink:  #120E23;
+  --accent-soft: #241E45;
+  --accent-glow: rgba(155, 123, 255, .28);
 
-  --red:         #FF6B6B;
-  --red-soft:    #2A1418;
-  --amber:       #F5B544;
-  --amber-soft:  #2A2011;
-  --green:       #3DD68C;
-  --green-soft:  #0E2A20;
+  --red:         #FF6B95;
+  --red-soft:    #2E1424;
+  --amber:       #FFC061;
+  --amber-soft:  #2E2214;
+  --green:       #3EDCA0;
+  --green-soft:  #112E24;
+
+  --rail-bg:     #16122E;
+  --rail-bg-2:   #201A47;
+  --rail-ink:    #F2EFFF;
+  --rail-ink-2:  #A79BD4;
+  --rail-active: #C4B0FF;
 
   --series-1: #3987E5;
   --series-2: #D95926;
@@ -242,10 +308,9 @@
   --series-6: #008300;
   --series-7: #9085E9;
   --series-8: #E66767;
-
-  --hi:      inset 0 1px 0 rgba(255, 255, 255, .045);
-  --e-1:     0 1px 2px rgba(0, 0, 0, .5);
-  --e-2:     0 2px 6px rgba(0, 0, 0, .45), 0 20px 44px -26px rgba(0, 0, 0, .95);
+  --e-1:     0 1px 2px rgba(0, 0, 0, .40);
+  --e-2:     0 10px 30px -12px rgba(0, 0, 0, .60), 0 3px 8px -4px rgba(0, 0, 0, .45);
+  --e-3:     0 18px 44px -16px rgba(0, 0, 0, .70), 0 4px 12px -6px rgba(0, 0, 0, .50);
   --shadow:  var(--e-2);
 }
 
@@ -258,37 +323,29 @@ html, body { height: 100%; }
 /* The section chips scroll the page; without this they teleport. */
 html { scroll-behavior: smooth; }
 
+/* Two very wide, very faint colour washes over the tinted ground. They are fixed rather than scrolled
+   so the page reads as one lit room instead of a gradient sliding past — and they are weak enough that
+   a white card still separates from the page by its shadow alone. */
 body {
   margin: 0;
+  background:
+    radial-gradient(1200px 720px at 12% -10%, var(--accent-soft), transparent 60%),
+    radial-gradient(900px 620px at 96% 4%, var(--surface-3), transparent 62%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-
-  /* Two very faint pools of light instead of one flat fill: the page reads as a lit surface
-     rather than a colour, and the cards on it gain somewhere to sit. Fixed, so they stay put
-     while a long report scrolls past. */
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(1100px 680px at 8% -10%, var(--bg-glow-1), transparent 62%),
-    radial-gradient(900px 720px at 102% 104%, var(--bg-glow-2), transparent 60%);
-  background-attachment: fixed, fixed;
-  background-repeat: no-repeat, no-repeat;
 }
 
-/* A grain layer over the whole page. Fine enough to be felt rather than seen — it stops the large
-   dark areas from banding and gives the surfaces a physical quality. Inline SVG, so it costs no
-   request and the app keeps its "no external runtime dependencies" property. */
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  opacity: var(--grain);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+/* Headings and the brand wear the display face; figures do not — see the file header. */
+h1, h2, h3, .brand-title, .section-title, .page-head h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -.018em;
 }
 
 :focus-visible {
@@ -315,14 +372,35 @@ body::after {
   min-height: 100vh;
 }
 
+/* Collapsed rail: the same column, narrowed to its icons. The state lives on <html> so the inline
+   script in _Layout can apply it before first paint — a class set from app.js would show the rail
+   at full width and snap it shut. */
+:root[data-rail="mini"] .shell { --rail-w: var(--rail-w-mini); }
+
 /* --- left rail --- */
 
-/* The rail itself stretches the whole grid column so its surface colour reaches the
-   bottom of a long dashboard; .rail-inner is the part that actually sticks. */
+/* A deep violet panel in BOTH themes. Anchoring the app to one dark edge is what stops it reading as
+   a white admin template, and it gives the light theme a place for the eye to rest between reports.
+   It stretches the full grid column so its surface reaches the bottom of a long dashboard;
+   .rail-inner is the part that actually sticks. */
 .rail {
-  background: color-mix(in srgb, var(--surface) 70%, var(--bg));
-  border-right: 1px solid var(--line);
+  background: linear-gradient(178deg, var(--rail-bg-2), var(--rail-bg) 42%);
+  color: var(--rail-ink);
+  z-index: 50;
 }
+
+/* One hairline of light down the inside edge, so the panel has a lit edge rather than a hard cut. */
+.rail::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--rail-active), transparent);
+  opacity: .28;
+  pointer-events: none;
+}
+
+.rail { position: relative; }
 
 .rail-inner {
   position: sticky;
@@ -330,19 +408,21 @@ body::after {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 20px 18px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  flex: none;
+  height: var(--topbar-h);
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
 }
 
 .brand-mark {
-  width: 32px; height: 32px;
+  width: 30px; height: 30px;
   flex: none;
   border-radius: var(--r-sm);
   /* The file is a square crop of the pinwheel, so nothing is cropped away here — the rule stays as
@@ -352,113 +432,148 @@ body::after {
 
 .brand-text { min-width: 0; }
 .brand-title {
-  font-size: .84rem; font-weight: 600; letter-spacing: -.01em;
+  font-size: .88rem; font-weight: 650; letter-spacing: -.015em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .brand-sub {
-  font-family: var(--font-mono);
-  font-size: .62rem; text-transform: uppercase; letter-spacing: .1em;
-  color: var(--ink-3);
+  font-size: .68rem;
+  color: var(--rail-ink-2);
+  white-space: nowrap;
 }
 
+:root[data-rail="mini"] .brand { justify-content: center; padding: 0; }
+:root[data-rail="mini"] .brand-text { display: none; }
+
 .nav {
-  padding: 14px 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 12px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: var(--surface);
 }
 
 .nav-label {
-  font-family: var(--font-mono);
-  font-size: .6rem; text-transform: uppercase; letter-spacing: .12em;
-  color: var(--ink-3);
-  padding: 6px 8px 8px;
+  font-size: .66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--rail-ink-2);
+  opacity: .72;
+  padding: 14px 10px 6px;
 }
+.nav-label:first-child { padding-top: 2px; }
 
 .nav-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   width: 100%;
-  padding: 9px 10px 9px 12px;
+  padding: 10px 12px;
   border: 0;
   border-radius: var(--r);
   background: transparent;
-  color: var(--ink-2);
+  color: var(--rail-ink-2);
   font: inherit;
-  font-size: .82rem;
+  font-size: .84rem;
   text-align: left;
   cursor: pointer;
+  white-space: nowrap;
   transition: background .14s ease, color .14s ease;
 }
 
-.nav-item::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 50%;
-  width: 2px; height: 0;
-  border-radius: 0 2px 2px 0;
-  background: var(--accent);
-  transform: translateY(-50%);
-  transition: height .18s cubic-bezier(.2, .8, .3, 1);
-}
+.nav-item:hover { background: rgba(255, 255, 255, .07); color: var(--rail-ink); }
 
-.nav-item:hover { background: var(--surface-2); color: var(--ink); }
-
+/* Selected reads as a tinted pill with a coloured icon — the same cue the reference panel uses,
+   and it survives the collapsed rail where the label is gone. */
 .nav-item[aria-selected="true"] {
-  background: var(--surface-3);
-  color: var(--ink);
+  background: linear-gradient(100deg, rgba(196, 176, 255, .22), rgba(196, 176, 255, .08));
+  color: var(--rail-ink);
   font-weight: 600;
-  box-shadow: var(--hi);
-}
-.nav-item[aria-selected="true"]::before {
-  height: 20px;
-  box-shadow: 0 0 10px 1px var(--accent-glow);
+  box-shadow: inset 2px 0 0 var(--rail-active);
 }
 
-.nav-item .dot {
-  width: 6px; height: 6px; flex: none;
-  border-radius: 50%;
-  background: var(--line-strong);
-  transition: background .14s ease, box-shadow .14s ease;
+.nav-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  flex: none;
+  color: var(--rail-ink-2);
+  transition: color .14s ease;
 }
-.nav-item[aria-selected="true"] .dot {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.nav-icon svg { width: 17px; height: 17px; }
+.nav-item:hover .nav-icon { color: var(--rail-ink); }
+.nav-item[aria-selected="true"] .nav-icon { color: var(--rail-active); }
+
+.nav-text { overflow: hidden; text-overflow: ellipsis; }
+
+:root[data-rail="mini"] .nav { padding: 14px 10px; }
+:root[data-rail="mini"] .nav-item { justify-content: center; padding: 10px 0; }
+:root[data-rail="mini"] .nav-text { display: none; }
+/* The group heading becomes a rule — the grouping stays visible without a word to read. */
+:root[data-rail="mini"] .nav-label {
+  height: 1px;
+  padding: 0;
+  margin: 10px 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .14);
+  color: transparent;
 }
+:root[data-rail="mini"] .nav-label:first-child { margin-top: 0; }
+
+/* --- the person using it, pinned to the bottom of the rail --- */
 
 .rail-foot {
-  margin-top: auto;
-  padding: 14px;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
 }
 
-.rail-foot .meta {
-  font-family: var(--font-mono);
-  font-size: .6rem; letter-spacing: .06em;
-  color: var(--ink-3);
-  text-transform: uppercase;
-}
-
-.theme-toggle {
+.avatar {
   display: inline-grid; place-items: center;
   width: 32px; height: 32px;
+  flex: none;
+  border-radius: 50%;
+  background: linear-gradient(140deg, var(--rail-active), var(--accent));
+  color: #FFFFFF;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+.rail-user { min-width: 0; line-height: 1.3; color: var(--rail-ink); }
+.rail-user-name {
+  font-size: .78rem; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rail-user-role { font-size: .68rem; color: var(--rail-ink-2); }
+
+:root[data-rail="mini"] .rail-foot { justify-content: center; padding: 12px 0; }
+:root[data-rail="mini"] .rail-user { display: none; }
+
+/* --- icon buttons in the top bar --- */
+
+.icon-btn,
+.theme-toggle {
+  display: inline-grid; place-items: center;
+  width: 34px; height: 34px;
+  flex: none;
   border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--surface-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
   color: var(--ink-2);
   cursor: pointer;
   transition: background .14s, color .14s, border-color .14s;
 }
-.theme-toggle:hover { background: var(--surface-3); color: var(--ink); border-color: var(--line-strong); }
-.theme-toggle svg { width: 15px; height: 15px; }
+.icon-btn:hover,
+.theme-toggle:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.icon-btn svg,
+.theme-toggle svg { width: 16px; height: 16px; }
 .theme-toggle .icon-sun { display: none; }
 :root[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
 :root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
@@ -471,51 +586,98 @@ body::after {
 
 .main {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- top bar --- */
+
+/* Carries the name of whatever panel is open (written by app.js from the selected nav item) and
+   the two controls that are not about the data: the rail toggle and the theme. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  height: var(--topbar-h);
+  padding: 0 clamp(14px, 2.4vw, 26px);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(160%);
+}
+
+.topbar-title {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.topbar-chip {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: .64rem;
+  letter-spacing: .04em;
+  color: var(--ink-3);
+}
+
+/* The scrim only exists under the mobile drawer; see the responsive block at the end. */
+.rail-scrim { display: none; }
+
+.main-inner {
   width: 100%;
   max-width: 1560px;
   margin: 0 auto;
-  padding: 0 clamp(16px, 3vw, 34px) 72px;
+  padding: var(--s-6) clamp(16px, 3vw, 34px) 72px;
 }
 
+/* --- the panel's own header --- */
+
+/* Icon tile, name, and whatever chips the panel needs — the run stamp, and a warning where the
+   panel writes somewhere that cannot be undone. No prose: what each panel does is its own title. */
 .page-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s-4);
-  padding: var(--s-7) 0 var(--s-5);
-  border-bottom: 1px solid var(--line);
+  align-items: center;
+  gap: var(--s-3);
   margin-bottom: var(--s-6);
 }
 
-.page-head h1 {
-  margin: 0;
-  font-size: clamp(1.4rem, 2.6vw, 1.95rem);
-  font-weight: 600;
-  letter-spacing: -.03em;
-  line-height: 1.15;
-}
-
-/* A mono eyebrow over the title, so the page announces what kind of document it is. */
-.page-head h1[data-eyebrow]::before {
-  content: attr(data-eyebrow);
-  display: block;
-  margin-bottom: var(--s-2);
-  font-family: var(--font-mono);
-  font-size: .6rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .18em;
+.page-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 40px; height: 40px;
+  flex: none;
+  border-radius: var(--r);
+  background: var(--accent-soft);
   color: var(--accent);
 }
+.page-icon svg { width: 20px; height: 20px; }
 
-.page-head .lede {
-  margin: var(--s-3) 0 0;
-  max-width: 74ch;
-  color: var(--ink-2);
-  font-size: .85rem;
-  line-height: 1.65;
+.page-head h1 {
+  margin: 0;
+  font-size: clamp(1.2rem, 2.2vw, 1.5rem);
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.2;
 }
+
+/* Pushes the run stamp and any export button to the right edge of the header row. */
+.page-head .stamp { margin-left: auto; }
 
 /* The stamp is a chip, not loose text — it is metadata about the run, so it is framed like one. */
 .stamp {
@@ -538,42 +700,65 @@ body::after {
 
 /* ---------- cards ---------- */
 
+/* No border. A card is held above the page by a violet-tinted shadow, which is what makes the
+   elevation read as designed rather than as a default box-shadow — and it lets the page's colour
+   wash show around the card instead of being fenced off by a grey ring. */
 .card {
   position: relative;
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--r-lg);
   padding: var(--s-5);
   min-width: 0;
-  box-shadow: var(--hi), var(--e-1);
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  box-shadow: var(--e-2);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.card:hover { border-color: var(--line-strong); box-shadow: var(--hi), var(--e-2); }
+.card:hover { box-shadow: var(--e-3); transform: translateY(-1px); }
 
 .card > h3 {
   margin: 0 0 3px;
-  font-size: .84rem;
+  font-family: var(--font-display);
+  font-size: .95rem;
   font-weight: 600;
-  letter-spacing: -.012em;
+  letter-spacing: -.018em;
 }
 
 .card .sub {
   margin: 0 0 var(--s-4);
   max-width: 86ch;
-  font-size: .74rem;
+  font-size: .76rem;
   line-height: 1.6;
   color: var(--ink-3);
 }
 
-/* The accent is a lit edge rather than a border, so it reads as state on the card's own surface. */
-.card.accent-red    { box-shadow: inset 0 2px 0 var(--red),    var(--hi), var(--e-1); }
-.card.accent-amber  { box-shadow: inset 0 2px 0 var(--amber),  var(--hi), var(--e-1); }
-.card.accent-green  { box-shadow: inset 0 2px 0 var(--green),  var(--hi), var(--e-1); }
-.card.accent-navy   { box-shadow: inset 0 2px 0 var(--accent), var(--hi), var(--e-1); }
-.card.accent-red:hover   { box-shadow: inset 0 2px 0 var(--red),    var(--hi), var(--e-2); }
-.card.accent-amber:hover { box-shadow: inset 0 2px 0 var(--amber),  var(--hi), var(--e-2); }
-.card.accent-green:hover { box-shadow: inset 0 2px 0 var(--green),  var(--hi), var(--e-2); }
-.card.accent-navy:hover  { box-shadow: inset 0 2px 0 var(--accent), var(--hi), var(--e-2); }
+/* State is carried by the card's own surface — a wash of the status colour plus a matching lit edge
+   — rather than by a 2px stripe on white. At these opacities the tint is legible as "this one is the
+   problem" from across the room while text on it keeps its contrast. */
+.card.accent-red,
+.card.accent-amber,
+.card.accent-green,
+.card.accent-navy { --card-tint: var(--accent); }
+
+.card.accent-red   { --card-tint: var(--red); }
+.card.accent-amber { --card-tint: var(--amber); }
+.card.accent-green { --card-tint: var(--green); }
+
+.card.accent-red,
+.card.accent-amber,
+.card.accent-green,
+.card.accent-navy {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--card-tint) 7%, transparent), transparent 42%),
+    var(--surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card-tint) 22%, transparent), var(--e-2);
+}
+
+.card.accent-red:hover,
+.card.accent-amber:hover,
+.card.accent-green:hover,
+.card.accent-navy:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card-tint) 34%, transparent), var(--e-3);
+}
 
 /* ---------- upload ---------- */
 
@@ -589,15 +774,15 @@ body::after {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 16px;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r);
+  gap: 3px;
+  padding: 20px 18px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--r-lg);
   background: var(--surface-2);
   cursor: pointer;
-  transition: border-color .15s, background .15s, transform .15s;
+  transition: border-color .15s, background .15s;
 }
-.drop:hover { border-color: var(--accent); background: var(--surface-3); }
+.drop:hover { border-color: var(--accent); background: var(--accent-soft); }
 .drop.is-dragover {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -606,13 +791,15 @@ body::after {
 .drop.has-file { border-style: solid; border-color: var(--line-strong); background: var(--surface); }
 .drop input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
+/* The step label is gone from the markup; the rule stays so a panel that still carries one
+   renders as a quiet kicker rather than as body text. */
 .drop-step {
-  font-family: var(--font-mono);
-  font-size: .6rem; letter-spacing: .11em; text-transform: uppercase;
+  font-size: .66rem; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase;
   color: var(--ink-3);
 }
-.drop-title { font-size: .8rem; font-weight: 600; }
-.drop-hint  { font-size: .72rem; color: var(--ink-3); }
+.drop-title { font-size: .85rem; font-weight: 600; }
+.drop-hint  { font-size: .74rem; color: var(--ink-3); }
 
 .drop-file {
   display: none;
@@ -645,11 +832,11 @@ body::after {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 9px 16px;
+  padding: 9px 18px;
   border: 1px solid transparent;
-  border-radius: var(--r);
+  border-radius: 999px;
   font: inherit;
-  font-size: .8rem;
+  font-size: .82rem;
   font-weight: 600;
   letter-spacing: -.005em;
   cursor: pointer;
@@ -659,19 +846,24 @@ body::after {
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 
+/* The primary action is the one saturated object on the page: a gradient rather than a flat fill,
+   sitting in its own coloured glow so it reads as lit instead of painted. */
 .btn-primary {
-  background: var(--accent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 84%, #FFFFFF), var(--accent));
   color: var(--accent-ink);
-  box-shadow: 0 0 0 0 var(--accent-glow);
+  box-shadow: 0 4px 14px -4px var(--accent-glow), 0 1px 2px rgba(25, 22, 39, .12);
 }
-.btn-primary:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 0 0 4px var(--accent-glow); }
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+  box-shadow: 0 8px 22px -6px var(--accent-glow), 0 0 0 4px var(--accent-glow);
+}
 
 .btn-ghost {
   background: var(--surface);
   border-color: var(--line-strong);
   color: var(--ink);
 }
-.btn-ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--accent); color: var(--accent); }
+.btn-ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
 .btn .spinner {
   width: 13px; height: 13px;
@@ -692,17 +884,15 @@ body::after {
   child and a real element cannot follow it any other way).
 */
 .btn-export {
-  padding: 4px 9px;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: .62rem;
-  letter-spacing: .06em;
-  text-transform: uppercase;
+  padding: 5px 12px;
+  gap: 6px;
+  font-size: .7rem;
+  font-weight: 600;
 }
 /* Row-level actions inside a table cell or a message card header. */
 .btn-sm {
-  padding: 4px 10px;
-  font-size: .7rem;
+  padding: 5px 12px;
+  font-size: .72rem;
 }
 .btn-sm .spinner { width: 11px; height: 11px; }
 
@@ -721,10 +911,7 @@ body::after {
 .card:has(> .btn-export) > h3,
 .card:has(> .btn-export) > .sub { padding-right: 104px; }
 
-.section-title > .btn-export {
-  order: 1;
-  letter-spacing: .06em;
-}
+.section-title > .btn-export { order: 1; }
 
 /* ---------- alerts ---------- */
 
@@ -751,26 +938,28 @@ body::after {
    live in here rather than at the top of the page. */
 .filter-bar {
   position: sticky;
-  top: 0;
+  /* Clears the top bar, which is sticky above it. */
+  top: var(--topbar-h);
   z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--s-4);
-  margin: var(--s-5) 0 var(--s-5);
-  padding: var(--s-3) var(--s-4);
+  margin: var(--s-5) 0;
+  padding: var(--s-4);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(14px) saturate(140%);
-  box-shadow: var(--hi), var(--e-2);
+  box-shadow: var(--e-1);
 }
 
+/* The report's own index, as a tab strip with a count on each entry. */
 .section-nav {
   flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s-2);
+  gap: var(--s-1);
   margin-top: var(--s-1);
   padding-top: var(--s-3);
   border-top: 1px solid var(--line);
@@ -779,45 +968,53 @@ body::after {
 .section-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface-2);
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: transparent;
   color: var(--ink-2);
   font: inherit;
-  font-family: var(--font-mono);
-  font-size: .63rem;
-  letter-spacing: .05em;
+  font-size: .78rem;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
-  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.section-chip .n { color: var(--ink-3); font-size: .92em; }
-.section-chip:hover { color: var(--ink); border-color: var(--line-strong); background: var(--surface-3); }
+/* The count rides in a pill, the way the reference panel counts its tabs. */
+.section-chip .n {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+}
+.section-chip:hover { color: var(--ink); background: var(--surface-2); }
 .section-chip.is-active {
   background: var(--accent-soft);
-  border-color: var(--accent);
   color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  font-weight: 600;
 }
-.section-chip.is-active .n { color: var(--accent); }
+.section-chip.is-active .n {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
 
-.field { display: flex; flex-direction: column; gap: 5px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
 
 .field > label {
-  font-family: var(--font-mono);
-  font-size: .6rem;
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  color: var(--ink-3);
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--ink-2);
 }
 
 input[type="date"] {
   font: inherit;
   font-family: var(--font-mono);
-  font-size: .76rem;
-  padding: 7px 9px;
+  font-size: .78rem;
+  padding: 9px 11px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -838,8 +1035,8 @@ input[type="search"],
 textarea {
   font: inherit;
   font-family: var(--font-mono);
-  font-size: .76rem;
-  padding: 7px 9px;
+  font-size: .78rem;
+  padding: 9px 11px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -1233,8 +1430,10 @@ select:disabled {
 select {
   font: inherit;
   font-family: var(--font-mono);
-  font-size: .76rem;
-  padding: 7px 9px;
+  font-size: .78rem;
+  /* Matches the text inputs' box exactly, minus the room the native arrow takes on the right —
+     a select that is a few pixels taller leaves every label in a filter row off its baseline. */
+  padding: 9px 11px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -1280,45 +1479,35 @@ textarea {
   align-items: center;
   gap: var(--s-3);
   margin: var(--s-7) 0 var(--s-4);
-  font-size: .68rem;
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
+  font-size: 1.12rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .12em;
+  letter-spacing: -.022em;
   color: var(--ink);
-  /* Clears the sticky control deck when a section chip scrolls to it. */
-  scroll-margin-top: 118px;
+  /* Clears the top bar AND the sticky control deck when a section chip scrolls to it. Derived from
+     the tokens rather than hard-coded: this used to be a literal 178 that had to be kept in step by
+     hand with --topbar-h, the filter bar's height and a third literal in app.js's scroll-spy — and
+     when it drifted the heading quietly scrolled under the deck instead of erroring. */
+  scroll-margin-top: calc(var(--deck-h) + var(--s-4));
 }
-.section-title::after {
+
+/* A short accent rule before the words, so the eye finds the section breaks when scanning fast. */
+.section-title::before {
   content: '';
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, var(--line-strong), transparent);
+  flex: none;
+  width: 4px;
+  height: 1.05em;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 40%, transparent));
 }
 
 /* `display: flex` above outranks the browser's own [hidden] rule, so a section hidden because it
-   had nothing in it would otherwise stay on the page. Being display:none is also what keeps it out
-   of the counter below, so the sections after it renumber. */
+   had nothing in it would otherwise stay on the page. */
 .section-title[hidden] { display: none; }
 
-/* Sections number themselves, so the chips in the control deck and the headings on the page can
-   never disagree about which section is which. Scoped to .results: the skeleton and the reference
-   pages use the same class without being a numbered report. */
-.results { counter-reset: section; }
-.results > .section-title { counter-increment: section; }
-.results > .section-title::before {
-  content: counter(section, decimal-leading-zero);
-  display: inline-grid;
-  place-items: center;
-  min-width: 24px;
-  padding: 2px 5px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-xs);
-  background: var(--surface);
-  color: var(--accent);
-  font-size: .6rem;
-  letter-spacing: .06em;
-}
+/* The export button is pushed to the right edge of the heading row; without a spacer it would sit
+   against the title. (`order: 1` in the export block keeps it last.) */
+.section-title > .btn-export { margin-left: auto; }
 
 /* ---------- hero ----------
 
@@ -1335,12 +1524,16 @@ textarea {
   gap: var(--s-7);
   margin: var(--s-5) 0 var(--s-6);
   padding: var(--s-6);
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--r-xl);
+  /* A three-point mesh rather than one radial: the headline row is the only place in the app that
+     gets to look lit, and one gradient reads as a default while three read as a surface. */
   background:
-    radial-gradient(760px 260px at 0% -40%, var(--accent-soft), transparent 68%),
+    radial-gradient(680px 300px at 2% -30%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 66%),
+    radial-gradient(520px 260px at 78% -20%, color-mix(in srgb, var(--series-5) 12%, transparent), transparent 68%),
+    radial-gradient(700px 340px at 100% 130%, color-mix(in srgb, var(--series-3) 10%, transparent), transparent 64%),
     var(--surface);
-  box-shadow: var(--hi), var(--e-2);
+  box-shadow: var(--e-3);
 }
 
 .hero:has(.hero-spark) { grid-template-columns: minmax(0, 1fr) minmax(190px, 264px); }
@@ -1478,15 +1671,15 @@ textarea {
 .kpi {
   position: relative;
   padding: var(--s-4) var(--s-4) var(--s-4) calc(var(--s-4) + 4px);
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--r-lg);
   background: var(--surface);
-  box-shadow: var(--hi), var(--e-1);
+  box-shadow: var(--e-2);
   overflow: hidden;
   animation: kpi-in .34s var(--ease) both;
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.kpi:hover { border-color: var(--line-strong); box-shadow: var(--hi), var(--e-2); }
+.kpi:hover { box-shadow: var(--e-3); transform: translateY(-1px); }
 
 /* State is a lit edge down the left of the tile, with the faintest wash bleeding off it. */
 .kpi::before {
@@ -1523,7 +1716,7 @@ textarea {
 }
 
 .kpi-value {
-  font-size: clamp(1.15rem, 1.7vw, 1.5rem);
+  font-size: clamp(1.3rem, 1.9vw, 1.72rem);
   font-weight: 600;
   letter-spacing: -.025em;
   color: var(--ink);
@@ -1612,7 +1805,9 @@ textarea {
   max-height: 440px;
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e-1);
 }
 
 /*
@@ -1630,29 +1825,28 @@ table {
   min-width: 720px;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: .78rem;
+  font-size: .81rem;
 }
 
 thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 10px 14px;
+  padding: 12px 16px;
   text-align: left;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--surface-3) 88%, transparent);
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--surface-3) 82%, transparent);
+  backdrop-filter: blur(10px) saturate(150%);
   border-bottom: 1px solid var(--line-strong);
-  font-family: var(--font-mono);
-  font-size: .61rem;
+  font-size: .68rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .1em;
-  color: var(--ink-2);
+  letter-spacing: .07em;
+  color: var(--ink-3);
 }
 
 tbody td {
-  padding: 9px 14px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
@@ -1661,9 +1855,10 @@ tbody tr:last-child td { border-bottom: 0; }
 /* Filtered out of view by RPA.initRowFilter, not removed from the table: every collect* function
    reads all <tr> elements, so a row hidden here is still saved and still exported. */
 tbody tr.is-filtered-out { display: none; }
-/* No zebra: hairlines separate the rows and the hover wash is the only fill, which keeps long
-   tables quiet and makes the row under the cursor unmistakable. */
-tbody tr:hover td { background: var(--surface-2); }
+/* A very light zebra plus a tinted hover: on a table this wide the eye needs help tracking a row
+   across, and the hover wash is what makes the row under the cursor unmistakable. */
+tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-3) 42%, transparent); }
+tbody tr:hover td { background: var(--accent-soft); }
 
 /* Figures line up on their right edge so magnitudes can be compared down the column, and never
    wrap: an order number broken across two lines cannot be read back or copied. */
@@ -1732,11 +1927,11 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
 .table-count {
   position: sticky;
   left: 0;
-  padding: 7px 12px;
+  padding: 10px 16px;
   border-top: 1px solid var(--line);
   background: var(--surface-2);
   font-family: var(--font-mono);
-  font-size: .64rem;
+  font-size: .68rem;
   letter-spacing: .04em;
   color: var(--ink-3);
 }
@@ -1757,15 +1952,13 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 9px;
+  padding: 4px 11px;
   border-radius: 999px;
   background: var(--surface-3);
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: .63rem;
+  font-size: .72rem;
   font-weight: 600;
-  letter-spacing: .04em;
   white-space: nowrap;
 }
 .badge::before {
@@ -1776,9 +1969,11 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   background: currentColor;
   opacity: .85;
 }
-.badge.red   { background: var(--red-soft);   border-color: color-mix(in srgb, var(--red) 45%, transparent);   color: var(--red); }
-.badge.amber { background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 45%, transparent); color: var(--amber); }
-.badge.green { background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 45%, transparent); color: var(--green); }
+/* A hairline of the status colour around the wash: at badge size a flat tint alone dissolves into a
+   busy table, and the ring is what makes it read as a chip. */
+.badge.red   { background: var(--red-soft);   color: var(--red);   border-color: color-mix(in srgb, var(--red) 26%, transparent); }
+.badge.amber { background: var(--amber-soft); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 26%, transparent); }
+.badge.green { background: var(--green-soft); color: var(--green); border-color: color-mix(in srgb, var(--green) 26%, transparent); }
 
 /* The raw value behind a badge — the verdict and the data it was read from, on one line. */
 .cell-sub {
@@ -1842,15 +2037,36 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
 
 /* ---------- notes / empty states ---------- */
 
+/* What is left of .note: the handful of lines the app writes at runtime about the data it just
+   read — a missing column, a seller with no mapping. The static prose that used to use this class
+   is gone, so this is a compact one-line notice rather than a paragraph rule. */
 .note {
+  display: flex;
+  gap: var(--s-2);
   margin: var(--s-4) 0 0;
-  max-width: 92ch;
-  padding-left: var(--s-3);
-  border-left: 2px solid var(--line-strong);
-  color: var(--ink-3);
-  font-size: .76rem;
-  line-height: 1.65;
+  padding: 10px 13px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: .78rem;
+  line-height: 1.5;
 }
+.note::before {
+  content: 'i';
+  display: inline-grid;
+  place-items: center;
+  width: 16px; height: 16px;
+  flex: none;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  color: var(--surface);
+  font-size: .68rem;
+  font-weight: 700;
+  font-style: italic;
+}
+.note[hidden] { display: none; }
+.note:empty { display: none; }
 
 /* Says what a table left out. Sits under the table, quieter than a .note and without its rule. */
 .table-note {
@@ -1864,12 +2080,12 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
 .table-note[hidden] { display: none; }
 
 .empty-state {
-  padding: 30px 18px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
+  padding: 38px 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
   background: var(--surface-2);
   color: var(--ink-3);
-  font-size: .8rem;
+  font-size: .82rem;
   text-align: center;
 }
 
@@ -1901,10 +2117,13 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   padding: var(--s-4) var(--s-5) var(--s-5);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
+  /* A faint wash from the top so the scene reads as lit rather than as a flat panel. Kept in
+     --accent-soft: an undefined custom property here would invalidate the whole shorthand and
+     leave the card transparent. */
   background:
-    radial-gradient(120% 90% at 50% 0%, var(--bg-glow-1), transparent 62%),
+    linear-gradient(180deg, var(--accent-soft), transparent 55%),
     var(--surface);
-  box-shadow: var(--hi), var(--e-2);
+  box-shadow: var(--e-2);
 }
 
 .tower-scene {
@@ -2304,52 +2523,70 @@ footer.page-foot {
 
 /* ---------- responsive ---------- */
 
+/* Below this the rail is worth more as icons than as labels, so it starts collapsed. The toggle
+   still works — the class app.js writes wins over this rule. */
+@media (max-width: 1180px) {
+  :root:not([data-rail="wide"]) .shell { --rail-w: var(--rail-w-mini); }
+  :root:not([data-rail="wide"]) .brand { justify-content: center; padding: 0; }
+  :root:not([data-rail="wide"]) .brand-text,
+  :root:not([data-rail="wide"]) .nav-text,
+  :root:not([data-rail="wide"]) .rail-user { display: none; }
+  :root:not([data-rail="wide"]) .nav-item { justify-content: center; padding: 10px 0; }
+  :root:not([data-rail="wide"]) .rail-foot { justify-content: center; padding: 12px 0; }
+  :root:not([data-rail="wide"]) .nav-label {
+    height: 1px; padding: 0; margin: 10px 8px;
+    overflow: hidden; background: var(--line); color: transparent;
+  }
+}
+
+/* On a phone the rail leaves the layout entirely and slides in over the page. */
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
 
   .rail {
-    position: relative;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 264px;
+    transform: translateX(-100%);
+    transition: transform .22s var(--ease);
+    box-shadow: var(--e-2);
   }
-  .rail-inner { position: static; height: auto; }
+  /* The drawer is always the full rail, whatever the desktop collapse state was. These undo the
+     mini rules above; they match their specificity exactly and win by coming later. */
+  .shell.is-rail-open .rail { transform: none; }
+  :root .shell .brand { justify-content: flex-start; padding: 0 16px; }
+  :root .shell .brand-text,
+  :root .shell .nav-text,
+  :root .shell .rail-user { display: revert; }
+  :root .shell .nav-item { justify-content: flex-start; padding: 10px 12px; }
+  :root .shell .rail-foot { justify-content: flex-start; padding: 12px 14px; }
+  :root .shell .nav-label {
+    height: auto; padding: 14px 10px 6px; margin: 0;
+    overflow: visible; background: none; color: var(--ink-3);
+  }
 
-  .nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding: 10px;
-    gap: 8px;
+  .rail-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: rgba(16, 24, 40, .45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .22s var(--ease);
   }
-  .nav-label { display: none; }
-  .nav-item {
-    /* Share the width instead of overflowing off-screen, wrapping to a second row when the
-       labels no longer fit. */
-    flex: 1 1 auto;
-    justify-content: center;
-    border: 1px solid var(--line);
-    padding: 8px 12px;
-  }
-  .nav-item::before { display: none; }
-  .nav-item[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
-
-  /* Tuck the theme toggle into the brand bar rather than giving it its own row. */
-  .rail-foot {
-    position: absolute;
-    top: 0; right: 12px;
-    height: 72px;
-    margin-top: 0;
-    padding: 0;
-    border-top: 0;
-    background: transparent;
-  }
-  .rail-foot .meta { display: none; }
-
-  .brand { padding-right: 60px; }
+  .shell.is-rail-open .rail-scrim { opacity: 1; pointer-events: auto; }
 }
 
+/* The rail toggle only earns a slot in the top bar once it is the only way to reach the nav or
+   the only way to widen it — above 1180px the rail is already open. */
+.rail-toggle { display: inline-grid; }
+
 @media (max-width: 560px) {
-  .page-head { padding-top: 22px; }
   .filter-bar { position: static; }
   .filter-summary { margin-left: 0; width: 100%; }
   .chart-box { height: 260px; }
+  .topbar { padding: 0 14px; }
+  .main-inner { padding-top: var(--s-5); }
+  .page-head .stamp { margin-left: 0; }
 }

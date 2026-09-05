@@ -9,19 +9,29 @@
     <link rel="icon" type="image/png" sizes="48x48" href="~/images/favicon-48.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="~/images/favicon-180.png" />
     <link rel="preload" href="~/lib/fonts/ibm-plex-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    @* The display face lands in the first thing anyone reads — the panel heading — so it is preloaded
+       alongside the body face rather than discovered when the stylesheet resolves. *@
+    <link rel="preload" href="~/lib/fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
     @*
-        Applied before first paint so nobody sees a white flash.
+        Applied before first paint so nobody sees the wrong surface flash.
         Kept inline and tiny on purpose — it must run before the stylesheet resolves.
 
-        Dark is the default: this is a monitoring console that is read for long stretches, and the
-        design is built around the dark surface. A saved choice always wins, in both directions.
+        Light is the default: the design is built around white cards on a soft grey page. Dark is
+        kept for long reading sessions, and a saved choice always wins, in both directions.
+
+        The rail's collapsed state is read here too, for the same reason — set after the stylesheet
+        resolves it would show a full-width rail snapping shut on every load.
     *@
     <script>
         (function () {
-            var t = null;
-            try { t = localStorage.getItem('rpa-theme'); } catch (e) { /* private mode */ }
-            document.documentElement.dataset.theme = (t === 'light' || t === 'dark') ? t : 'dark';
+            var d = document.documentElement, t = null, r = null;
+            try {
+                t = localStorage.getItem('rpa-theme');
+                r = localStorage.getItem('rpa-rail');
+            } catch (e) { /* private mode */ }
+            d.dataset.theme = (t === 'light' || t === 'dark') ? t : 'light';
+            if (r === 'mini' || r === 'wide') { d.dataset.rail = r; }
         })();
     </script>
 </head>

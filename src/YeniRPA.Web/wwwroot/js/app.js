@@ -25,15 +25,19 @@ window.RPA = window.RPA || {};
     const series = [];
     for (let i = 1; i <= 8; i++) series.push(read('--series-' + i, '#2A78D6'));
 
+    // The fallbacks are the LIGHT Aurora values. They are only reached if a token is missing, and a
+    // stale set here is the worst kind of bug in this file: nothing errors, the charts simply keep
+    // painting in the previous design's colours while the page around them changes. Any edit to the
+    // :root palette in app.css has to land here in the same commit.
     return {
-      accent: read('--accent', '#0B5FC4'),
-      accentGlow: read('--accent-glow', 'rgba(11,95,196,.2)'),
-      red: read('--red', '#C0342E'),
-      green: read('--green', '#0A6B45'),
-      amber: read('--amber', '#96590A'),
-      ink: read('--ink', '#0C141C'),
-      ink2: read('--ink-2', '#46586A'),
-      ink3: read('--ink-3', '#7A8B9C'),
+      accent: read('--accent', '#6D3BEB'),
+      accentGlow: read('--accent-glow', 'rgba(109,59,235,.20)'),
+      red: read('--red', '#C41F50'),
+      green: read('--green', '#0A7A55'),
+      amber: read('--amber', '#9A5B00'),
+      ink: read('--ink', '#191627'),
+      ink2: read('--ink-2', '#5B5578'),
+      ink3: read('--ink-3', '#918BAC'),
 
       // Status colours for filled marks. The text-grade red/amber above are tuned for contrast on
       // the page, and a bar filled with them reads brown rather than "this is a problem".
@@ -41,10 +45,10 @@ window.RPA = window.RPA || {};
       markSerious: read('--mark-serious', '#EC835A'),
       markWarning: read('--mark-warning', '#FAB219'),
       markGood: read('--mark-good', '#0CA30C'),
-      line: read('--line', '#DEE5EC'),
+      line: read('--line', '#E9E6F5'),
       surface: read('--surface', '#FFFFFF'),
-      surface2: read('--surface-2', '#F6F8FB'),
-      surface3: read('--surface-3', '#EAF0F6'),
+      surface2: read('--surface-2', '#FAF9FE'),
+      surface3: read('--surface-3', '#F1EFFA'),
       series
     };
   };
@@ -53,14 +57,23 @@ window.RPA = window.RPA || {};
     window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /**
-   * Chart.js paints to a canvas, so colours must be values the 2D context
-   * understands — color-mix() is not reliably supported there. Convert an
-   * #rgb/#rrggbb token to rgba() instead.
+   * Chart.js paints to a canvas, so colours must be values the 2D context understands — color-mix()
+   * is not reliably supported there. Converts a token to rgba().
+   *
+   * Accepts #rgb, #rrggbb and rgb()/rgba(): the design system writes tokens as hex, but a computed
+   * value can come back in rgb() form (a browser that resolved it, or a token that went through
+   * light-dark()), and silently returning that unchanged would drop the alpha and paint the mark
+   * fully opaque. Anything else is handed back untouched rather than mangled.
    */
   RPA.alpha = function (color, a) {
-    const hex = String(color).trim().replace('#', '');
+    const text = String(color).trim();
+
+    const fn = text.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+    if (fn) return 'rgba(' + Math.round(+fn[1]) + ',' + Math.round(+fn[2]) + ',' + Math.round(+fn[3]) + ',' + a + ')';
+
+    const hex = text.replace('#', '');
     const full = hex.length === 3 ? hex.split('').map(c => c + c).join('') : hex;
-    if (full.length < 6) return color;
+    if (!/^[0-9a-f]{6}$/i.test(full.slice(0, 6)) || full.length < 6) return color;
     const n = parseInt(full.slice(0, 6), 16);
     return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
   };
@@ -790,21 +803,58 @@ window.RPA = window.RPA || {};
         RPA.escapeHtml(section.dataset.section) +
       '</button>').join('');
 
+    /**
+     * Publishes the control deck's real height as --filterbar-h, which .section-title's
+     * scroll-margin-top is calc()'d from.
+     *
+     * It has to be measured, not declared: the bar wraps to a different number of rows per module
+     * (nine filters and thirteen section chips on the incidents panel, two filters on ticket-seller)
+     * and again at every width. A CSS constant was 152px short on the tallest panel, which put the
+     * heading a chip jumped to *underneath* the deck — silently, because nothing about that errors.
+     */
+    function publishDeckHeight() {
+      const bar = root.querySelector('.filter-bar');
+      if (!bar || bar.offsetParent === null) return;
+      const height = Math.round(bar.getBoundingClientRect().height);
+      if (height > 0) document.documentElement.style.setProperty('--filterbar-h', height + 'px');
+    }
+
     nav.onclick = function (event) {
       const chip = event.target.closest('[data-target]');
       if (!chip) return;
       const target = document.getElementById(chip.dataset.target);
-      if (target) target.scrollIntoView({ block: 'start', behavior: RPA.reducedMotion() ? 'auto' : 'smooth' });
+      if (!target) return;
+      // Refreshed immediately before the jump: scrollIntoView reads scroll-margin-top as it is now.
+      publishDeckHeight();
+      target.scrollIntoView({ block: 'start', behavior: RPA.reducedMotion() ? 'auto' : 'smooth' });
     };
 
     // Which section is being read = the last one whose heading has passed under the control deck.
+    //
+    // The deck is measured rather than assumed. This used to be a literal 150 that had to be kept in
+    // step by hand with --topbar-h and the filter bar's own height; when a redesign changed either,
+    // the wrong chip lit up and nothing said so. The bar wraps to a different height at different
+    // widths anyway, so measuring is also simply more correct than any constant would be.
     const chips = Array.prototype.slice.call(nav.querySelectorAll('.section-chip'));
+
+    // scroll-margin-top parks a jumped-to heading --s-4 (16px) below the deck, so the threshold has
+    // to sit further down than that or the section you just jumped to is the one chip that does NOT
+    // light up. 24 clears the 16 with room for sub-pixel rounding.
+    const PARKED_GAP = 24;
+    const deck = () => {
+      const bar = root.querySelector('.filter-bar');
+      const barBottom = bar ? bar.getBoundingClientRect().bottom : 0;
+      // Falls back to the token-driven height when the bar is hidden or not rendered yet.
+      return barBottom > 0 ? barBottom + PARKED_GAP : 150;
+    };
+
     let queued = false;
     function sync() {
       queued = false;
+      const edge = deck();
       let active = 0;
       sections.forEach((section, i) => {
-        if (section.getBoundingClientRect().top <= 150) active = i;
+        if (section.getBoundingClientRect().top <= edge) active = i;
       });
       chips.forEach((chip, i) => chip.classList.toggle('is-active', i === active));
     }
@@ -816,6 +866,13 @@ window.RPA = window.RPA || {};
       requestAnimationFrame(sync);
     };
     window.addEventListener('scroll', nav._rpaScroll, { passive: true });
+
+    // The bar re-wraps at different widths, so the published height has to follow the viewport.
+    if (nav._rpaResize) window.removeEventListener('resize', nav._rpaResize);
+    nav._rpaResize = publishDeckHeight;
+    window.addEventListener('resize', nav._rpaResize, { passive: true });
+
+    publishDeckHeight();
     sync();
   };
 
@@ -950,12 +1007,60 @@ window.RPA = window.RPA || {};
   }
 
   // ---------------------------------------------------------------------------
+  // The rail: collapsed on wide screens, a drawer on narrow ones
+  // ---------------------------------------------------------------------------
+
+  // One button for two jobs, because at any given width only one of them exists: below 900px the
+  // rail has left the layout and the button opens it over the page; above that it toggles between
+  // the full rail and the icon rail. The wide/narrow choice is written to <html> rather than to a
+  // class so the inline script in _Layout can restore it before the first paint.
+  function initRail() {
+    const btn = document.getElementById('rail-toggle');
+    const shell = document.getElementById('shell');
+    const scrim = document.getElementById('rail-scrim');
+    if (!btn || !shell) return;
+
+    const isDrawer = () => window.matchMedia('(max-width: 900px)').matches;
+    // No stored preference means "whatever this width defaults to": full rail above 1180px, icons
+    // below it. Writing one only ever happens on a click.
+    const isMini = () => document.documentElement.dataset.rail
+      ? document.documentElement.dataset.rail === 'mini'
+      : window.matchMedia('(max-width: 1180px)').matches;
+
+    const closeDrawer = () => {
+      shell.classList.remove('is-rail-open');
+      btn.setAttribute('aria-expanded', 'false');
+    };
+
+    btn.addEventListener('click', () => {
+      if (isDrawer()) {
+        const open = shell.classList.toggle('is-rail-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        return;
+      }
+      const next = isMini() ? 'wide' : 'mini';
+      document.documentElement.dataset.rail = next;
+      btn.setAttribute('aria-expanded', next === 'wide' ? 'true' : 'false');
+      try { localStorage.setItem('rpa-rail', next); } catch (e) { /* private mode */ }
+    });
+
+    if (scrim) scrim.addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && shell.classList.contains('is-rail-open')) closeDrawer();
+    });
+
+    btn.setAttribute('aria-expanded', isDrawer() ? 'false' : String(!isMini()));
+  }
+
+  // ---------------------------------------------------------------------------
   // Module navigation (tabs + hash deep-links + remembered choice)
   // ---------------------------------------------------------------------------
 
   const MODULES = {
     'order-report': { tab: 'tab-order', panel: 'panel-order' },
     'return-sla': { tab: 'tab-return', panel: 'panel-return' },
+    // Two uploads rather than one: the Mirakl incident panel cannot export open and closed together.
+    'incidents': { tab: 'tab-incidents', panel: 'panel-incidents' },
     // Lookup rather than a report: joins the Oracle case list to the orders export by order number.
     'ticket-seller': { tab: 'tab-ticket-seller', panel: 'panel-ticket-seller' },
     // Browser automation rather than a report: writes to Mirakl instead of reading a file.
@@ -991,7 +1096,18 @@ window.RPA = window.RPA || {};
       tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
       tab.tabIndex = isActive ? 0 : -1;
       panel.hidden = !isActive;
+
+      // The top bar names the open panel. Taken from the tab's own label rather than a second
+      // list of titles, so the two can never disagree.
+      if (isActive) {
+        const title = document.getElementById('topbar-title');
+        const label = tab.querySelector('.nav-text');
+        if (title && label) title.textContent = label.textContent;
+      }
     });
+
+    // Opening a panel from the mobile drawer closes the drawer behind it.
+    document.getElementById('shell').classList.remove('is-rail-open');
 
     try { localStorage.setItem('rpa-module', name); } catch (e) { /* private mode */ }
 
@@ -1347,6 +1463,7 @@ window.RPA = window.RPA || {};
 
   document.addEventListener('DOMContentLoaded', function () {
     initTheme();
+    initRail();
     initNav();
     RPA.applyChartDefaults();
 

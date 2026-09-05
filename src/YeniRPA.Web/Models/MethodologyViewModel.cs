@@ -26,6 +26,20 @@ public sealed class MethodologyViewModel
     public int ReturnSlaDays { get; init; } = ReturnSlaReportBuilder.SlaDays;
     public int ReturnWarningDays { get; init; } = ReturnSlaReportBuilder.WarningDays;
 
+    public IReadOnlyList<string> IncidentColumns { get; init; } = IncidentsReportBuilder.RequiredColumns;
+    public int IncidentWarningDays { get; init; } = IncidentsReportBuilder.WarningDays;
+    public int IncidentBreachDays { get; init; } = IncidentsReportBuilder.BreachDays;
+    public int IncidentStaleDays { get; init; } = IncidentsReportBuilder.StaleDays;
+    public int IncidentHotThreadMessages { get; init; } = IncidentsReportBuilder.HotThreadMessages;
+    public int IncidentMinSampleSize { get; init; } = IncidentsReportBuilder.MinSampleSize;
+
+    /// <summary>The date the closed incident export is reported from, as the dashboard pre-fills it.</summary>
+    public string IncidentClosedFrom { get; init; } =
+        IncidentsReportBuilder.ClosedFrom.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>The mailbox domain that marks an incident action as the operator's rather than a seller's.</summary>
+    public string IncidentOperatorMailDomain { get; init; } = IncidentsReportBuilder.OperatorMailDomain;
+
     public int MinSampleSize { get; init; } = OrderReportBuilder.MinSampleSize;
     public int MinLeadTimeSample { get; init; } = OrderReportBuilder.MinLeadTimeSample;
 

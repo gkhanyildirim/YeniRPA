@@ -761,26 +761,59 @@ never touch it, and it launches no browser until that module is used.
 
 ## Design system
 
-`wwwroot/css/app.css` is the whole of it: tokens first, components after, no framework. The
-direction is a **monitoring console** — a near-black canvas with layered surfaces, one luminous
-accent, hairline rules, and figures in IBM Plex Mono with tabular numerals. Colour is reserved:
-red/amber/green mean *this is bad / watch it / this is fine* and never decorate anything.
+`wwwroot/css/app.css` is the whole of it: tokens first, components after, no framework, no build
+step, one `<link>`. The direction is **"Aurora"** — a violet-tinted operations console. The rail is a
+deep violet panel in *both* themes, content sits on a faintly tinted canvas, and cards are held up by
+a colour-tinted shadow rather than fenced by a grey ring. Status is carried by a card's own tinted
+surface, not by a hairline edge. Colour is still reserved where it means something:
+red/amber/green mean *this is bad / watch it / this is fine* and never decorate.
+
+**Three typefaces, one job each.** *Bricolage Grotesque* (vendored, variable) sets headings, the
+brand, section titles and the big standalone figures — those are read, not compared down a column, so
+they take proportional figures. *IBM Plex Sans* sets body and controls. *IBM Plex Mono* sets anything
+in a column — table cells, axis ticks — with tabular numerals so figures stop shifting as they
+update. All three are self-hosted; the app makes no external requests. Any replacement face **must**
+carry `ğ Ğ ş Ş ı İ`, or half the seller names in the data fall back mid-word.
 
 Things worth knowing before changing it:
 
-- **Dark is the default theme.** The inline script in `_Layout.cshtml` stamps `data-theme="dark"`
+- **Three things fail *silently* if the palette changes without them.** All three are covered by
+  `tests/YeniRPA.Tests/AppCssThemeTests.cs`, which parses this stylesheet:
+  1. `RPA.palette()` in `app.js` hard-codes the current palette as its **fallbacks**. Stale ones
+     don't error — the charts just keep painting the old design's colours while the page changes.
+  2. Tokens must stay `#rrggbb`. `RPA.alpha()` takes them apart by hand, so `oklch()` or
+     `color-mix()` reaches the canvas unparsed. (It also accepts `rgb()` defensively.)
+  3. The dark palette is **declared twice**, and the two bodies must stay identical — otherwise the
+     console looks different depending on whether dark mode came from the OS or from the toggle.
+- **The sticky deck is measured, not declared.** `--topbar-h` + `--filterbar-h` = `--deck-h`, which
+  `.section-title`'s `scroll-margin-top` is `calc()`'d from. `--filterbar-h` is republished by
+  `initSectionNav` because the bar wraps to a different height per module and per width — a constant
+  was 152px short on the tallest panel, which put the heading a chip jumped to *underneath* the deck.
+
+- **Light is the default theme.** The inline script in `_Layout.cshtml` stamps `data-theme="light"`
   before first paint unless a choice is stored; the toggle wins in both directions. Every colour is
   a token declared on bare `:root` (light) and redefined twice for dark — once under
   `prefers-color-scheme`, once under `[data-theme="dark"]`.
+- **The shell is a rail plus a top bar.** The rail carries an inline SVG per module (drawn from the
+  `iconPaths` table at the top of `Index.cshtml`, so the rail and the panel header can never wear
+  different marks) and collapses to a 68px icon column. That state lives on `<html>` as
+  `data-rail="mini|wide"` rather than in a class, because the same inline script has to restore it
+  before first paint; below 900px the rail leaves the layout and `#rail-toggle` opens it as a drawer
+  instead. The top bar's title is copied from the selected tab's own label by `showModule`.
+- **Panels carry no prose.** A panel header is an icon tile, the name, and — where the panel writes
+  to Mirakl or sends messages — one `.badge red` whose `title` holds the full warning. `.note` is
+  now only for the lines the app writes *at runtime* about the data it just read (a missing column,
+  an unmapped seller); it is not a place to document behaviour. `Data & Methodology` is the one
+  panel that is deliberately all prose — that is what it is for.
 - **Charts have their own eight-slot palette** (`--series-1…8`), assigned by series identity and
   never cycled, validated for the lightness band, chroma floor, colour-blind separation and contrast
   against both surfaces. **Status colours are not in it**: filled marks use `--mark-critical` /
   `--mark-serious` / `--mark-warning` / `--mark-good`, which are separate from the text-grade
   `--red` / `--amber` / `--green` because a bar filled with a text colour reads brown.
-- **The Order Report opens with a hero row** of four figures plus a sparkline, and its sections
-  number themselves through a CSS counter. The chips in the sticky control deck are built from the
-  sections themselves (`RPA.initSectionNav` reads `data-section`), so a section cannot be renamed in
-  one place and stay stale in the other.
+- **The Order Report opens with a hero row** of four figures plus a sparkline. The chips in the
+  sticky control deck are built from the sections themselves (`RPA.initSectionNav` reads
+  `data-section`), so a section cannot be renamed in one place and stay stale in the other; they
+  render as a tab strip with the section number in a pill.
 - `RPA.renderKpis` takes `{ group: '…' }` band labels between tiles and an `exportRows` override —
   the order report shows eight tiles and still exports all twelve key metrics, four of which are in
   the hero.
@@ -838,6 +871,8 @@ src/YeniRPA.Web/
 │                                    shared by both warning modules, module name a parameter
 ├── Models/ReportModels.cs           JSON contract with the dashboard JavaScript
 │                                    (terse row fields; extended ones omitted when default)
+├── Models/IncidentsModels.cs        Incident row: the 23 export columns plus the derived
+│                                    lifecycle, ages, who-owes-the-reply and quality flags
 ├── Models/MethodologyViewModel.cs   Reads rules off the builders for the Methodology page
 ├── Controllers/                     Home, one per report, Automation (session + events)
 ├── Infrastructure/                  400 { error } filter for input-validation failures
@@ -849,6 +884,7 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
     ├── js/app.js                    Shell: nav, theme, uploads, fetch
     ├── js/order-report.js           Order dashboard aggregation + charts
     ├── js/return-sla-report.js      Return SLA dashboard
+    ├── js/incidents-report.js       Incidents dashboard: all grouping, so it follows the filter
     ├── js/create-return.js          Create Return: session, upload, live run log
     ├── js/late-orders.js            Late Order Warnings: mapping editor, preview, messages
     ├── js/offer-warnings.js         Seller Offer Warnings: two uploads, preview, send
@@ -863,6 +899,7 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
 | `POST` | `/api/order-report/data` | `file` | Dashboard JSON |
 | `POST` | `/api/order-report/excel` | `file` | `Gec Kargolama ve Iptal Raporu.xlsx` |
 | `POST` | `/api/return-sla-report/data` | `orders`, `templateA`, `templateB` | Dashboard JSON |
+| `POST` | `/api/incidents-report/data` | `openIncidents`, `closedIncidents` | Dashboard JSON: flat incident rows plus thresholds and file counts |
 | `POST` | `/api/create-return/prepare` | `templateA`, `templateB`, `returns`, `orders`, `from`, `to`, `returnsOnly` | Prepared list JSON: ready rows, dropped rows, funnel |
 | `POST` | `/api/create-return/list/excel` | JSON `{ rows }` | Two-column `.xlsx` |
 | `POST` | `/api/create-return/start-list` | JSON `{ rows }` | `{ count }`; the run continues in the background |
@@ -1034,6 +1071,79 @@ The MP export writes the literal text `NULL` into `YK Takip Kodu` on roughly thr
 most of template B's rows were on an SLA clock for a parcel that had never been sent.
 `TabularFile.ReadTracking` — the rule Create Return already used — is now applied by both reports,
 to both templates.
+
+## Incidents report
+
+Two uploads, because the Mirakl incident panel **cannot export open and closed incidents together** —
+they are separate downloads. Both carry the same 23-column header, so one reader serves both and each
+row remembers which file it came from. Either may be omitted; the sections that need the missing one
+hide themselves rather than printing an empty table.
+
+**Lifecycle comes off the dates, not off `Status`**
+
+`Status` is free text Mirakl extends whenever it adds a state, so keying the report on the strings
+seen today would silently mis-bucket tomorrow's:
+
+| Lifecycle | Rule |
+|---|---|
+| `closed` | `Closed on` parses to a date |
+| `resolved` | no `Closed on`, but `Closing reason` is filled — the seller answered and Mirakl has not stamped the closure |
+| `open` | everything else |
+
+`resolved` is held out of the open backlog and the aging tables and counted on its own, so it is never
+hidden inside either neighbour. The raw status still travels to the dashboard as its own dimension.
+
+**An open incident is never ours — this is the rule the report exists for**
+
+While an incident is open the thread runs between the customer and the seller and our team owes
+nothing. Our work starts the moment the seller marks it **resolved**: from then on the verification
+and the closure are ours, whoever typed the last message. Only *after* the lifecycle has decided that
+does `Last action by` matter:
+
+| Lifecycle / last action | Waiting on |
+|---|---|
+| `resolved` | **us** — verify and close |
+| `open`, customer spoke last | the seller |
+| `open`, seller spoke last | the customer |
+| `open`, operator spoke last | operator acted last; the ball is back with the other two |
+| `closed` | nobody |
+
+The first version read this off `Last action by` alone and called a waiting customer message our
+queue, which produced the exact inverse of the team's real worklist. The *Waiting on us* section is
+now that worklist.
+
+**Thresholds** — warning at `WarningDays` (7), breach at `BreachDays` (14), stale at `StaleDays` (3)
+regardless of age, escalation at `HotThreadMessages` (8). They ride on the payload rather than being
+restated in the JS, so the dashboard and the builder cannot drift apart. Ages are measured against a
+`DateTime.Now` captured once per build; `dataAsOf` reports the newest action in the upload separately,
+and a warning appears when the export is more than a day old.
+
+**The closed history cut-off**
+
+The closed export is a full history dump — 571 rows going back to October 2025 on the sample, of which
+only 16 closed on or after `ClosedFrom` (2026-09-02). Only the recent part is wanted, and that is
+permanent. It is applied as the **pre-filled value of the "Closed — from" input**, not as a
+server-side cut: the default is the rule, the filter summary says how many rows it hides, and clearing
+the date brings the whole history back without a deployment. *Reset* restores the cut-off rather than
+clearing it.
+
+**No money anywhere**
+
+The export's `Quantity`, order-total and `Currency` columns are deliberately **not read**. They
+describe the *order* rather than the incident — the same total repeats on every incident raised
+against one order, and on a split order on both sellers' halves — and this is a queue, not a
+financial report. They are not in `RequiredColumns` either: the module requires only what it reads,
+so an export trimmed of them still builds.
+
+**Who acted is decided by the user, not the role**
+
+The role column cannot separate a person at the operator from the automation posting under the same
+role: `@media-saturn.com` is the operator, the literal `Operator API` is automation, a blank user is
+the customer, and any other mailbox is the seller's.
+
+**Everything else is aggregated in the browser.** The builder sends flat rows with the per-row
+derivations already done; the seller, reason, product, workload and value scorecards are all computed
+in `incidents-report.js` so they answer for whatever the filter bar is currently narrowing to.
 
 ## Notes for maintainers
 
