@@ -23,9 +23,9 @@ namespace YeniRPA.Web.Controllers;
 [ApiController]
 [Route("api/title-cleaner")]
 public sealed class TitleCleanerController(
-    TitleRuleStore store,
-    CategoryRuleStore categories,
-    TitleReferenceStore references) : ControllerBase
+    ITitleRuleStore store,
+    ICategoryRuleStore categories,
+    ITitleReferenceStore references) : ControllerBase
 {
     // [FromForm] is not optional on the string parameters below. Under [ApiController] a simple type
     // binds from the route or query string by default — only IFormFile is taken from the multipart
@@ -40,7 +40,7 @@ public sealed class TitleCleanerController(
         if (file is not { Length: > 0 })
             return BadRequest(new { error = "Please upload the product file (.xlsx or .csv)." });
 
-        var table = await ReadTableAsync(file, cancellationToken);
+        var table = ReadTable(file);
         var suggestion = TitleRuleSuggester.Suggest(table, name);
 
         return Ok(new TitleSuggestionResponse(
@@ -78,7 +78,7 @@ public sealed class TitleCleanerController(
         if (file is not { Length: > 0 })
             return BadRequest(new { error = "Please upload the RuleSet workbook (.xlsx)." });
 
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
         var rules = CategoryRuleStore.ReadWorkbook(stream, file.FileName);
 
         categories.Save(new CategoryRuleFile(1, null, file.FileName, rules));
@@ -119,7 +119,7 @@ public sealed class TitleCleanerController(
         if (string.IsNullOrWhiteSpace(column))
             return BadRequest(new { error = "Değerlerin hangi kolonda olduğunu yazın." });
 
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
         var values = TitleReferenceStore.ReadWorkbook(stream, column);
 
         references.Put(new TitleReferenceList(
@@ -233,7 +233,7 @@ public sealed class TitleCleanerController(
         if (file is not { Length: > 0 })
             return BadRequest(new { error = "Please upload the rule set file (.xlsx or .csv)." });
 
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
         var sets = TitleRuleStore.ReadWorkbook(stream, file.FileName);
         var lists = references.Load().ListList;
 
@@ -258,7 +258,7 @@ public sealed class TitleCleanerController(
             return BadRequest(new { error = "Please upload the product file (.xlsx or .csv)." });
 
         var rules = Resolve(ruleSet, ruleSetName);
-        var table = await ReadTableAsync(file, cancellationToken);
+        var table = ReadTable(file);
 
         return Ok(TitleCleanBuilder.BuildData(
             rules, table, null, categories.Load().RuleList, CategoryRuleStore.FileCategory(table)));
@@ -295,7 +295,7 @@ public sealed class TitleCleanerController(
             return BadRequest(new { error = "Uygulanacak bir düzeltme seçilmedi." });
 
         var rules = Resolve(ruleSet, ruleSetName);
-        var table = await ReadTableAsync(file, cancellationToken);
+        var table = ReadTable(file);
 
         // Recomputed with the same inputs the preview had, RuleSet included. A card is matched by an
         // id derived from its scenario, so leaving the category rules out here would simply lose
@@ -373,7 +373,7 @@ public sealed class TitleCleanerController(
             return BadRequest(new { error = "Please upload the product file (.xlsx or .csv)." });
 
         var rules = Resolve(ruleSet, ruleSetName);
-        var table = await ReadTableAsync(file, cancellationToken);
+        var table = ReadTable(file);
         var rows = TitleCleanBuilder.Clean(rules, table);
 
         return File(
@@ -407,18 +407,11 @@ public sealed class TitleCleanerController(
         return CompiledRuleSet.Compile(saved, lists);
     }
 
-    static async Task<List<List<string>>> ReadTableAsync(IFormFile file, CancellationToken cancellationToken)
+    /// <summary><see cref="IFormFile.OpenReadStream"/> is already seekable — ASP.NET Core buffers the
+    /// multipart body to memory or disk before the action runs — so no extra copy is needed here.</summary>
+    static List<List<string>> ReadTable(IFormFile file)
     {
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
         return TabularFile.Read(stream, file.FileName);
-    }
-
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
     }
 }

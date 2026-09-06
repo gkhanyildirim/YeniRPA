@@ -40,9 +40,7 @@ public sealed class ProductStatusController : ControllerBase
             List<List<string>> table;
             try
             {
-                using var stream = new MemoryStream();
-                await file.CopyToAsync(stream, cancellationToken);
-                stream.Position = 0;
+                using var stream = file.OpenReadStream();
                 table = TabularFile.Read(stream, file.FileName);
             }
             catch (Exception ex)

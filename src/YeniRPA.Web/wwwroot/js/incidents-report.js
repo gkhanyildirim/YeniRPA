@@ -933,10 +933,16 @@
       breachDays: data.breachDays,
       staleDays: data.staleDays,
       minSampleSize: data.minSampleSize,
-      closedFrom: data.closedFrom || ''
+      closedFrom: data.closedFrom || '',
+      // Only the WhatsApp warnings section reads this — it stamps the messages it renders.
+      referenceTime: data.referenceTime || ''
     };
 
     RPA.resetDataTables();
+
+    // A new upload invalidates whatever chase list was prepared from the previous one. Cleared rather
+    // than left on screen, because the messages below it would still quote the old ages.
+    resetWarnings();
 
     fillSelect('inc-lifecycle', [OPEN, RESOLVED, CLOSED], 'All');
     fillSelect('inc-status', ROWS.map(r => r.status), 'All statuses');
@@ -972,11 +978,591 @@
     RPA.revealResults('inc-results');
   }
 
+  // ===========================================================================
+  // WhatsApp warnings
+  //
+  // The one part of this panel that acts rather than reports: it chases sellers who have left an
+  // incident unanswered. Everything above this line derives figures from ROWS in the browser; from
+  // here down the server owns the decisions, because the outcome is a message to an external party
+  // that cannot be recalled.
+  //
+  // Three boundaries are deliberate and should not be "simplified" away:
+  //
+  //   1. The eligibility rule lives in IncidentWarningBuilder, not here. This file only projects the
+  //      rows and posts them. Age is recomputed there against a fresh clock rather than reusing
+  //      r.ageDays, which was frozen when the export was uploaded.
+  //   2. It reads ROWS, never the filtered set. A send list quietly narrowed by a forgotten date
+  //      filter is a seller who is never chased, and nobody would notice.
+  //   3. Rendering is driven from prepare() and never from renderAll()/applyFilter(), which re-run on
+  //      every keystroke in the search box. Hanging this off them would wipe approved message text
+  //      mid-review.
+  //
+  // The seller → group mapping and the WhatsApp sign-in are shared with Late Order Warnings and are
+  // owned by that panel. The badge here is read-only for that reason: both modules drive one Chrome
+  // profile, and a second "Clear session" button could wipe it out from under a running batch.
+  // ---------------------------------------------------------------------------
+
+  /** The bus/SSE module name. NOT the panel's own module key, which is 'incidents'. */
+  const WA_MODULE = 'incident-warnings';
+
+  let waPrepared = null;      // the last IncidentWarningData, so a template edit needs no re-prepare
+  let waMessages = [];
+  let waStream = null;        // EventSource, opened once the panel has been visited
+  let waActivated = false;
+  let waRunning = false;
+  let waTotal = 0;
+  let waMine = false;         // latched on `started`; the bus is shared with every other module
+  let waDefaultTemplate = '';
+  let waDefaultLineTemplate = '';
+
+  function waEl(id) { return document.getElementById(id); }
+
+  /**
+   * The { success, message, data } envelope every /api/incident-warnings endpoint returns.
+   *
+   * RPA.sendJson cannot be used: it only throws on a non-2xx status and its error reader looks for
+   * `error`, never `message`. Same shape and same reason as the helper in settings.js.
+   */
+  async function waJson(method, url, payload) {
+    const init = { method: method };
+    if (payload !== undefined) {
+      init.headers = { 'Content-Type': 'application/json' };
+      init.body = JSON.stringify(payload);
+    }
+
+    const response = await fetch(url, init);
+
+    let body;
+    try {
+      body = await response.json();
+    } catch (e) {
+      throw new Error('Request failed with status ' + response.status + '.');
+    }
+
+    if (!body || body.success !== true) {
+      throw new Error((body && body.message) || ('Request failed with status ' + response.status + '.'));
+    }
+
+    return body.data;
+  }
+
+  // ----- Session badge (read-only) -----
+
+  async function waRefreshStatus() {
+    const badge = waEl('inc-wa-session-badge');
+    const note = waEl('inc-wa-session-note');
+
+    let status;
+    try {
+      status = await waJson('GET', '/api/incident-warnings/status');
+    } catch (e) {
+      badge.className = 'badge red';
+      badge.textContent = 'Status unavailable';
+      note.textContent = '';
+      return;
+    }
+
+    // signedIn stays null until something has actually probed the page — "a profile exists" and "the
+    // session is live" are different claims and the badge must not conflate them.
+    if (status.signedIn === true) {
+      badge.className = 'badge green';
+      badge.textContent = 'Signed in';
+      note.textContent = '';
+    } else if (status.signedIn === false) {
+      badge.className = 'badge red';
+      badge.textContent = 'Signed out';
+      note.textContent = 'Scan the QR code from the Late Order Warnings tab — both modules share one WhatsApp profile.';
+    } else if (status.hasProfile) {
+      badge.className = 'badge amber';
+      badge.textContent = 'Profile saved — not checked yet';
+      note.textContent = 'Check the session from the Late Order Warnings tab.';
+    } else {
+      badge.className = 'badge amber';
+      badge.textContent = 'No profile — sign in required';
+      note.textContent = 'Sign in from the Late Order Warnings tab — both modules share one WhatsApp profile.';
+    }
+
+    waSetRunning(status.isRunning, status.runningModule);
+  }
+
+  /** Idempotent: the run state arrives from the POST, from /status and from the event stream. */
+  function waSetRunning(isRunning, runningModule) {
+    waRunning = !!isRunning;
+
+    const send = waEl('inc-wa-send');
+    RPA.setBusy(send, waRunning, 'Running…');
+    send.disabled = waRunning || waMessages.length === 0;
+
+    if (waRunning && runningModule && runningModule !== WA_MODULE) {
+      send.title = 'Another automation run (' + runningModule + ') is using the browser.';
+    } else {
+      send.removeAttribute('title');
+    }
+
+    if (waRunning) waEl('inc-wa-run').hidden = false;
+  }
+
+  // ----- Run log -----
+
+  function waAppendLog(message) {
+    const box = waEl('inc-wa-console');
+    // Follow the tail only while the operator is already at the bottom — scrolling back through a
+    // long run must not be yanked away by the next line.
+    const pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+    box.textContent += message + '\n';
+    if (pinned) box.scrollTop = box.scrollHeight;
+  }
+
+  function waSetProgress(completed) {
+    const percent = waTotal > 0 ? Math.round((completed / waTotal) * 100) : 0;
+    waEl('inc-wa-progress-fill').style.width = percent + '%';
+    waEl('inc-wa-progress').setAttribute('aria-valuenow', String(percent));
+    waEl('inc-wa-progress-text').textContent = completed + ' / ' + waTotal;
+  }
+
+  /**
+   * The bus is shared with Create Return, Product Status and Late Order Warnings, and only the
+   * `started` frame names a module — the log lines that follow carry none. So `waMine` is latched
+   * there and gates everything after it, or this console would fill with another module's run.
+   */
+  function waHandleEvent(event) {
+    switch (event.type) {
+      case 'started':
+        waMine = event.module === WA_MODULE;
+        if (!waMine) return;
+        waTotal = event.total;
+        waEl('inc-wa-run').hidden = false;
+        waEl('inc-wa-console').textContent = '';
+        waEl('inc-wa-progress').classList.remove('is-done');
+        waSetProgress(0);
+        waSetRunning(true, WA_MODULE);
+        break;
+
+      case 'log':
+        if (waMine) waAppendLog(event.message);
+        break;
+
+      case 'progress':
+        if (!waMine) return;
+        waTotal = event.total;
+        waSetProgress(event.completed);
+        break;
+
+      case 'done':
+        if (!waMine) return;
+        waAppendLog('');
+        waAppendLog('Finished. Processed: ' + event.processed + ' · Failed: ' + event.failed.length);
+        if (event.failed.length) waAppendLog('Failed groups:\n  ' + event.failed.join('\n  '));
+        waEl('inc-wa-progress').classList.add('is-done');
+        waSetRunning(false);
+        waRefreshStatus();
+        break;
+    }
+  }
+
+  function waConnect() {
+    if (waStream) return;
+
+    waStream = new EventSource('/api/automation/events');
+    waStream.addEventListener('message', function (message) {
+      let payload;
+      try {
+        payload = JSON.parse(message.data);
+      } catch (e) {
+        return;
+      }
+      waHandleEvent(payload);
+    });
+
+    // EventSource reconnects on its own and the server replays the current run's log onto the new
+    // connection, so a dropped stream needs no recovery here.
+    waStream.addEventListener('error', function () { });
+  }
+
+  // ----- Tables -----
+
+  const waIncidentColumns = [
+    { label: 'Age', numeric: true, value: r => r.ageDays, render: r => '<span class="badge red">' + r.ageDays.toFixed(1) + ' d</span>' },
+    { label: 'Opened', value: r => r.openedOn, render: r => RPA.escapeHtml(r.openedOn) },
+    { label: 'Order', value: r => r.orderNumber, render: r => RPA.escapeHtml(r.orderNumber || '-') },
+    { label: 'Seller', value: r => r.seller, render: r => RPA.escapeHtml(r.seller || '-') },
+    { label: 'WhatsApp group', value: r => r.groupName || '', render: r => r.groupName ? RPA.escapeHtml(r.groupName) : '<span class="badge amber">no group</span>' },
+    { label: 'Reason', value: r => r.reason, render: r => RPA.escapeHtml(r.reason || '-') },
+    { label: 'Status', value: r => r.status, render: r => RPA.escapeHtml(r.status || '-') }
+  ];
+
+  const waUnmappedColumns = [
+    { label: 'Seller', value: r => r.sellerName, render: r => RPA.escapeHtml(r.sellerName) },
+    { label: 'Incidents', numeric: true, value: r => r.incidentCount, render: r => RPA.fmtInt(r.incidentCount) },
+    { label: 'Oldest', numeric: true, value: r => r.maxAgeDays, render: r => r.maxAgeDays.toFixed(1) + ' d' },
+    {
+      label: 'Why', value: r => r.mappingProblem || '',
+      render: r => (r.mappingConflict ? '<span class="badge red">conflict</span> ' : '') +
+        RPA.escapeHtml(r.mappingProblem || '')
+    }
+  ];
+
+  const waFunnelColumns = [
+    { label: 'Stage', value: r => r.stage, render: r => RPA.escapeHtml(r.stage) },
+    { label: 'Incidents', numeric: true, value: r => r.count, render: r => RPA.fmtInt(r.count) },
+    { label: 'What it means', value: r => r.note, render: r => RPA.escapeHtml(r.note) }
+  ];
+
+  const waReviewColumns = [
+    { label: 'Order', value: r => r.orderNumber, render: r => RPA.escapeHtml(r.orderNumber || '-') },
+    { label: 'Seller', value: r => r.seller, render: r => RPA.escapeHtml(r.seller || '-') },
+    { label: 'Opened on (raw)', value: r => r.openedOn, render: r => RPA.escapeHtml(r.openedOn || '(blank)') },
+    { label: 'Why', value: r => r.reason, render: r => RPA.escapeHtml(r.reason) }
+  ];
+
+  /** One flat row per incident, for the table and its Excel export. */
+  function waIncidentRows(sellers) {
+    const rows = [];
+    sellers.forEach(seller => {
+      seller.incidents.forEach(incident => {
+        rows.push({
+          ageDays: incident.ageDays,
+          openedOn: incident.openedOn,
+          orderNumber: incident.orderNumber,
+          seller: seller.sellerName,
+          groupName: seller.groupName,
+          reason: incident.reason,
+          status: incident.status
+        });
+      });
+    });
+    return rows.sort((a, b) => b.ageDays - a.ageDays);
+  }
+
+  function waFunnelRows(data) {
+    const f = data.funnel;
+    return [
+      { stage: 'Incidents in the report', count: f.rowsIn, note: 'Every row from both uploads, before any rule is applied' },
+      { stage: 'Closed', count: f.closed, note: 'Already finished' },
+      { stage: 'Resolved — waiting on us', count: f.resolvedAwaitingUs, note: 'The seller answered; the verification and closure are ours, so they are not chased' },
+      { stage: 'Open, but not the seller\'s turn', count: f.waitingOnOther, note: 'The seller already replied, or the thread is with us' },
+      { stage: 'Opened-on date unreadable', count: f.noOpenedDate, note: 'Age unknown — set aside for review, never assumed to be old' },
+      { stage: 'Open less than ' + data.thresholdDays + ' day(s)', count: f.belowThreshold, note: 'Under the chase threshold' },
+      { stage: 'To chase', count: f.eligible, note: 'Open, ' + data.thresholdDays + '+ days old, and the customer spoke last' },
+      { stage: 'Sellers', count: f.sellers, note: 'Distinct sellers behind those incidents' },
+      { stage: '— with a WhatsApp group', count: f.mappedSellers, note: 'Can be messaged' },
+      { stage: '— with no group', count: f.unmappedSellers, note: 'Add them on the Late Order Warnings tab, by seller name' },
+      { stage: '— name mapped twice', count: f.nameConflictSellers, note: 'Ambiguous: the incident export has no seller id to break the tie. Remove the duplicate row' }
+    ];
+  }
+
+  // ----- Prepare -----
+
+  function resetWarnings() {
+    waPrepared = null;
+    waMessages = [];
+    const prepared = waEl('inc-wa-prepared');
+    if (prepared) prepared.hidden = true;
+    const send = waEl('inc-wa-send');
+    if (send) send.disabled = true;
+    const exportBtn = waEl('inc-wa-messages-export');
+    if (exportBtn) exportBtn.disabled = true;
+  }
+
+  function waRenderPrepared(data) {
+    waPrepared = data;
+
+    const notes = (data.warnings || []).slice();
+    waEl('inc-wa-warnings').hidden = notes.length === 0;
+    waEl('inc-wa-warnings-list').innerHTML = notes.map(w => '<li>' + RPA.escapeHtml(w) + '</li>').join('');
+
+    const unmapped = data.sellers.filter(s => !s.groupName);
+    waEl('inc-wa-unmapped').hidden = unmapped.length === 0;
+    waEl('inc-wa-unmapped-sub').textContent = unmapped.length
+      ? RPA.fmtInt(unmapped.length) + ' seller(s) have chaseable incidents but no WhatsApp group. ' +
+        'The incident export carries no seller id, so the mapping is matched on the seller name — ' +
+        'a mapping row entered by id alone cannot match here.'
+      : '';
+    RPA.renderTable('inc-wa-unmapped-wrap', unmapped, waUnmappedColumns, 'Every seller to chase is mapped.');
+
+    RPA.renderTable('inc-wa-incidents-wrap', waIncidentRows(data.sellers), waIncidentColumns,
+      'No incident has been open that long with the seller still to reply. Lower the day threshold to widen it.');
+    RPA.renderTable('inc-wa-funnel-wrap', waFunnelRows(data), waFunnelColumns, 'Nothing to report.');
+    RPA.renderTable('inc-wa-review-wrap', data.review, waReviewColumns,
+      'Nothing was set aside — every open incident had a readable opened-on date.');
+
+    RPA.syncExportButtons();
+
+    waEl('inc-wa-threshold').value = data.thresholdDays;
+    waEl('inc-wa-prepared').hidden = false;
+
+    return waRenderMessages();
+  }
+
+  async function waPrepare() {
+    if (!ROWS.length) {
+      RPA.showError('inc-wa-prepare-alert', 'Generate the dashboard first — there are no incidents to check.');
+      return;
+    }
+    RPA.clearError('inc-wa-prepare-alert');
+
+    const button = waEl('inc-wa-prepare');
+    RPA.setBusy(button, true, 'Working…');
+    try {
+      // ROWS, not the filtered set — see the boundary note at the top of this region. Projected down
+      // to the seven fields the rule and the message need: the customer's name and the product they
+      // complained about have no business on this request.
+      const rows = ROWS.map(r => ({
+        seller: r.seller,
+        orderNumber: r.orderNumber,
+        openedOn: r.openedOn,
+        lifecycle: r.lifecycle,
+        waitingOn: r.waitingOn,
+        reason: r.reason,
+        status: r.status
+      }));
+
+      const data = await waJson('POST', '/api/incident-warnings/prepare', {
+        rows: rows,
+        thresholdDays: Number(waEl('inc-wa-threshold').value) || 2
+      });
+
+      await waRenderPrepared(data);
+    } catch (err) {
+      RPA.showError('inc-wa-prepare-alert', err.message);
+    } finally {
+      RPA.setBusy(button, false);
+    }
+  }
+
+  // ----- Messages -----
+
+  function waMessageCardHtml(message, index) {
+    return '<div class="msg-card">' +
+      '<div class="msg-head">' +
+        '<span class="badge green">' + RPA.escapeHtml(message.groupName) + '</span>' +
+        '<span class="msg-meta">' + RPA.escapeHtml(message.sellerName) +
+          ' · ' + message.orderCount + ' incident(s)' +
+          (message.accountCount > 1 ? ' · <span class="badge amber">' + message.accountCount + ' sellers merged</span>' : '') +
+          (message.truncated ? ' · <span class="badge amber">truncated</span>' : '') +
+          // Flagged here rather than at Send: finding out a message is too long after approving it is
+          // the wrong moment, and the template is still editable at this point.
+          (message.overLimit ? ' · <span class="badge red">over the character limit</span>' : '') +
+        '</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm inc-wa-copy" data-index="' + index + '">Copy</button>' +
+      '</div>' +
+      '<pre class="msg-body">' + RPA.escapeHtml(message.body) + '</pre>' +
+    '</div>';
+  }
+
+  async function waRenderMessages() {
+    if (!waPrepared) return;
+
+    RPA.clearError('inc-wa-messages-alert');
+    try {
+      const result = await waJson('POST', '/api/incident-warnings/messages', {
+        sellers: waPrepared.sellers,
+        referenceTime: waPrepared.referenceTime,
+        template: waEl('inc-wa-template').value,
+        lineTemplate: waEl('inc-wa-line-template').value
+      });
+
+      waMessages = result.messages || [];
+      waEl('inc-wa-messages').innerHTML = waMessages.length
+        ? waMessages.map(waMessageCardHtml).join('')
+        : '<div class="empty-state">No message to compose — every seller to chase is unmapped, or nothing is past the threshold.</div>';
+
+      waEl('inc-wa-messages-summary').textContent = waMessages.length
+        ? RPA.fmtInt(waMessages.length) + ' message(s) ready'
+        : '';
+      waEl('inc-wa-messages-export').disabled = waMessages.length === 0;
+      waEl('inc-wa-send').disabled = waRunning || waMessages.length === 0;
+
+      if (result.warnings && result.warnings.length) {
+        RPA.showError('inc-wa-messages-alert', result.warnings.join(' '));
+      }
+    } catch (err) {
+      RPA.showError('inc-wa-messages-alert', err.message);
+    }
+  }
+
+  // ----- Settings -----
+
+  async function waLoadSettings() {
+    try {
+      const settings = await waJson('GET', '/api/incident-warnings/settings');
+
+      waDefaultTemplate = settings.defaultTemplate;
+      waDefaultLineTemplate = settings.defaultLineTemplate;
+
+      waEl('inc-wa-template').value = settings.template;
+      waEl('inc-wa-line-template').value = settings.lineTemplate;
+      waEl('inc-wa-threshold').value = settings.thresholdDays;
+      waEl('inc-wa-threshold').min = settings.minThresholdDays;
+      waEl('inc-wa-threshold').max = settings.maxThresholdDays;
+      waEl('inc-wa-placeholders').textContent = settings.placeholders.join('  ');
+      waEl('inc-wa-settings-note').textContent = settings.updatedUtc ? 'Saved ' + settings.updatedUtc : '';
+    } catch (err) {
+      RPA.showError('inc-wa-prepare-alert', err.message);
+    }
+  }
+
+  async function waSaveSettings() {
+    const button = waEl('inc-wa-save-settings');
+    RPA.clearError('inc-wa-messages-alert');
+    RPA.setBusy(button, true, 'Saving…');
+    try {
+      await waJson('PUT', '/api/incident-warnings/settings', {
+        template: waEl('inc-wa-template').value,
+        lineTemplate: waEl('inc-wa-line-template').value,
+        thresholdDays: Number(waEl('inc-wa-threshold').value) || 2
+      });
+      await waLoadSettings();
+    } catch (err) {
+      RPA.showError('inc-wa-messages-alert', err.message);
+    } finally {
+      RPA.setBusy(button, false);
+    }
+  }
+
+  // ----- Send -----
+
+  /**
+   * The last checkpoint before something irreversible. It names the destinations rather than just
+   * counting them, because reading a group name is the only way to notice a wrong mapping — and with
+   * no seller id in this export, the mapping was matched on a name.
+   */
+  function waConfirmSend(dryRun) {
+    const names = waMessages.map(m => m.groupName);
+    const shown = names.slice(0, 12);
+    const rest = names.length - shown.length;
+
+    const heading = dryRun
+      ? 'DRY RUN — open ' + names.length + ' group(s), compose and verify, but send nothing?'
+      : 'SEND ' + names.length + ' message(s) for real? A WhatsApp message cannot be recalled.';
+
+    const tail = rest > 0
+      ? '\n  …and ' + rest + ' more (all of them are listed on the cards above)'
+      : '';
+
+    const slotWarning = dryRun
+      ? ''
+      : '\n\nThis holds the automation slot for roughly ' +
+        Math.max(1, Math.round(names.length * 9 / 60)) + ' minute(s); no other automation can run during it.';
+
+    return window.confirm(heading + '\n\n  ' + shown.join('\n  ') + tail + slotWarning);
+  }
+
+  async function waSend() {
+    if (!waMessages.length) return;
+
+    const dryRun = waEl('inc-wa-dry-run').checked;
+    if (!waConfirmSend(dryRun)) return;
+
+    RPA.clearError('inc-wa-messages-alert');
+
+    // Opened before the POST so the first events of the run cannot be missed.
+    waConnect();
+    waSetRunning(true, WA_MODULE);
+    waEl('inc-wa-run').hidden = false;
+
+    try {
+      await waJson('POST', '/api/incident-warnings/send', {
+        dryRun: dryRun,
+        messages: waMessages.map(m => ({
+          groupName: m.groupName,
+          sellerName: m.sellerName,
+          body: m.body
+        }))
+      });
+    } catch (err) {
+      RPA.showError('inc-wa-messages-alert', err.message);
+      waSetRunning(false);
+    }
+  }
+
+  /** navigator.clipboard needs a secure context; localhost is one, but keep a fallback anyway. */
+  async function waCopyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      const scratch = document.createElement('textarea');
+      scratch.value = text;
+      scratch.setAttribute('readonly', '');
+      scratch.style.position = 'fixed';
+      scratch.style.opacity = '0';
+      document.body.appendChild(scratch);
+      scratch.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+      scratch.remove();
+      return ok;
+    }
+  }
+
+  function waActivate() {
+    if (waActivated) return;
+    waActivated = true;
+    waLoadSettings();
+    waConnect();
+    waRefreshStatus();
+  }
+
+  function waWire() {
+    waEl('inc-wa-prepare').addEventListener('click', waPrepare);
+    waEl('inc-wa-render').addEventListener('click', waRenderMessages);
+    waEl('inc-wa-save-settings').addEventListener('click', waSaveSettings);
+    waEl('inc-wa-send').addEventListener('click', waSend);
+
+    waEl('inc-wa-template-reset').addEventListener('click', function () {
+      waEl('inc-wa-template').value = waDefaultTemplate;
+      waEl('inc-wa-line-template').value = waDefaultLineTemplate;
+      waRenderMessages();
+    });
+
+    waEl('inc-wa-messages-export').addEventListener('click', async function () {
+      const button = waEl('inc-wa-messages-export');
+      RPA.clearError('inc-wa-messages-alert');
+      RPA.setBusy(button, true, 'Building…');
+      try {
+        await RPA.postDownloadJson('/api/incident-warnings/messages/excel',
+          { messages: waMessages }, 'incident-warnings.xlsx');
+      } catch (err) {
+        RPA.showError('inc-wa-messages-alert', err.message);
+      } finally {
+        RPA.setBusy(button, false);
+      }
+    });
+
+    // Delegated: the cards are re-rendered on every render, so per-card listeners would be lost.
+    document.getElementById('panel-incidents').addEventListener('click', async function (event) {
+      const copy = event.target.closest('.inc-wa-copy');
+      if (!copy) return;
+
+      const message = waMessages[Number(copy.dataset.index)];
+      if (!message) return;
+
+      const ok = await waCopyText(message.body);
+      copy.textContent = ok ? 'Copied' : 'Copy failed';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1600);
+    });
+
+    // app.js selects the initial module while running its own DOMContentLoaded handler, which is
+    // registered before this one — so the first rpa:modulechange has already been dispatched by the
+    // time the listener below exists. Check the tab directly instead of waiting for a repeat.
+    //
+    // The panel's module key is 'incidents'; WA_MODULE above is the automation bus's name for the
+    // run this section starts. They are not interchangeable.
+    document.addEventListener('rpa:modulechange', function (event) {
+      if (event.detail.module === 'incidents') waActivate();
+    });
+
+    if (document.getElementById('tab-incidents').getAttribute('aria-selected') === 'true') waActivate();
+  }
+
   // ---------------------------------------------------------------------------
   // Wiring
   // ---------------------------------------------------------------------------
 
   document.addEventListener('DOMContentLoaded', function () {
+    waWire();
+
     RPA.initDropzone('inc-open-drop', 'inc-open-file');
     RPA.initDropzone('inc-closed-drop', 'inc-closed-file');
 

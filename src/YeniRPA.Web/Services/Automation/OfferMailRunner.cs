@@ -28,7 +28,7 @@ public sealed record OutgoingMail(
 /// Sends the approved batch of seller warnings through <see cref="OutlookMailSender"/>, reporting on
 /// the shared <see cref="AutomationJobBus"/>.
 ///
-/// <para>Far smaller than <c>LateOrderWhatsAppRunner</c> because the risky part is elsewhere: there,
+/// <para>Far smaller than <c>WhatsAppMessageRunner</c> because the risky part is elsewhere: there,
 /// the danger is finding the right chat in a UI that re-sorts under the click, so the guards are
 /// read-backs against the live page. Here, the address and the attachment are decided before the run
 /// starts and re-validated by the controller, so this class only has to send them, pace itself, and

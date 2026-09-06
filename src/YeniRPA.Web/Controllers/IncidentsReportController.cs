@@ -25,26 +25,13 @@ public sealed class IncidentsReportController : ControllerBase
         if (!hasOpen && !hasClosed)
             return BadRequest(new { error = "Please upload at least one incident export: open incidents, closed incidents, or both." });
 
-        using var openStream = hasOpen
-            ? await CopyToSeekableStreamAsync(openIncidents!, cancellationToken)
-            : null;
-        using var closedStream = hasClosed
-            ? await CopyToSeekableStreamAsync(closedIncidents!, cancellationToken)
-            : null;
+        using var openStream = hasOpen ? openIncidents!.OpenReadStream() : null;
+        using var closedStream = hasClosed ? closedIncidents!.OpenReadStream() : null;
 
         var data = IncidentsReportBuilder.BuildData(
             openStream, openIncidents?.FileName,
             closedStream, closedIncidents?.FileName);
 
         return Ok(data);
-    }
-
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
     }
 }

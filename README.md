@@ -12,6 +12,7 @@ with tab navigation between them and results rendered in place.
 | **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per WhatsApp group (copy to clipboard or export to Excel) |
 | **Seller Offer Warnings** | The Mirakl `offers` export + the seller address list (`Onboarding Check List.xlsx`, sheet `Data`) | One `.xlsx` per seller listing their offers with a lead time to ship of 1–2 days, then one warning mail per seller carrying their own file, previewed in full and sent through Outlook with a live run log |
 | **Seller VAT Warnings** | The "offers with no VAT rate" export (needs a `State Reasons` column) + the same seller address list | One `.xlsx` per seller listing the products whose *only* state reason is `VAT_RATE_MISSING`, mailed the same way |
+| **Incident Warnings** | The incidents already loaded in the Incidents Report + the same seller → WhatsApp group mapping | The incidents open past a day threshold with the seller still to reply, by seller, plus a funnel and one composed warning message per WhatsApp group |
 | **Title Cleaner** | A product export (`.xlsx` or `.csv`) with a title column and attribute columns | Each title stripped of what that row's own attributes name, the cells that disagreed with their title, and the cells completed from it — previewed in full, then a 3-sheet workbook |
 | **Data & Methodology** | — | Reference page: source column per metric, calculation rules, known export traps, limits |
 
@@ -19,7 +20,10 @@ The reports are read-only: they never leave the machine and nothing is stored. *
 not** — it drives a real browser against the Mirakl back office and writes to the marketplace. See
 [Create Return](#create-return-automation). **Late Order Warnings is not either**, and goes further:
 it posts messages to external parties in WhatsApp groups, and a sent message cannot be recalled. See
-[Late Order Warnings](#late-order-warnings). **Seller Offer Warnings and Seller VAT Warnings** are the
+[Late Order Warnings](#late-order-warnings). The **Incident Warnings** section at the bottom of the
+Incidents Report does the same thing off a different clock — the incident's own age — so that panel is
+read-only everywhere except there. See [Incident Warnings](#incident-warnings). **Seller Offer
+Warnings and Seller VAT Warnings** are the
 same class of thing again, with one extra hazard: every mail carries a commercially sensitive
 attachment, so the file that goes out matters as much as the address. See
 [Seller Offer Warnings](#seller-offer-warnings).
@@ -752,10 +756,15 @@ five different sellers — and every rule in this module came from such a file i
 of its checks are invariants rather than expected strings: nothing an attribute reported as removed is
 still in the cleaned title, and a second pass takes nothing further out.
 
-Requires the .NET 10 SDK. `ClosedXML` and `Microsoft.Playwright` are the only NuGet dependencies;
+Requires the .NET 10 SDK. `ClosedXML`, `Microsoft.Playwright` and `LiteDB` are the NuGet dependencies;
 Chart.js and the IBM Plex fonts are vendored under `wwwroot/lib`, so the app has **no external
 network dependencies at runtime**. Playwright is needed only by Create Return — the report modules
-never touch it, and it launches no browser until that module is used.
+never touch it, and it launches no browser until that module is used. LiteDB is the embedded database
+behind the settings stores (seller/group mapping, Title Cleaner's rule sets and reference lists, the
+offer/VAT warning templates) — one file, `%LOCALAPPDATA%\YeniRPA\database.db`, opened in
+`ConnectionType.Shared` mode so a second local instance does not corrupt it. A pre-existing JSON file
+from before this file existed is imported into it once, automatically, the first time the app starts;
+the JSON is left on disk afterwards rather than deleted.
 
 ## Layout
 
@@ -867,8 +876,10 @@ src/YeniRPA.Web/
 │       ├── MiraklBrowser.cs         Playwright browser + encrypted saved login
 │       ├── CreateReturnRunner.cs    The Create Return flow, one order at a time
 │       ├── OutlookMailSender.cs     Outlook COM on one dedicated STA thread
-│       └── OfferMailRunner.cs       The seller warning batch, one mail at a time —
-│                                    shared by both warning modules, module name a parameter
+│       ├── OfferMailRunner.cs       The seller warning batch, one mail at a time —
+│       │                            shared by both warning modules, module name a parameter
+│       └── WhatsAppMessageRunner.cs Types one body into one named group — knows nothing
+│                                    about deadlines or incidents; module name a parameter
 ├── Models/ReportModels.cs           JSON contract with the dashboard JavaScript
 │                                    (terse row fields; extended ones omitted when default)
 ├── Models/IncidentsModels.cs        Incident row: the 23 export columns plus the derived
@@ -884,7 +895,8 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
     ├── js/app.js                    Shell: nav, theme, uploads, fetch
     ├── js/order-report.js           Order dashboard aggregation + charts
     ├── js/return-sla-report.js      Return SLA dashboard
-    ├── js/incidents-report.js       Incidents dashboard: all grouping, so it follows the filter
+    ├── js/incidents-report.js       Incidents dashboard: all grouping, so it follows the filter —
+    │                                plus the WhatsApp warnings section, which deliberately does not
     ├── js/create-return.js          Create Return: session, upload, live run log
     ├── js/late-orders.js            Late Order Warnings: mapping editor, preview, messages
     ├── js/offer-warnings.js         Seller Offer Warnings: two uploads, preview, send
@@ -915,6 +927,12 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
 | `POST` | `/api/late-orders/send` | JSON `{ messages, dryRun }` | `{ count, dryRun }`; the run continues in the background |
 | `GET` | `/api/late-orders/status` | — | `{ hasProfile, signedIn, browserReady, isRunning, runningModule, profilePath }` |
 | `POST` | `/api/late-orders/login` \| `check-session` \| `clear-session` | — | `200` |
+| `POST` | `/api/incident-warnings/prepare` | JSON `{ rows, thresholdDays }` | Incidents to chase, by seller, plus funnel, review rows and warnings |
+| `POST` | `/api/incident-warnings/messages` | JSON `{ sellers, referenceTime, template, lineTemplate }` | `{ messages, warnings }`; each message carries `overLimit` |
+| `POST` | `/api/incident-warnings/messages/excel` | JSON `{ messages }` | `.xlsx` (one row per message, body wrapped) |
+| `GET` \| `PUT` | `/api/incident-warnings/settings` | JSON `{ template, lineTemplate, thresholdDays }` | The incident templates and the chase threshold |
+| `POST` | `/api/incident-warnings/send` | JSON `{ messages, dryRun }` | `{ count, dryRun }`; the run continues in the background |
+| `GET` | `/api/incident-warnings/status` | — | `{ hasProfile, signedIn, isRunning, runningModule, … }` — read-only; signing in belongs to Late Order Warnings |
 | `GET` \| `PUT` | `/api/offer-warnings/settings` | JSON `{ subjectTemplate, bodyTemplate, outputFolder, minOfferCount, ccAddresses, includeSignature, overrides }` | The templates, the folder, the threshold and the hand-entered addresses |
 | `POST` | `/api/offer-warnings/prepare` | `offers`, `directory`, `sheetName`, `subjectTemplate`, `bodyTemplate`, `minOfferCount` | Writes one workbook per seller; returns `batchId`, one rendered mail per seller, the sellers with no address, a funnel and warnings |
 | `POST` | `/api/offer-warnings/mails/excel` | JSON `{ mails, cc }` | `.xlsx` (one row per mail, body wrapped) |
@@ -933,6 +951,11 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
 
 Input-validation failures return `400 { "error": "..." }` with the message naming the exact problem,
 e.g. `Required column 'Shipping deadline' was not found in the uploaded file.`
+
+The `/api/incident-warnings/…` routes are the exception, and the only one: they were written after the
+`{ success, message, data }` envelope rule, so they return that shape on success *and* on failure —
+including catching their own `InvalidOperationException` rather than letting `ReportExceptionFilter`
+rewrite it into `{ error }`. The rule is forward-only; every route above keeps the shape it has.
 
 ## Create Return automation
 
@@ -1144,6 +1167,76 @@ the customer, and any other mailbox is the seller's.
 **Everything else is aggregated in the browser.** The builder sends flat rows with the per-row
 derivations already done; the seller, reason, product, workload and value scorecards are all computed
 in `incidents-report.js` so they answer for whatever the filter bar is currently narrowing to.
+
+## Incident Warnings
+
+The section at the bottom of the Incidents Report panel, and the only part of it that acts rather than
+reports: it posts a WhatsApp message to a seller who has left an incident unanswered. The sibling of
+[Late Order Warnings](#late-order-warnings) — same browser, same seller → group mapping, same three
+send guards — and the difference is the clock.
+
+**The clock is the incident's, not the order's**
+
+Age is measured from `Opened on`. A complaint raised this morning about a three-month-old order is not
+something to chase, and one raised three days ago about an order placed yesterday is. The report
+already computes `orderToIncidentDays` — the gap between the two — and that figure is *not* a chase
+signal; nothing in `IncidentWarningBuilder` reads it.
+
+**Three conditions, all of them required**
+
+| | Rule |
+|---|---|
+| Lifecycle | `open` — not `closed`, and not `resolved` |
+| Waiting on | `seller` — the customer spoke last, so the reply is theirs to make |
+| Age | `Opened on` is at least `DefaultThresholdDays` (2) days ago, adjustable in the panel |
+
+`resolved` is excluded on purpose and it is the easiest thing here to get backwards: a resolved
+incident is one the seller has *already* answered, where the verification and the closure are ours.
+Chasing its seller warns the party that is not holding anything up — the same inversion the *Waiting
+on us* section exists to prevent. Both are matched as **allow-lists**: a lifecycle or a waiting-on
+value this app has not seen before is reviewed, never chased.
+
+Ages are recomputed in the builder against a fresh `DateTime.Now` rather than reusing the dashboard's
+`ageDays`, which was frozen when the export was uploaded — and which arrives from the browser, so
+eligibility would otherwise be decided by a client-supplied number. An `Opened on` that cannot be read
+is set aside for review and never treated as old.
+
+**This threshold is not the SLA threshold**
+
+2 days is when a nudge is worth sending; `WarningDays` (7) and `BreachDays` (14) are when the age
+itself is a problem. A two-day incident is deliberately still green on the dashboard while being
+chaseable here. The two numbers answer different questions and neither should be moved to make them
+agree.
+
+**The export has no `Seller ID` column**
+
+This is the practical trap. Late Order Warnings resolves a seller by id first and falls back to the
+name; the incident export gives no id at all, so the mapping can only ever be matched on the folded
+seller name. Two consequences, both surfaced rather than worked around:
+
+- a mapping row entered by seller id alone **never matches an incident**; and
+- a name appearing twice in the mapping is a hard conflict, counted apart from "never mapped" in the
+  funnel, because the fix is the opposite one — remove a row rather than add one.
+
+No fuzzy matching, here or anywhere else in that map: an 85%-similar match posts one seller's data
+into a competitor's group.
+
+**It reads every row, not the filtered set**
+
+The filter bar above it narrows the dashboard; it does not narrow the send list. A batch quietly cut
+down by a forgotten "Closed — from" date is a seller who is never chased and nobody notices. For the
+same reason the section renders from `render()` and never from `applyFilter()`, which re-runs on every
+keystroke in the search box and would wipe approved message text mid-review.
+
+**Message cap** — `MaxIncidentLinesPerMessage` is **30**, half the late-order cap. That one is safe at
+60 because a late-order line is `• {orderNumber}`, about a dozen characters; the default incident line
+carries the reason and the age too, and sixty of those would run past the runner's 4 000-character
+limit — so the send endpoint would refuse a message the operator had already approved. `/messages`
+returns an `overLimit` flag per message so an edited template shows the problem on the card instead.
+
+**Signing in belongs to the other panel.** One Chrome profile serves both modules, so this section
+shows a read-only session badge and points at Late Order Warnings. A second "Clear session" button
+would let one panel wipe the profile out from under the other's running batch.
 
 ## Notes for maintainers
 

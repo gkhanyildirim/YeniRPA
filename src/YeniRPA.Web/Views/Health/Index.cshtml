@@ -1,0 +1,131 @@
+@{
+    ViewData["Title"] = "System Health";
+}
+
+@*
+    A standalone page rather than another Home/Index tab: this is an occasional ops check, not a
+    daily-use module, and the giant single-page shell does not need a thirteenth panel for it.
+    Still built from the same tokens and components as everywhere else (app.css, one <link>, no
+    framework) — see CLAUDE.md and the README's design-system notes.
+*@
+
+<div class="main-inner health-page">
+
+    <header class="page-head">
+        <span class="page-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 8 12 3 3 8v8l9 5 9-5z" />
+                <path d="m3 8 9 5 9-5M12 13v8" />
+            </svg>
+        </span>
+        <h1>System Health</h1>
+        <span class="stamp">Automation &amp; report activity</span>
+        <a class="btn btn-ghost" id="health-back" href="/" style="margin-left:auto">
+            <span class="btn-text">&larr; Reports</span>
+        </a>
+    </header>
+
+    <div class="results">
+
+        <div class="kpi-grid cols-4" id="health-kpis">
+            <div class="kpi">
+                <div class="kpi-label">Toplam Çalıştırma</div>
+                <div class="kpi-value" id="health-kpi-total">&mdash;</div>
+            </div>
+            <div class="kpi is-green">
+                <div class="kpi-label">Başarılı</div>
+                <div class="kpi-value" id="health-kpi-success">&mdash;</div>
+            </div>
+            <div class="kpi is-red">
+                <div class="kpi-label">Hatalı</div>
+                <div class="kpi-value" id="health-kpi-error">&mdash;</div>
+            </div>
+            <div class="kpi is-amber">
+                <div class="kpi-label">Başarı Oranı</div>
+                <div class="kpi-value" id="health-kpi-rate">&mdash;</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Loglar</h3>
+            <p class="sub">
+                Her otomasyon çalıştırması (Playwright, Outlook) ve rapor/ayar işlemi burada bir satır
+                olarak görünür. Bir satırın gerçek süresi ve sonucu, otomasyon çalışmaları için işin
+                bittiği anda; rapor ve ayar işlemleri için istek tamamlandığı anda yazılır.
+            </p>
+
+            <div class="filter-bar" style="position:static">
+                <div class="field">
+                    <label for="health-filter-category">Kategori</label>
+                    <select id="health-filter-category">
+                        <option value="">Tümü</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="health-filter-status">Durum</label>
+                    <select id="health-filter-status">
+                        <option value="">Tümü</option>
+                        <option value="Success">Başarılı</option>
+                        <option value="Error">Hatalı</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="health-filter-search">Ara</label>
+                    <input type="search" id="health-filter-search" placeholder="İşlem veya hata metni" autocomplete="off" />
+                </div>
+                <button type="button" class="btn btn-primary" id="health-refresh">
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span class="btn-text">Yenile</span>
+                </button>
+                <span class="filter-summary" id="health-count"></span>
+            </div>
+
+            <div class="table-scroll is-full">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Zaman</th>
+                            <th>Kategori</th>
+                            <th>İşlem</th>
+                            <th>Durum</th>
+                            <th class="num">Süre (ms)</th>
+                            <th>Detay</th>
+                        </tr>
+                    </thead>
+                    <tbody id="health-log-body">
+                        <tr><td colspan="6" class="empty-cell">Yükleniyor…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="actions" style="justify-content:flex-end">
+                <button type="button" class="btn btn-ghost btn-sm" id="health-prev">
+                    <span class="btn-text">&larr; Önceki</span>
+                </button>
+                <span class="filter-summary" id="health-page-indicator"></span>
+                <button type="button" class="btn btn-ghost btn-sm" id="health-next">
+                    <span class="btn-text">Sonraki &rarr;</span>
+                </button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<dialog id="health-detail-dialog" class="health-dialog">
+    <form method="dialog">
+        <header class="page-head" style="margin-bottom:var(--s-3)">
+            <h1 style="font-size:1rem" id="health-detail-title">Detay</h1>
+            <button type="submit" class="btn btn-ghost btn-sm" style="margin-left:auto" aria-label="Kapat">
+                <span class="btn-text">Kapat</span>
+            </button>
+        </header>
+        <p class="sub" id="health-detail-meta"></p>
+        <pre id="health-detail-body" class="health-detail-body"></pre>
+    </form>
+</dialog>
+
+@section Scripts {
+    <script src="~/js/health.js" asp-append-version="true"></script>
+}

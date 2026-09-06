@@ -27,13 +27,9 @@ public sealed class ReturnSlaReportController : ControllerBase
         if (!hasTemplateA && !hasTemplateB)
             return BadRequest(new { error = "Please upload at least one return template: A (Marketplace Iade & Degisim Talepleri) or B (NNNNNN-MP.csv)." });
 
-        using var ordersStream = await CopyToSeekableStreamAsync(orders, cancellationToken);
-        using var templateAStream = hasTemplateA
-            ? await CopyToSeekableStreamAsync(templateA!, cancellationToken)
-            : null;
-        using var templateBStream = hasTemplateB
-            ? await CopyToSeekableStreamAsync(templateB!, cancellationToken)
-            : null;
+        using var ordersStream = orders.OpenReadStream();
+        using var templateAStream = hasTemplateA ? templateA!.OpenReadStream() : null;
+        using var templateBStream = hasTemplateB ? templateB!.OpenReadStream() : null;
 
         var data = ReturnSlaReportBuilder.BuildData(
             ordersStream, orders.FileName,
@@ -41,14 +37,5 @@ public sealed class ReturnSlaReportController : ControllerBase
             templateBStream, templateB?.FileName);
 
         return Ok(data);
-    }
-
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
     }
 }

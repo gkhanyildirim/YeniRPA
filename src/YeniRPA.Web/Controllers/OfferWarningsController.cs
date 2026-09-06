@@ -31,14 +31,14 @@ public sealed class OfferWarningsController : ControllerBase
 
     const string XlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-    readonly OfferMailStore _store;
+    readonly IOfferMailStore _store;
     readonly OfferBatchStore _batches;
     readonly OutlookMailSender _sender;
     readonly OfferMailRunner _runner;
     readonly AutomationJobBus _bus;
 
     public OfferWarningsController(
-        OfferMailStore store,
+        IOfferMailStore store,
         OfferBatchStore batches,
         OutlookMailSender sender,
         OfferMailRunner runner,
@@ -240,11 +240,11 @@ public sealed class OfferWarningsController : ControllerBase
         var includeSignature = settings.IncludeSignature ?? false;
 
         OfferSplitBuilder.SplitResult split;
-        using (var stream = await CopyToSeekableStreamAsync(offers, cancellationToken))
+        using (var stream = offers.OpenReadStream())
             split = OfferSplitBuilder.Read(stream, offers.FileName);
 
         SellerMailDirectory addresses;
-        using (var stream = await CopyToSeekableStreamAsync(directory, cancellationToken))
+        using (var stream = directory.OpenReadStream())
         {
             addresses = SellerMailDirectory.Read(
                 stream,
@@ -748,13 +748,4 @@ public sealed class OfferWarningsController : ControllerBase
     }
 
     static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
-
-    /// <summary>The readers need a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
-    }
 }

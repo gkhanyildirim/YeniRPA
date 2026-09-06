@@ -389,6 +389,18 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
   z-index: 50;
 }
 
+/* A soft highlight low in the corner, the way light catches the inside of frosted glass — a purely
+   decorative sheen on top of the panel's own gradient, not a real see-through blur (there is no page
+   content behind this panel for backdrop-filter to blur). */
+.rail::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 60% at 0% 0%, rgba(255, 255, 255, .10), transparent 60%);
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+}
+
 /* One hairline of light down the inside edge, so the panel has a lit edge rather than a hard cut. */
 .rail::after {
   content: '';
@@ -479,6 +491,7 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
   font: inherit;
   font-size: .84rem;
   text-align: left;
+  text-decoration: none; /* Most are <button>s, which need no reset — System Health is a real <a>. */
   cursor: pointer;
   white-space: nowrap;
   transition: background .14s ease, color .14s ease;
@@ -774,19 +787,20 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 20px 18px;
+  gap: 4px;
+  padding: 26px 22px;
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--r-lg);
   background: var(--surface-2);
   cursor: pointer;
-  transition: border-color .15s, background .15s;
+  transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+.drop:hover { border-color: var(--accent); background: var(--accent-soft); box-shadow: var(--e-1); }
 .drop.is-dragover {
   border-color: var(--accent);
   background: var(--accent-soft);
   border-style: solid;
+  box-shadow: var(--e-2);
 }
 .drop.has-file { border-style: solid; border-color: var(--line-strong); background: var(--surface); }
 .drop input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
@@ -798,8 +812,8 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
   letter-spacing: .08em; text-transform: uppercase;
   color: var(--ink-3);
 }
-.drop-title { font-size: .85rem; font-weight: 600; }
-.drop-hint  { font-size: .74rem; color: var(--ink-3); }
+.drop-title { font-size: .92rem; font-weight: 650; }
+.drop-hint  { font-size: .78rem; color: var(--ink-3); }
 
 .drop-file {
   display: none;
@@ -831,14 +845,15 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 9px 18px;
+  gap: 8px;
+  padding: 11px 22px;
   border: 1px solid transparent;
   border-radius: 999px;
   font: inherit;
-  font-size: .82rem;
+  font-size: .86rem;
   font-weight: 600;
   letter-spacing: -.005em;
+  text-decoration: none; /* Most are <button>s; Settings' Export link is a real <a>. */
   cursor: pointer;
   transition: background var(--dur), border-color var(--dur), color var(--dur),
               box-shadow var(--dur), transform .1s;
@@ -931,6 +946,10 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
 .alert strong { color: var(--red); }
 .alert .msg { min-width: 0; overflow-wrap: anywhere; }
 
+/* Success variant — same shape, green instead of red. Only Settings' import result uses this so far. */
+.alert.is-success { border-color: var(--green); background: var(--green-soft); }
+.alert.is-success strong { color: var(--green); }
+
 /* ---------- filter bar ---------- */
 
 /* The control deck: filters on the first row, the report's own section index on the second. It
@@ -1013,8 +1032,8 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
 input[type="date"] {
   font: inherit;
   font-family: var(--font-mono);
-  font-size: .78rem;
-  padding: 9px 11px;
+  font-size: .85rem;
+  padding: 11px 13px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -1035,8 +1054,8 @@ input[type="search"],
 textarea {
   font: inherit;
   font-family: var(--font-mono);
-  font-size: .78rem;
-  padding: 9px 11px;
+  font-size: .85rem;
+  padding: 11px 13px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -1430,10 +1449,10 @@ select:disabled {
 select {
   font: inherit;
   font-family: var(--font-mono);
-  font-size: .78rem;
+  font-size: .85rem;
   /* Matches the text inputs' box exactly, minus the room the native arrow takes on the right —
      a select that is a few pixels taller leaves every label in a filter row off its baseline. */
-  padding: 9px 11px;
+  padding: 11px 13px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -1651,6 +1670,10 @@ textarea {
 }
 @media (max-width: 860px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
+/* The Health dashboard's four stat tiles — same tile, one more column. */
+.kpi-grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 860px) { .kpi-grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
 /* A full-width label that splits the grid into the groups the metrics actually belong to. */
 .kpi-band {
   grid-column: 1 / -1;
@@ -1832,23 +1855,26 @@ thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 12px 16px;
+  padding: 13px 16px;
   text-align: left;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--surface-3) 82%, transparent);
+  /* A step darker than the body rather than a light glass wash — the header has to read as a
+     surface of its own before the eye even reaches the column labels. */
+  background: color-mix(in srgb, var(--ink) 8%, color-mix(in srgb, var(--surface-3) 82%, transparent));
   backdrop-filter: blur(10px) saturate(150%);
   border-bottom: 1px solid var(--line-strong);
   font-size: .68rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .07em;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 tbody td {
   padding: 13px 16px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
+  transition: background .1s var(--ease);
 }
 tbody tr:last-child td { border-bottom: 0; }
 
@@ -1856,9 +1882,12 @@ tbody tr:last-child td { border-bottom: 0; }
    reads all <tr> elements, so a row hidden here is still saved and still exported. */
 tbody tr.is-filtered-out { display: none; }
 /* A very light zebra plus a tinted hover: on a table this wide the eye needs help tracking a row
-   across, and the hover wash is what makes the row under the cursor unmistakable. */
+   across, and the hover wash is what makes the row under the cursor unmistakable. A left accent
+   bar on top of the wash is what keeps the hovered row findable even at a glance from across the
+   room, not just under the cursor. */
 tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-3) 42%, transparent); }
-tbody tr:hover td { background: var(--accent-soft); }
+tbody tr:hover td { background: color-mix(in srgb, var(--accent) 10%, var(--accent-soft)); }
+tbody tr:hover td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 
 /* Figures line up on their right edge so magnitudes can be compared down the column, and never
    wrap: an order number broken across two lines cannot be read back or copied. */
@@ -1952,12 +1981,12 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 11px;
+  padding: 5px 13px;
   border-radius: 999px;
   background: var(--surface-3);
   border: 1px solid transparent;
   color: var(--ink-2);
-  font-size: .72rem;
+  font-size: .74rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -2589,4 +2618,41 @@ footer.page-foot {
   .topbar { padding: 0 14px; }
   .main-inner { padding-top: var(--s-5); }
   .page-head .stamp { margin-left: 0; }
+}
+
+/* ---------- Health dashboard ---------- */
+
+/* Health/Index.cshtml is a standalone page (no .shell/.rail), so it needs its own top padding —
+   .main-inner's usual padding-top assumes a sticky topbar sits above it. */
+.health-page { padding-top: var(--s-6); }
+
+/* The native <dialog> element, styled to match the rest of the app rather than the browser default
+   grey box. ::backdrop is a real pseudo-element browsers render behind an open dialog — no overlay
+   <div> or open/close state to manage by hand. */
+.health-dialog {
+  width: min(640px, 92vw);
+  max-height: 82vh;
+  padding: var(--s-5);
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--e-3);
+}
+.health-dialog::backdrop { background: rgba(16, 24, 40, .45); }
+.health-dialog form { display: flex; flex-direction: column; gap: var(--s-3); min-height: 0; }
+
+.health-detail-body {
+  margin: 0;
+  padding: var(--s-4);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  max-height: 50vh;
 }

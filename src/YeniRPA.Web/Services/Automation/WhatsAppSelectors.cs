@@ -137,7 +137,7 @@ public static class WhatsAppSelectors
 
     /// <summary>
     /// The compose box. A <c>contenteditable</c> div, not an input — see
-    /// <see cref="LateOrderWhatsAppRunner"/> for why that matters.
+    /// <see cref="WhatsAppMessageRunner"/> for why that matters.
     /// </summary>
     public static readonly string[] MessageBox =
     [

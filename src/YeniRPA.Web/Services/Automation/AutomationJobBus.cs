@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
+using YeniRPA.Web.Models;
 
 namespace YeniRPA.Web.Services.Automation;
 
@@ -13,6 +15,11 @@ namespace YeniRPA.Web.Services.Automation;
 /// with no external runtime dependencies (Chart.js and the fonts are vendored), and pulling in a
 /// SignalR client would break that for a stream that only ever flows server to browser — so the
 /// events are published as Server-Sent Events instead, which needs no client library at all.
+///
+/// <para>Also where a run's outcome reaches the <see cref="ISystemLogStore"/> health log — the
+/// counterpart to <see cref="Infrastructure.SystemLogActionFilter"/>'s request-level line, this one
+/// carries the run's <em>real</em> status and duration, known only once <see cref="Done"/> is
+/// called.</para>
 /// </summary>
 public sealed class AutomationJobBus
 {
@@ -24,6 +31,7 @@ public sealed class AutomationJobBus
 
     static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    readonly ISystemLogStore _logs;
     readonly ConcurrentDictionary<Guid, Channel<string>> _subscribers = new();
     readonly List<string> _replay = [];
 
@@ -33,6 +41,13 @@ public sealed class AutomationJobBus
 
     int _running;
     string? _runningModule;
+    Stopwatch? _runStopwatch;
+
+    public AutomationJobBus(ISystemLogStore logs)
+    {
+        ArgumentNullException.ThrowIfNull(logs);
+        _logs = logs;
+    }
 
     public bool IsRunning => Volatile.Read(ref _running) == 1;
 
@@ -46,6 +61,7 @@ public sealed class AutomationJobBus
             return false;
 
         Volatile.Write(ref _runningModule, module);
+        _runStopwatch = Stopwatch.StartNew();
         lock (_sync) _replay.Clear();
         return true;
     }
@@ -66,8 +82,30 @@ public sealed class AutomationJobBus
     public void Progress(int completed, int total) =>
         Publish(new { type = "progress", completed, total });
 
-    public void Done(int processed, IReadOnlyList<string> failed) =>
+    /// <summary>
+    /// Ends the run's own event stream and writes its outcome to the health log — the module name as
+    /// the operation, <c>Success</c> when nothing failed, and the run's real wall-clock duration
+    /// (from <see cref="TryBeginRun"/> to here), not the sliver of time the starting <c>POST</c> took.
+    /// </summary>
+    public void Done(int processed, IReadOnlyList<string> failed)
+    {
+        var elapsedMs = _runStopwatch?.ElapsedMilliseconds ?? 0;
+        var module = RunningModule ?? "automation";
+
+        var detail = failed.Count == 0
+            ? $"Processed {processed}."
+            : $"Processed {processed}, failed {failed.Count}: " +
+              string.Join(", ", failed.Take(5)) + (failed.Count > 5 ? ", …" : "");
+
+        _logs.Record(
+            "Automation",
+            module,
+            failed.Count == 0 ? SystemLogStatus.Success : SystemLogStatus.Error,
+            elapsedMs,
+            detail);
+
         Publish(new { type = "done", processed, failed });
+    }
 
     /// <summary>
     /// Yields this run's replay buffer and then every event published while the caller stays

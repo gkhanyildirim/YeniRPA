@@ -1082,7 +1082,10 @@ window.RPA = window.RPA || {};
     // comes out of it, is decided by a per-category rule set rather than by anything in here.
     'title-cleaner': { tab: 'tab-title-cleaner', panel: 'panel-title-cleaner' },
     // Reference page: static content, no upload and no dashboard of its own.
-    'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' }
+    'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' },
+    // Moves this install's LiteDB-backed settings to and from a backup file. No upload feeds a
+    // dashboard here — the two actions are Export (a plain download link) and Import.
+    'settings': { tab: 'tab-settings', panel: 'panel-settings' }
   };
 
   function showModule(name, options) {
@@ -1455,6 +1458,9 @@ window.RPA = window.RPA || {};
       const parsed = JSON.parse(text);
       if (parsed && parsed.error) return parsed.error;
       if (parsed && parsed.title) return parsed.title;
+      // The newer { success, message, data } envelope. Read last, so an endpoint carrying both keeps
+      // whichever shape it already had.
+      if (parsed && parsed.message) return parsed.message;
     } catch (e) { /* not JSON — fall through to the raw body */ }
     return text || ('Request failed with status ' + response.status + '.');
   }

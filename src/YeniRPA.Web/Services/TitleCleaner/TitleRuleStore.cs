@@ -3,26 +3,49 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ClosedXML.Excel;
+using LiteDB;
 using YeniRPA.Web.Models;
+// LiteDB also declares a JsonSerializer type; this app's JSON is always System.Text.Json's.
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace YeniRPA.Web.Services.TitleCleaner;
 
+/// <summary>The instance surface <see cref="TitleRuleStore"/> exposes through DI. Every static member
+/// (<see cref="TitleRuleStore.Parse"/>, <see cref="TitleRuleStore.ToForm(TitleRuleSet)"/>, the Excel
+/// round trip, the cell encoding) stays on the concrete class — none of it depends on where the file
+/// lives, and the wire/editor shapes are not something a swap of storage engine should touch.</summary>
+public interface ITitleRuleStore
+{
+    /// <summary>Where the data now lives — the shared LiteDB file. Kept on the interface because the
+    /// rule editor shows it.</summary>
+    string FilePath { get; }
+
+    TitleRuleFile Load();
+    void Save(TitleRuleFile file);
+    TitleRuleSet? Find(string? name);
+
+    /// <summary>One-time import from <c>title-rules.json</c>, run by <see cref="JsonToLiteDbMigrator"/>
+    /// at startup. A no-op once this store already holds a LiteDB document.</summary>
+    void MigrateLegacyJson();
+}
+
 /// <summary>
-/// Owns <c>%LOCALAPPDATA%\YeniRPA\TitleCleaner\title-rules.json</c> — every category's naming
-/// standard.
+/// Owns every category's naming standard, in the <c>titleRules</c> collection of the shared LiteDB
+/// database (<see cref="ILiteDbContext"/>).
 ///
 /// <para>Modelled on <see cref="SellerGroupStore"/> and for the same reason: like the seller/group
 /// mapping, this is data that exists nowhere else. It is not derived from an export and it cannot be
 /// rebuilt by re-running anything — it is what the category team decided a laptop title should look
-/// like. So the write is atomic, one backup generation is kept, and a file that will not parse is an
-/// error rather than a silent fresh start.</para>
+/// like. It used to keep its own atomic-write-plus-backup JSON file for that reason; LiteDB's
+/// write-ahead log now gives the same crash-safety without this class hand-rolling it.</para>
 ///
 /// <para>Not encrypted, also like <see cref="SellerGroupStore"/>: these are column names and unit
 /// spellings, not credentials.</para>
 /// </summary>
-public sealed class TitleRuleStore
+public sealed class TitleRuleStore : ITitleRuleStore
 {
     const int CurrentVersion = 1;
+    const int DocumentId = 1;
 
     static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -32,62 +55,30 @@ public sealed class TitleRuleStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    /// <summary>Load and save are one operation each; a singleton reachable from several controller
-    /// actions needs them not to interleave.</summary>
-    readonly object _sync = new();
-
-    public TitleRuleStore()
+    /// <summary>One document holding every rule set — the aggregate <c>Load</c>/<c>Save</c> always
+    /// dealt in. Attribute order inside a set is load-bearing (see the class doc on
+    /// <see cref="TitleAttributeRule"/> ordering), which is also why this stays one document rather
+    /// than one row per set: nothing here is ever read one set at a time.</summary>
+    public sealed class Document
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "YeniRPA",
-            "TitleCleaner");
-        Directory.CreateDirectory(directory);
+        public int Id { get; set; }
+        public TitleRuleFile Data { get; set; } = null!;
+    }
 
-        FilePath = Path.Combine(directory, "title-rules.json");
-        BackupPath = FilePath + ".bak";
+    readonly ILiteCollection<Document> _collection;
+
+    public TitleRuleStore(ILiteDbContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        FilePath = context.DatabasePath;
+        _collection = context.GetCollection<Document>("titleRules");
+        _collection.EnsureIndex(x => x.Id, unique: true);
     }
 
     public string FilePath { get; }
-    public string BackupPath { get; }
 
-    /// <summary>Reads the file every call rather than caching it — it is a few KB, and a cache would
-    /// go stale the moment someone edited the JSON by hand.</summary>
-    public TitleRuleFile Load()
-    {
-        lock (_sync)
-        {
-            if (!File.Exists(FilePath))
-                return Empty();
-
-            string json;
-            try
-            {
-                json = File.ReadAllText(FilePath, Encoding.UTF8);
-            }
-            catch (IOException ex)
-            {
-                throw new InvalidOperationException(
-                    $"The title rule sets could not be read from {FilePath}: {ex.Message}", ex);
-            }
-
-            if (string.IsNullOrWhiteSpace(json))
-                return Empty();
-
-            try
-            {
-                return Parse(json);
-            }
-            catch (JsonException ex)
-            {
-                // Never silently start over: an empty list looks exactly like "the rule sets vanished",
-                // and these are hand-built.
-                throw new InvalidOperationException(
-                    $"The title rule sets at {FilePath} are not valid JSON ({ex.Message}). " +
-                    $"The previous version is kept at {BackupPath}.", ex);
-            }
-        }
-    }
+    public TitleRuleFile Load() => _collection.FindById(DocumentId)?.Data ?? Empty();
 
     /// <summary>
     /// The deserialisation half of <see cref="Load"/>, split out so the defaults can be tested
@@ -186,7 +177,6 @@ public sealed class TitleRuleStore
             : form with { Sets = form.Sets ?? [] };
     }
 
-    /// <summary>Writes to a temp file and moves it over the original, keeping one backup generation.</summary>
     public void Save(TitleRuleFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
@@ -198,15 +188,35 @@ public sealed class TitleRuleStore
             Sets = file.Sets ?? [],
         };
 
-        lock (_sync)
+        _collection.Upsert(new Document { Id = DocumentId, Data = stamped });
+    }
+
+    /// <summary>The pre-LiteDB location, read once at startup and never again.</summary>
+    internal static string LegacyJsonPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "YeniRPA", "TitleCleaner", "title-rules.json");
+
+    public void MigrateLegacyJson()
+    {
+        if (_collection.Count() > 0)
+            return;
+
+        var path = LegacyJsonPath();
+        if (!File.Exists(path))
+            return;
+
+        var json = File.ReadAllText(path, Encoding.UTF8);
+        if (string.IsNullOrWhiteSpace(json))
+            return;
+
+        try
         {
-            var tempPath = FilePath + ".tmp";
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(stamped, JsonOptions), Encoding.UTF8);
-
-            if (File.Exists(FilePath))
-                File.Copy(FilePath, BackupPath, overwrite: true);
-
-            File.Move(tempPath, FilePath, overwrite: true);
+            Save(Parse(json));
+        }
+        catch (JsonException)
+        {
+            // A legacy file that no longer parses is not a reason to fail startup: Load() would have
+            // refused it under the old code too, and there is nothing here worth carrying over.
         }
     }
 

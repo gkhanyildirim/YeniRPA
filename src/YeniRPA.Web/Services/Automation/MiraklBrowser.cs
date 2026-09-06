@@ -98,24 +98,17 @@ public sealed class MiraklBrowser : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(browser);
 
-        // Playwright only takes storage state as a file path, so the decrypted cookies land in a
-        // temp file that is deleted again as soon as the context has read it.
-        var storageStatePath = await CreateStorageStatePathAsync();
+        var storageState = await TryReadStorageStateAsync();
 
         try
         {
-            return storageStatePath is null
+            return storageState is null
                 ? await browser.NewContextAsync()
-                : await browser.NewContextAsync(new BrowserNewContextOptions { StorageStatePath = storageStatePath });
+                : await browser.NewContextAsync(new BrowserNewContextOptions { StorageState = storageState });
         }
-        catch (PlaywrightException ex) when (storageStatePath is not null)
+        catch (PlaywrightException ex) when (storageState is not null)
         {
             throw new InvalidOperationException("The saved session is no longer valid. Clear it and sign in again.", ex);
-        }
-        finally
-        {
-            if (storageStatePath is not null && File.Exists(storageStatePath))
-                File.Delete(storageStatePath);
         }
     }
 
@@ -140,20 +133,12 @@ public sealed class MiraklBrowser : IAsyncDisposable
         }
 
         var playwright = await EnsurePlaywrightAsync();
-        var storageStatePath = await CreateStorageStatePathAsync();
+        var storageState = await TryReadStorageStateAsync();
 
-        try
+        return await playwright.APIRequest.NewContextAsync(new APIRequestNewContextOptions
         {
-            return await playwright.APIRequest.NewContextAsync(new APIRequestNewContextOptions
-            {
-                StorageStatePath = storageStatePath
-            });
-        }
-        finally
-        {
-            if (storageStatePath is not null && File.Exists(storageStatePath))
-                File.Delete(storageStatePath);
-        }
+            StorageState = storageState
+        });
     }
 
     public async Task<IBrowser> EnsureBrowserAsync()
@@ -261,24 +246,24 @@ public sealed class MiraklBrowser : IAsyncDisposable
             $"{DeploymentMessage} Expected `playwright.ps1` and `.playwright` beside the executable.");
     }
 
-    async Task<string?> CreateStorageStatePathAsync()
+    /// <summary>
+    /// The decrypted storage state as a string, handed to Playwright's <c>StorageState</c> option
+    /// directly rather than <c>StorageStatePath</c> — the cookies never touch disk unencrypted this
+    /// way, not even briefly in a temp file that a crash between write and delete could leave behind.
+    /// </summary>
+    async Task<string?> TryReadStorageStateAsync()
     {
         if (!File.Exists(_authFilePath))
             return null;
 
-        string storageState;
         try
         {
-            storageState = _sessionProtector.Unprotect(await File.ReadAllTextAsync(_authFilePath));
+            return _sessionProtector.Unprotect(await File.ReadAllTextAsync(_authFilePath));
         }
         catch (CryptographicException ex)
         {
             throw new InvalidOperationException("The saved session could not be read. Clear it and sign in again.", ex);
         }
-
-        var tempPath = Path.Combine(Path.GetTempPath(), $"yenirpa-auth-{Guid.NewGuid():N}.json");
-        await File.WriteAllTextAsync(tempPath, storageState);
-        return tempPath;
     }
 
     async Task CloseLoginContextAsync()

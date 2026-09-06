@@ -40,6 +40,17 @@ public sealed class MethodologyViewModel
     /// <summary>The mailbox domain that marks an incident action as the operator's rather than a seller's.</summary>
     public string IncidentOperatorMailDomain { get; init; } = IncidentsReportBuilder.OperatorMailDomain;
 
+    /// <summary>
+    /// Days an incident must have been open before Incident Warnings chases its seller. Read off the
+    /// builder, not retyped: this is a chase threshold and is deliberately far below
+    /// <see cref="IncidentWarningDays"/>, so the two must not be able to drift into agreeing by
+    /// accident.
+    /// </summary>
+    public int IncidentChaseDays { get; init; } = IncidentWarningBuilder.DefaultThresholdDays;
+
+    /// <summary>Most incidents one WhatsApp warning lists before the rest become a count.</summary>
+    public int IncidentChaseMaxLines { get; init; } = IncidentWarningBuilder.MaxIncidentLinesPerMessage;
+
     public int MinSampleSize { get; init; } = OrderReportBuilder.MinSampleSize;
     public int MinLeadTimeSample { get; init; } = OrderReportBuilder.MinLeadTimeSample;
 

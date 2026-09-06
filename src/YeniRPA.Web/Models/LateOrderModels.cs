@@ -112,16 +112,35 @@ public sealed record SellerGroupEntry(
     [property: JsonPropertyName("groupName")] string GroupName);
 
 /// <summary>
-/// The whole of seller-groups.json. The two templates live here rather than in a second file because
+/// The whole of seller-groups.json. The templates live here rather than in a second file because
 /// they are operator-owned copy of the same kind as the mappings — one file to back up, one file to
 /// delete to start over. Absent or blank falls back to the const default.
+///
+/// <para>Two modules share this document: Late Order Warnings owns
+/// <paramref name="MessageTemplate"/> / <paramref name="OrderLineTemplate"/>, Incident Warnings owns
+/// the three <c>Incident*</c> fields, and both resolve sellers through the same
+/// <paramref name="Entries"/>. Because one record carries both, neither module may save it by
+/// building a fresh <c>SellerGroupFile</c> — see <see cref="Services.ISellerGroupStore"/>, which
+/// exposes one focused save per module for exactly that reason.</para>
+///
+/// <para><b>New fields go on the end, and stay nullable.</b> LiteDB binds this record through its
+/// primary constructor by parameter name, so a document written before a field existed supplies
+/// <c>null</c> for it. A non-nullable value-type parameter cannot take that null and every
+/// <c>Load()</c> would throw — on the one piece of data in this app that no export can rebuild.</para>
 /// </summary>
 public sealed record SellerGroupFile(
     [property: JsonPropertyName("version")] int Version,
     [property: JsonPropertyName("updatedUtc")] string? UpdatedUtc,
     [property: JsonPropertyName("messageTemplate")] string? MessageTemplate,
     [property: JsonPropertyName("orderLineTemplate")] string? OrderLineTemplate,
-    [property: JsonPropertyName("entries")] IReadOnlyList<SellerGroupEntry> Entries);
+    [property: JsonPropertyName("entries")] IReadOnlyList<SellerGroupEntry> Entries,
+
+    [property: JsonPropertyName("incidentMessageTemplate")] string? IncidentMessageTemplate = null,
+    [property: JsonPropertyName("incidentLineTemplate")] string? IncidentLineTemplate = null,
+
+    /// <summary>How many days an incident must have been open before its seller is chased. Null on a
+    /// document saved before Incident Warnings existed, which reads as the builder's default.</summary>
+    [property: JsonPropertyName("incidentThresholdDays")] int? IncidentThresholdDays = null);
 
 // ---------------------------------------------------------------------------
 // Rendered messages

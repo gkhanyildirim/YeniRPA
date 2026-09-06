@@ -19,7 +19,7 @@ public sealed class MarkAsReceivedRunner
     public const string ModuleName = "mark-received";
 
     /// <summary>
-    /// A refusal, not a truncation — same reasoning as <c>LateOrderWhatsAppRunner.MaxGroupsPerRun</c>,
+    /// A refusal, not a truncation — same reasoning as <c>WhatsAppMessageRunner.MaxGroupsPerRun</c>,
     /// but the risk here is a fat-fingered paste (a whole column copied out of a spreadsheet) rather
     /// than an external-party blast radius. 500 orders at Mirakl's own page-load pace is roughly the
     /// size of a batch an operator can plausibly have reviewed before pressing Start.

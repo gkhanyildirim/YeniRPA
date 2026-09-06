@@ -3,8 +3,19 @@ using YeniRPA.Web.Models;
 
 namespace YeniRPA.Web.Services;
 
-/// <summary>The outcome of looking one seller up. Exactly one side is ever set.</summary>
-public readonly record struct SellerGroupMatch(string? GroupName, string? Problem);
+/// <summary>
+/// The outcome of looking one seller up. Exactly one of <paramref name="GroupName"/> and
+/// <paramref name="Problem"/> is ever set.
+/// </summary>
+/// <param name="IsConflict">
+/// True when the lookup failed because the mapping table is ambiguous — the id or the name appears
+/// more than once, or the two disagree — rather than because the seller is simply absent from it.
+/// The two need different fixes (remove a row vs. add one), and Incident Warnings reports them as
+/// separate counts because, with no seller-id column in its export, the ambiguous case is the one its
+/// operator will actually hit. Carried as a flag so no caller has to pattern-match on the prose in
+/// <paramref name="Problem"/>.
+/// </param>
+public readonly record struct SellerGroupMatch(string? GroupName, string? Problem, bool IsConflict = false);
 
 /// <summary>
 /// An immutable snapshot of the seller → WhatsApp group mapping, built once per request from
@@ -98,7 +109,7 @@ public sealed class SellerGroupMap
         var name = FoldName(sellerName ?? "");
 
         if (id.Length > 0 && _duplicateIds.Contains(id))
-            return new SellerGroupMatch(null, $"Mapping conflict: seller id '{id}' is mapped more than once.");
+            return new SellerGroupMatch(null, $"Mapping conflict: seller id '{id}' is mapped more than once.", IsConflict: true);
 
         var idEntry = id.Length > 0 && _byId.TryGetValue(id, out var foundById) ? foundById : null;
 
@@ -111,7 +122,7 @@ public sealed class SellerGroupMap
             {
                 // A duplicated name only blocks the lookup when the name is what we would fall back on.
                 if (idEntry is null)
-                    return new SellerGroupMatch(null, $"Mapping conflict: seller name '{sellerName}' is mapped more than once.");
+                    return new SellerGroupMatch(null, $"Mapping conflict: seller name '{sellerName}' is mapped more than once.", IsConflict: true);
             }
             else if (_byName.TryGetValue(name, out var foundByName))
             {
@@ -123,7 +134,8 @@ public sealed class SellerGroupMap
             !string.Equals(idEntry.GroupName.Trim(), nameEntry.GroupName.Trim(), StringComparison.Ordinal))
         {
             return new SellerGroupMatch(null,
-                $"Mapping conflict: seller id '{id}' points at '{idEntry.GroupName.Trim()}' but the name '{sellerName}' points at '{nameEntry.GroupName.Trim()}'.");
+                $"Mapping conflict: seller id '{id}' points at '{idEntry.GroupName.Trim()}' but the name '{sellerName}' points at '{nameEntry.GroupName.Trim()}'.",
+                IsConflict: true);
         }
 
         var entry = idEntry ?? nameEntry;

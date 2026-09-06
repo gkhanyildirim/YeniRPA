@@ -23,22 +23,13 @@ public sealed class TicketSellerController : ControllerBase
         if (orders is not { Length: > 0 })
             return BadRequest(new { error = "Please upload the orders file (.xlsx or .csv)." });
 
-        using var ticketsStream = await CopyToSeekableStreamAsync(tickets, cancellationToken);
-        using var ordersStream = await CopyToSeekableStreamAsync(orders, cancellationToken);
+        using var ticketsStream = tickets.OpenReadStream();
+        using var ordersStream = orders.OpenReadStream();
 
         var data = TicketSellerBuilder.BuildData(
             ticketsStream, tickets.FileName,
             ordersStream, orders.FileName);
 
         return Ok(data);
-    }
-
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
     }
 }

@@ -1,51 +1,81 @@
 using System.Text.Json;
+using LiteDB;
 using YeniRPA.Web.Models;
+// LiteDB also declares a JsonSerializer type; this app's JSON is always System.Text.Json's.
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace YeniRPA.Web.Services;
 
+/// <summary>The instance surface <see cref="OfferMailStore"/> exposes through DI. The address/CC
+/// helpers (<see cref="OfferMailStore.NormalizeMinimum"/>, <see cref="OfferMailStore.NormalizeCc"/>,
+/// <see cref="OfferMailStore.FindOverride"/>, <see cref="OfferMailStore.FindOverrideProblems"/>) stay
+/// static — they are pure functions over data the caller already has.</summary>
+public interface IOfferMailStore
+{
+    /// <summary>Where the data now lives — the shared LiteDB file. Kept on the interface because the
+    /// settings panel shows it.</summary>
+    string FilePath { get; }
+
+    string DefaultOutputFolder { get; }
+
+    OfferMailFile Load();
+    void Save(OfferMailFile file);
+    string ResolveOutputFolder(OfferMailFile file);
+
+    /// <summary>One-time import from <c>Mail\offer-warnings.json</c>, run by
+    /// <see cref="JsonToLiteDbMigrator"/> at startup. A no-op once this store already holds a LiteDB
+    /// document.</summary>
+    void MigrateLegacyJson();
+}
+
 /// <summary>
-/// Owns <c>%LOCALAPPDATA%\YeniRPA\Mail\offer-warnings.json</c> — the operator's edited subject and
-/// body, the addresses they entered by hand for sellers the uploaded list does not cover, and the
-/// folder the per-seller workbooks are written to.
+/// Owns the operator's edited subject and body, the addresses they entered by hand for sellers the
+/// uploaded list does not cover, and the folder the per-seller workbooks are written to — in the
+/// <c>offerMail</c> collection of the shared LiteDB database (<see cref="ILiteDbContext"/>).
 ///
 /// <para>Deliberately a near-copy of <see cref="VatMailStore"/> rather than a shared base class, for
 /// the reason that class already records: the two files hold different shapes and are read by different
 /// modules, and a common base would make a fix to one silently change the other — in a place where a
 /// wrong row sends one seller's data to a different seller.</para>
 ///
-/// <para>The hand-entered addresses are the only data here that cannot be rebuilt from an upload,
-/// which is why <see cref="Save"/> keeps a backup generation and replaces the file atomically.</para>
+/// <para>The hand-entered addresses are the only data here that cannot be rebuilt from an upload. They
+/// used to get their own atomic-write-plus-backup JSON file for exactly that reason; LiteDB's own
+/// write-ahead log now gives the same crash-safety without this class hand-rolling it.</para>
 /// </summary>
-public sealed class OfferMailStore
+public sealed class OfferMailStore : IOfferMailStore
 {
     const int CurrentVersion = 1;
+    const int DocumentId = 1;
 
     static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
     };
 
-    /// <summary>Load and save are one operation each; a singleton reachable from several controller
-    /// actions needs them not to interleave.</summary>
-    readonly object _sync = new();
-
-    public OfferMailStore()
+    public sealed class Document
     {
+        public int Id { get; set; }
+        public OfferMailFile Data { get; set; } = null!;
+    }
+
+    readonly ILiteCollection<Document> _collection;
+
+    public OfferMailStore(ILiteDbContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
         var root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "YeniRPA");
 
-        var directory = Path.Combine(root, "Mail");
-        Directory.CreateDirectory(directory);
-
-        FilePath = Path.Combine(directory, "offer-warnings.json");
-        BackupPath = FilePath + ".bak";
-
+        FilePath = context.DatabasePath;
         DefaultOutputFolder = Path.Combine(root, "OfferLeadTimes");
+
+        _collection = context.GetCollection<Document>("offerMail");
+        _collection.EnsureIndex(x => x.Id, unique: true);
     }
 
     public string FilePath { get; }
-    public string BackupPath { get; }
 
     /// <summary>
     /// Where the generated per-seller workbooks go when the operator has not chosen a folder.
@@ -56,58 +86,22 @@ public sealed class OfferMailStore
     /// </summary>
     public string DefaultOutputFolder { get; }
 
-    /// <summary>Reads the file every call rather than caching it — a few KB, and a cache would go
-    /// stale the moment someone edited the JSON by hand.</summary>
     public OfferMailFile Load()
     {
-        lock (_sync)
+        var file = _collection.FindById(DocumentId)?.Data;
+        if (file is null)
+            return Empty();
+
+        // The CC is left exactly as stored, malformed or not: refusing to load the whole settings
+        // file over a typo in one informational field would take the hand-entered addresses down
+        // with it. NormalizeCc is applied where the value is used — on save and on prepare.
+        return file with
         {
-            if (!File.Exists(FilePath))
-                return Empty();
-
-            string json;
-            try
-            {
-                json = File.ReadAllText(FilePath);
-            }
-            catch (IOException ex)
-            {
-                throw new InvalidOperationException(
-                    $"The offer warning settings could not be read from {FilePath}: {ex.Message}", ex);
-            }
-
-            if (string.IsNullOrWhiteSpace(json))
-                return Empty();
-
-            OfferMailFile? file;
-            try
-            {
-                file = JsonSerializer.Deserialize<OfferMailFile>(json, JsonOptions);
-            }
-            catch (JsonException ex)
-            {
-                // Never silently start over: that would look identical to "the addresses vanished".
-                throw new InvalidOperationException(
-                    $"The offer warning settings at {FilePath} are not valid JSON ({ex.Message}). " +
-                    $"The previous version is kept at {BackupPath}.", ex);
-            }
-
-            if (file is null)
-                return Empty();
-
-            // The CC is left exactly as stored, malformed or not: refusing to load the whole settings
-            // file over a typo in one informational field would take the hand-entered addresses down
-            // with it. NormalizeCc is applied where the value is used — on save and on prepare.
-            return file with
-            {
-                Overrides = file.Overrides ?? [],
-                MinOfferCount = NormalizeMinimum(file.MinOfferCount)
-            };
-        }
+            Overrides = file.Overrides ?? [],
+            MinOfferCount = NormalizeMinimum(file.MinOfferCount)
+        };
     }
 
-    /// <summary>Writes to a temp file and moves it over the original, keeping one backup generation.
-    /// A torn write here would destroy the hand-entered addresses, which exist nowhere else.</summary>
     public void Save(OfferMailFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
@@ -118,16 +112,41 @@ public sealed class OfferMailStore
             UpdatedUtc = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss'Z'")
         };
 
-        lock (_sync)
+        _collection.Upsert(new Document { Id = DocumentId, Data = stamped });
+    }
+
+    /// <summary>The pre-LiteDB location, read once at startup and never again.</summary>
+    internal static string LegacyJsonPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "YeniRPA", "Mail", "offer-warnings.json");
+
+    public void MigrateLegacyJson()
+    {
+        if (_collection.Count() > 0)
+            return;
+
+        var path = LegacyJsonPath();
+        if (!File.Exists(path))
+            return;
+
+        var json = File.ReadAllText(path);
+        if (string.IsNullOrWhiteSpace(json))
+            return;
+
+        OfferMailFile? file;
+        try
         {
-            var tempPath = FilePath + ".tmp";
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(stamped, JsonOptions));
-
-            if (File.Exists(FilePath))
-                File.Copy(FilePath, BackupPath, overwrite: true);
-
-            File.Move(tempPath, FilePath, overwrite: true);
+            file = JsonSerializer.Deserialize<OfferMailFile>(json, JsonOptions);
         }
+        catch (JsonException)
+        {
+            // A legacy file that no longer parses is not a reason to fail startup: Load() would have
+            // refused it under the old code too, and there is nothing here worth carrying over.
+            return;
+        }
+
+        if (file is not null)
+            Save(file);
     }
 
     /// <summary>

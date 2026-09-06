@@ -66,10 +66,10 @@ public sealed class CreateReturnController : ControllerBase
         if (from.HasValue && to.HasValue && from.Value.Date > to.Value.Date)
             return BadRequest(new { error = "The start of the date range is after its end." });
 
-        using var templateAStream = await CopyToSeekableStreamAsync(templateA, cancellationToken);
-        using var templateBStream = await CopyToSeekableStreamAsync(templateB, cancellationToken);
-        using var returnsStream = await CopyToSeekableStreamAsync(returns, cancellationToken);
-        using var ordersStream = await CopyToSeekableStreamAsync(orders, cancellationToken);
+        using var templateAStream = templateA.OpenReadStream();
+        using var templateBStream = templateB.OpenReadStream();
+        using var returnsStream = returns.OpenReadStream();
+        using var ordersStream = orders.OpenReadStream();
 
         var data = ReturnListBuilder.Build(
             templateAStream, templateA.FileName,
@@ -150,12 +150,4 @@ public sealed class CreateReturnController : ControllerBase
         return buffer.ToArray();
     }
 
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
-    }
 }

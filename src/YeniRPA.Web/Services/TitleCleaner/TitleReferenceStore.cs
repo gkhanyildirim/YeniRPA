@@ -1,92 +1,121 @@
 using System.Text;
 using System.Text.Json;
 using ClosedXML.Excel;
+using LiteDB;
 using YeniRPA.Web.Models;
+// LiteDB also declares a JsonSerializer type; this app's JSON is always System.Text.Json's.
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace YeniRPA.Web.Services.TitleCleaner;
 
+/// <summary>The instance surface <see cref="TitleReferenceStore"/> exposes through DI. The workbook
+/// reader <see cref="TitleReferenceStore.ReadWorkbook"/> stays static on the concrete class.</summary>
+public interface ITitleReferenceStore
+{
+    /// <summary>Where the data now lives — the shared LiteDB file. Kept on the interface because
+    /// <see cref="Status"/> surfaces it via <see cref="CategoryRuleStatus"/>-shaped responses.</summary>
+    string FilePath { get; }
+
+    TitleReferenceFile Load();
+    void Save(TitleReferenceFile file);
+    TitleReferenceFile Put(TitleReferenceList list);
+    TitleReferenceFile Remove(string name);
+    IReadOnlyList<TitleReferenceStatus> Status();
+
+    /// <summary>One-time import from <c>reference-lists.json</c>, run by
+    /// <see cref="JsonToLiteDbMigrator"/> at startup. A no-op once this store already holds a LiteDB
+    /// document.</summary>
+    void MigrateLegacyJson();
+}
+
 /// <summary>
-/// Owns <c>%LOCALAPPDATA%\YeniRPA\TitleCleaner\reference-lists.json</c> — the value catalogues a rule
-/// may consult for spellings longer than its cells carry.
+/// Owns the value catalogues a rule may consult for spellings longer than its cells carry, in the
+/// <c>titleReferenceLists</c> collection of the shared LiteDB database (<see cref="ILiteDbContext"/>).
 ///
 /// <para>Modelled on <see cref="CategoryRuleStore"/> rather than <see cref="TitleRuleStore"/>, and the
 /// distinction is the same one: a rule set is what the category team decided and exists nowhere else,
-/// while these lists are <b>derived</b> from a workbook that can always be uploaded again. They get
-/// the atomic write and the backup generation anyway — they cost nothing — but an unreadable file here
-/// is a reason to re-upload, not a disaster.</para>
+/// while these lists are <b>derived</b> from a workbook that can always be uploaded again.</para>
 ///
-/// <para>Kept out of <c>title-rules.json</c> deliberately. A processor catalogue is five thousand
-/// lines; the rule file is meant to stay readable, and hand-editable in a pinch.</para>
+/// <para>Kept out of the rule sets deliberately. A processor catalogue is five thousand lines; the
+/// rule sets are meant to stay small enough to read in one sitting.</para>
 /// </summary>
-public sealed class TitleReferenceStore
+public sealed class TitleReferenceStore : ITitleReferenceStore
 {
     const int CurrentVersion = 1;
+    const int DocumentId = 1;
 
     static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
     };
 
+    public sealed class Document
+    {
+        public int Id { get; set; }
+        public TitleReferenceFile Data { get; set; } = null!;
+    }
+
+    readonly ILiteCollection<Document> _collection;
+
+    /// <summary>Guards <see cref="Put"/> and <see cref="Remove"/> only: each is a read-modify-write
+    /// across two LiteDB calls, and LiteDB only guarantees each call on its own is atomic. A plain
+    /// <see cref="Load"/> or <see cref="Save"/> needs no lock any more — the old JSON file's
+    /// temp-write-plus-move dance was this class's own way of getting that guarantee; LiteDB gives it
+    /// natively per call.</summary>
     readonly object _sync = new();
 
-    public TitleReferenceStore()
+    public TitleReferenceStore(ILiteDbContext context)
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "YeniRPA",
-            "TitleCleaner");
-        Directory.CreateDirectory(directory);
+        ArgumentNullException.ThrowIfNull(context);
 
-        FilePath = Path.Combine(directory, "reference-lists.json");
-        BackupPath = FilePath + ".bak";
+        FilePath = context.DatabasePath;
+        _collection = context.GetCollection<Document>("titleReferenceLists");
+        _collection.EnsureIndex(x => x.Id, unique: true);
     }
 
     public string FilePath { get; }
-    public string BackupPath { get; }
 
-    public TitleReferenceFile Load()
-    {
-        lock (_sync)
-        {
-            if (!File.Exists(FilePath))
-                return Empty();
-
-            string json;
-            try
-            {
-                json = File.ReadAllText(FilePath, Encoding.UTF8);
-            }
-            catch (IOException ex)
-            {
-                throw new InvalidOperationException(
-                    $"The reference lists could not be read from {FilePath}: {ex.Message}", ex);
-            }
-
-            return string.IsNullOrWhiteSpace(json) ? Empty() : Parse(json);
-        }
-    }
+    public TitleReferenceFile Load() => _collection.FindById(DocumentId)?.Data ?? Empty();
 
     public void Save(TitleReferenceFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        lock (_sync)
+        var stamped = file with
         {
-            var stamped = file with
-            {
-                Version = CurrentVersion,
-                UpdatedUtc = DateTime.UtcNow.ToString("u"),
-            };
+            Version = CurrentVersion,
+            UpdatedUtc = DateTime.UtcNow.ToString("u"),
+        };
 
-            var json = JsonSerializer.Serialize(stamped, JsonOptions);
-            var temporary = FilePath + ".tmp";
+        _collection.Upsert(new Document { Id = DocumentId, Data = stamped });
+    }
 
-            File.WriteAllText(temporary, json, Encoding.UTF8);
+    /// <summary>The pre-LiteDB location, read once at startup and never again.</summary>
+    internal static string LegacyJsonPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "YeniRPA", "TitleCleaner", "reference-lists.json");
 
-            if (File.Exists(FilePath))
-                File.Replace(temporary, FilePath, BackupPath, ignoreMetadataErrors: true);
-            else
-                File.Move(temporary, FilePath);
+    public void MigrateLegacyJson()
+    {
+        if (_collection.Count() > 0)
+            return;
+
+        var path = LegacyJsonPath();
+        if (!File.Exists(path))
+            return;
+
+        var json = File.ReadAllText(path, Encoding.UTF8);
+        if (string.IsNullOrWhiteSpace(json))
+            return;
+
+        try
+        {
+            Save(Parse(json));
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            // A legacy file that no longer parses is not a reason to fail startup — this data can
+            // always be rebuilt by re-uploading the catalogue workbook.
         }
     }
 

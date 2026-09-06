@@ -1,23 +1,62 @@
 using System.Text.Json;
 using ClosedXML.Excel;
+using LiteDB;
 using YeniRPA.Web.Models;
+// LiteDB also declares a JsonSerializer type; this app's JSON is always System.Text.Json's.
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace YeniRPA.Web.Services;
 
+/// <summary>The instance surface <see cref="SellerGroupStore"/> exposes through DI. The Excel round
+/// trip (<see cref="SellerGroupStore.ReadWorkbook"/>, <see cref="SellerGroupStore.BuildWorkbook"/>)
+/// stays static on the concrete class — nothing about it depends on where the mapping is stored.</summary>
+public interface ISellerGroupStore
+{
+    /// <summary>Where the data now lives — the shared LiteDB file, not this store's own JSON file
+    /// any more. Kept on the interface because the panel shows it.</summary>
+    string FilePath { get; }
+
+    SellerGroupFile Load();
+
+    /// <summary>
+    /// Replaces the whole document. Only for a restore, which legitimately owns every field —
+    /// a module saving its own settings must use one of the two focused methods below, or it wipes
+    /// the other module's half of the record.
+    /// </summary>
+    void Save(SellerGroupFile file);
+
+    /// <summary>Saves the shared mapping table and Late Order Warnings' two templates, leaving the
+    /// Incident Warnings fields exactly as they were.</summary>
+    void SaveMapping(IReadOnlyList<SellerGroupEntry> entries, string? messageTemplate, string? orderLineTemplate);
+
+    /// <summary>Saves Incident Warnings' templates and chase threshold, leaving the mapping table and
+    /// Late Order Warnings' templates exactly as they were.</summary>
+    void SaveIncidentSettings(string? messageTemplate, string? lineTemplate, int thresholdDays);
+
+    SellerGroupMap BuildMap();
+
+    /// <summary>One-time import from <c>seller-groups.json</c>, run by <see cref="JsonToLiteDbMigrator"/>
+    /// at startup. A no-op once this store already holds a LiteDB document.</summary>
+    void MigrateLegacyJson();
+}
+
 /// <summary>
-/// Owns <c>%LOCALAPPDATA%\YeniRPA\WhatsApp\seller-groups.json</c> — the seller → WhatsApp group
-/// mapping and the operator's edited message templates.
+/// Owns the seller → WhatsApp group mapping and the operator's edited message templates, in the
+/// <c>sellerGroups</c> collection of the shared LiteDB database (<see cref="ILiteDbContext"/>).
 ///
 /// <para>Deliberately <b>not</b> encrypted, unlike <c>MiraklBrowser</c>'s <c>auth.dat</c>. Those are
 /// session cookies granting full operator access to the marketplace; these are group names and Turkish
 /// message copy. The inconsistency between the two is the point, not an oversight.</para>
 ///
-/// <para>This is the only data in the whole app that cannot be regenerated from an export, which is
-/// why <see cref="Save"/> keeps a backup generation and replaces the file atomically.</para>
+/// <para>This is the only data in the whole app that cannot be regenerated from an export. It used to
+/// live in its own hand-rolled atomic-write-plus-backup JSON file for exactly that reason; LiteDB's
+/// own write-ahead log gives the same crash-safety guarantee without this class having to implement
+/// it, so <see cref="Save"/> is now a single <c>Upsert</c>.</para>
 /// </summary>
-public sealed class SellerGroupStore
+public sealed class SellerGroupStore : ISellerGroupStore
 {
     const int CurrentVersion = 1;
+    const int DocumentId = 1;
 
     static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -33,97 +72,125 @@ public sealed class SellerGroupStore
     const int SellerNameColumn = 2;
     const int GroupColumn = 3;
 
-    /// <summary>Load and save are one operation each; a singleton reachable from two controller
-    /// actions and the runner needs them not to interleave.</summary>
+    /// <summary>One document holding the whole mapping table, the same aggregate <c>Load</c>/<c>Save</c>
+    /// always dealt in — the collection exists so this fits through <see cref="ILiteDbContext"/>, not
+    /// because the mapping is queried row by row anywhere in the app.</summary>
+    public sealed class Document
+    {
+        public int Id { get; set; }
+        public SellerGroupFile Data { get; set; } = null!;
+    }
+
+    readonly ILiteCollection<Document> _collection;
+
+    /// <summary>
+    /// Serialises the load-modify-save sequences below. LiteDB makes each individual call atomic, not
+    /// a read and a write across it — and here the two halves of one document are written by two
+    /// different panels, so an interleave would drop whichever module read first.
+    /// </summary>
     readonly object _sync = new();
 
-    public SellerGroupStore()
+    public SellerGroupStore(ILiteDbContext context)
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "YeniRPA",
-            "WhatsApp");
-        Directory.CreateDirectory(directory);
+        ArgumentNullException.ThrowIfNull(context);
 
-        FilePath = Path.Combine(directory, "seller-groups.json");
-        BackupPath = FilePath + ".bak";
+        FilePath = context.DatabasePath;
+        _collection = context.GetCollection<Document>("sellerGroups");
+        _collection.EnsureIndex(x => x.Id, unique: true);
     }
 
     public string FilePath { get; }
-    public string BackupPath { get; }
 
-    /// <summary>
-    /// Reads the file every call rather than caching it. It is a few KB; a cache would buy nothing and
-    /// would go stale the moment someone edited the JSON by hand.
-    /// </summary>
-    public SellerGroupFile Load()
-    {
-        lock (_sync)
-        {
-            if (!File.Exists(FilePath))
-                return new SellerGroupFile(CurrentVersion, null, null, null, []);
+    public SellerGroupFile Load() =>
+        _collection.FindById(DocumentId)?.Data ?? new SellerGroupFile(CurrentVersion, null, null, null, []);
 
-            string json;
-            try
-            {
-                json = File.ReadAllText(FilePath);
-            }
-            catch (IOException ex)
-            {
-                throw new InvalidOperationException(
-                    $"The seller/group mapping could not be read from {FilePath}: {ex.Message}", ex);
-            }
-
-            if (string.IsNullOrWhiteSpace(json))
-                return new SellerGroupFile(CurrentVersion, null, null, null, []);
-
-            SellerGroupFile? file;
-            try
-            {
-                file = JsonSerializer.Deserialize<SellerGroupFile>(json, JsonOptions);
-            }
-            catch (JsonException ex)
-            {
-                // Never silently start over: that would look identical to "the mapping vanished".
-                throw new InvalidOperationException(
-                    $"The seller/group mapping at {FilePath} is not valid JSON ({ex.Message}). " +
-                    $"The previous version is kept at {BackupPath}.", ex);
-            }
-
-            if (file is null)
-                return new SellerGroupFile(CurrentVersion, null, null, null, []);
-
-            return file with { Entries = file.Entries ?? [] };
-        }
-    }
-
-    /// <summary>
-    /// Writes to a temp file and moves it over the original, keeping one backup generation. A torn
-    /// write here would destroy a hand-built mapping table with nothing to rebuild it from.
-    /// </summary>
     public void Save(SellerGroupFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
+        lock (_sync) SaveCore(file);
+    }
 
-        var stamped = file with
-        {
-            Version = CurrentVersion,
-            UpdatedUtc = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss'Z'")
-        };
-
+    /// <summary>
+    /// Late Order Warnings' save. Reads the current document first so the Incident Warnings fields
+    /// survive: the mapping panel does not post them, and building a fresh <c>SellerGroupFile</c> from
+    /// its request — which is what this used to do — silently deleted the other module's templates.
+    /// </summary>
+    public void SaveMapping(IReadOnlyList<SellerGroupEntry> entries, string? messageTemplate, string? orderLineTemplate)
+    {
         lock (_sync)
         {
-            var tempPath = FilePath + ".tmp";
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(stamped, JsonOptions));
-
-            if (File.Exists(FilePath))
-                File.Copy(FilePath, BackupPath, overwrite: true);
-
-            File.Move(tempPath, FilePath, overwrite: true);
+            SaveCore(Load() with
+            {
+                Entries = entries ?? [],
+                MessageTemplate = messageTemplate,
+                OrderLineTemplate = orderLineTemplate,
+            });
         }
     }
 
+    /// <summary>The mirror of <see cref="SaveMapping"/>: writes only the Incident Warnings fields and
+    /// leaves the mapping table and the late-order templates untouched.</summary>
+    public void SaveIncidentSettings(string? messageTemplate, string? lineTemplate, int thresholdDays)
+    {
+        lock (_sync)
+        {
+            SaveCore(Load() with
+            {
+                IncidentMessageTemplate = messageTemplate,
+                IncidentLineTemplate = lineTemplate,
+                IncidentThresholdDays = thresholdDays,
+            });
+        }
+    }
+
+    /// <summary>Stamps and upserts. Callers hold <see cref="_sync"/>.</summary>
+    void SaveCore(SellerGroupFile file)
+    {
+        var stamped = file with
+        {
+            Version = CurrentVersion,
+            UpdatedUtc = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss'Z'"),
+            Entries = file.Entries ?? [],
+        };
+
+        _collection.Upsert(new Document { Id = DocumentId, Data = stamped });
+    }
+
     public SellerGroupMap BuildMap() => SellerGroupMap.FromEntries(Load().Entries);
+
+    /// <summary>The pre-LiteDB location, read once at startup and never again.</summary>
+    internal static string LegacyJsonPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "YeniRPA", "WhatsApp", "seller-groups.json");
+
+    public void MigrateLegacyJson()
+    {
+        if (_collection.Count() > 0)
+            return;
+
+        var path = LegacyJsonPath();
+        if (!File.Exists(path))
+            return;
+
+        var json = File.ReadAllText(path);
+        if (string.IsNullOrWhiteSpace(json))
+            return;
+
+        SellerGroupFile? file;
+        try
+        {
+            file = JsonSerializer.Deserialize<SellerGroupFile>(json, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            // A legacy file that no longer parses is not a reason to fail startup: Load() would have
+            // refused it under the old code too, and there is nothing here worth carrying over.
+            return;
+        }
+
+        if (file is not null)
+            Save(file with { Entries = file.Entries ?? [] });
+    }
 
     // ---------------------------------------------------------------------
     // Excel round trip

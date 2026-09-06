@@ -1,93 +1,115 @@
 using System.Text;
 using System.Text.Json;
 using ClosedXML.Excel;
+using LiteDB;
 using YeniRPA.Web.Models;
+// LiteDB also declares a JsonSerializer type; this app's JSON is always System.Text.Json's.
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace YeniRPA.Web.Services.TitleCleaner;
 
+/// <summary>The instance surface <see cref="CategoryRuleStore"/> exposes through DI. The workbook
+/// reader (<see cref="CategoryRuleStore.ReadWorkbook"/>) and the matching helpers
+/// (<see cref="CategoryRuleStore.FileCategory"/>, <see cref="CategoryRuleStore.Covers"/>) stay static
+/// on the concrete class.</summary>
+public interface ICategoryRuleStore
+{
+    /// <summary>Where the data now lives — the shared LiteDB file. Kept on the interface because
+    /// <see cref="Status"/> surfaces it.</summary>
+    string FilePath { get; }
+
+    CategoryRuleFile Load();
+    void Save(CategoryRuleFile file);
+    CategoryRuleStatus Status();
+
+    /// <summary>One-time import from <c>category-rules.json</c>, run by <see cref="JsonToLiteDbMigrator"/>
+    /// at startup. A no-op once this store already holds a LiteDB document.</summary>
+    void MigrateLegacyJson();
+}
+
 /// <summary>
-/// Owns <c>%LOCALAPPDATA%\YeniRPA\TitleCleaner\category-rules.json</c> — the marketplace's RuleSet
-/// workbook, reduced to the one thing this module can use: which product types each category accepts.
+/// Owns the marketplace's RuleSet workbook, reduced to the one thing this module can use — which
+/// product types each category accepts — in the <c>categoryRules</c> collection of the shared LiteDB
+/// database (<see cref="ILiteDbContext"/>).
 ///
 /// <para>Modelled on <see cref="TitleRuleStore"/>, with one difference that matters. A rule set is
-/// data that exists nowhere else, so losing it is unrecoverable; this file is <b>derived</b> from a
-/// workbook the marketplace publishes and can always be rebuilt by uploading that workbook again. It
-/// still gets the atomic write and the backup generation — they cost nothing — but an unreadable
-/// file here is a reason to re-upload, not a disaster.</para>
+/// data that exists nowhere else, so losing it is unrecoverable; this data is <b>derived</b> from a
+/// workbook the marketplace publishes and can always be rebuilt by uploading that workbook again.</para>
 ///
 /// <para>The workbook is parsed <b>once, at upload</b>. Re-reading a 113 KB spreadsheet on every
 /// preview would be work done over and over for an answer that only changes when the marketplace
 /// publishes a new edition.</para>
 /// </summary>
-public sealed class CategoryRuleStore
+public sealed class CategoryRuleStore : ICategoryRuleStore
 {
     const int CurrentVersion = 1;
+    const int DocumentId = 1;
 
     static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
     };
 
-    readonly object _sync = new();
-
-    public CategoryRuleStore()
+    public sealed class Document
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "YeniRPA",
-            "TitleCleaner");
-        Directory.CreateDirectory(directory);
+        public int Id { get; set; }
+        public CategoryRuleFile Data { get; set; } = null!;
+    }
 
-        FilePath = Path.Combine(directory, "category-rules.json");
-        BackupPath = FilePath + ".bak";
+    readonly ILiteCollection<Document> _collection;
+
+    public CategoryRuleStore(ILiteDbContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        FilePath = context.DatabasePath;
+        _collection = context.GetCollection<Document>("categoryRules");
+        _collection.EnsureIndex(x => x.Id, unique: true);
     }
 
     public string FilePath { get; }
-    public string BackupPath { get; }
 
-    public CategoryRuleFile Load()
-    {
-        lock (_sync)
-        {
-            if (!File.Exists(FilePath))
-                return Empty();
-
-            string json;
-            try
-            {
-                json = File.ReadAllText(FilePath, Encoding.UTF8);
-            }
-            catch (IOException ex)
-            {
-                throw new InvalidOperationException(
-                    $"The category rules could not be read from {FilePath}: {ex.Message}", ex);
-            }
-
-            return string.IsNullOrWhiteSpace(json) ? Empty() : Parse(json);
-        }
-    }
+    public CategoryRuleFile Load() => _collection.FindById(DocumentId)?.Data ?? Empty();
 
     public void Save(CategoryRuleFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        lock (_sync)
+        var stamped = file with
         {
-            var stamped = file with
-            {
-                Version = CurrentVersion,
-                UpdatedUtc = DateTime.UtcNow.ToString("u"),
-            };
+            Version = CurrentVersion,
+            UpdatedUtc = DateTime.UtcNow.ToString("u"),
+        };
 
-            var json = JsonSerializer.Serialize(stamped, JsonOptions);
-            var temporary = FilePath + ".tmp";
+        _collection.Upsert(new Document { Id = DocumentId, Data = stamped });
+    }
 
-            File.WriteAllText(temporary, json, Encoding.UTF8);
+    /// <summary>The pre-LiteDB location, read once at startup and never again.</summary>
+    internal static string LegacyJsonPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "YeniRPA", "TitleCleaner", "category-rules.json");
 
-            if (File.Exists(FilePath))
-                File.Replace(temporary, FilePath, BackupPath, ignoreMetadataErrors: true);
-            else
-                File.Move(temporary, FilePath);
+    public void MigrateLegacyJson()
+    {
+        if (_collection.Count() > 0)
+            return;
+
+        var path = LegacyJsonPath();
+        if (!File.Exists(path))
+            return;
+
+        var json = File.ReadAllText(path, Encoding.UTF8);
+        if (string.IsNullOrWhiteSpace(json))
+            return;
+
+        try
+        {
+            Save(Parse(json));
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            // A legacy file that no longer parses is not a reason to fail startup — this data can
+            // always be rebuilt by re-uploading the RuleSet workbook.
         }
     }
 

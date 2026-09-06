@@ -24,15 +24,15 @@ public sealed class LateOrdersController : ControllerBase
 {
     const string XlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-    readonly SellerGroupStore _store;
+    readonly ISellerGroupStore _store;
     readonly WhatsAppBrowser _browser;
-    readonly LateOrderWhatsAppRunner _runner;
+    readonly WhatsAppMessageRunner _runner;
     readonly AutomationJobBus _bus;
 
     public LateOrdersController(
-        SellerGroupStore store,
+        ISellerGroupStore store,
         WhatsAppBrowser browser,
-        LateOrderWhatsAppRunner runner,
+        WhatsAppMessageRunner runner,
         AutomationJobBus bus)
     {
         _store = store;
@@ -87,7 +87,7 @@ public sealed class LateOrdersController : ControllerBase
         if (file is not { Length: > 0 })
             return BadRequest(new { error = "Please upload the Mirakl orders export." });
 
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
 
         var data = LateOrderBuilder.Build(stream, file.FileName, new LateOrderOptions(offsetHours), _store.BuildMap());
         return Ok(data);
@@ -161,8 +161,8 @@ public sealed class LateOrdersController : ControllerBase
         isRunning = _bus.IsRunning,
         runningModule = _bus.RunningModule,
         profilePath = _browser.ProfilePath,
-        maxGroupsPerRun = LateOrderWhatsAppRunner.MaxGroupsPerRun,
-        maxMessageChars = LateOrderWhatsAppRunner.MaxMessageChars
+        maxGroupsPerRun = WhatsAppMessageRunner.MaxGroupsPerRun,
+        maxMessageChars = WhatsAppMessageRunner.MaxMessageChars
     });
 
     /// <summary>Opens a real Chrome window on WhatsApp Web for the QR scan. Blocks until it is up.</summary>
@@ -198,11 +198,11 @@ public sealed class LateOrdersController : ControllerBase
         if (raw.Count == 0)
             return BadRequest(new { error = "There is nothing to send." });
 
-        if (raw.Count > LateOrderWhatsAppRunner.MaxGroupsPerRun)
+        if (raw.Count > WhatsAppMessageRunner.MaxGroupsPerRun)
         {
             return BadRequest(new
             {
-                error = $"{raw.Count} messages is over the {LateOrderWhatsAppRunner.MaxGroupsPerRun}-group limit for one run. " +
+                error = $"{raw.Count} messages is over the {WhatsAppMessageRunner.MaxGroupsPerRun}-group limit for one run. " +
                         "Narrow the list and run it in batches — sending the first 40 silently would leave you " +
                         "believing all of them went out."
             });
@@ -234,12 +234,12 @@ public sealed class LateOrdersController : ControllerBase
             if (body.Length == 0)
                 return BadRequest(new { error = $"The message for '{group}' is empty." });
 
-            if (body.Length > LateOrderWhatsAppRunner.MaxMessageChars)
+            if (body.Length > WhatsAppMessageRunner.MaxMessageChars)
             {
                 return BadRequest(new
                 {
                     error = $"The message for '{group}' is {body.Length} characters, over the " +
-                            $"{LateOrderWhatsAppRunner.MaxMessageChars} limit."
+                            $"{WhatsAppMessageRunner.MaxMessageChars} limit."
                 });
             }
 
@@ -263,7 +263,7 @@ public sealed class LateOrdersController : ControllerBase
             });
         }
 
-        if (!_runner.TryStart(messages, request!.DryRun))
+        if (!_runner.TryStart(messages, request!.DryRun, WhatsAppMessageRunner.LateOrderModule))
             return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });
 
         return Ok(new { count = messages.Count, dryRun = request.DryRun });
@@ -298,12 +298,12 @@ public sealed class LateOrdersController : ControllerBase
     {
         var entries = Clean(request?.Entries);
 
-        _store.Save(new SellerGroupFile(
-            Version: 0,                       // stamped by the store
-            UpdatedUtc: null,                 // stamped by the store
-            MessageTemplate: NullIfBlank(request?.Template),
-            OrderLineTemplate: NullIfBlank(request?.OrderLineTemplate),
-            Entries: entries));
+        // SaveMapping, not Save: the same document also carries Incident Warnings' templates, which
+        // this request knows nothing about. A whole-document write would delete them.
+        _store.SaveMapping(
+            entries,
+            NullIfBlank(request?.Template),
+            NullIfBlank(request?.OrderLineTemplate));
 
         return Ok(new
         {
@@ -324,7 +324,7 @@ public sealed class LateOrdersController : ControllerBase
         if (file is not { Length: > 0 })
             return BadRequest(new { error = "Please upload a mapping file (.xlsx or .csv)." });
 
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
         var imported = SellerGroupStore.ReadWorkbook(stream, file.FileName);
 
         var merged = _store.Load().Entries.ToList();
@@ -444,13 +444,4 @@ public sealed class LateOrdersController : ControllerBase
     }
 
     static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
-
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
-    }
 }

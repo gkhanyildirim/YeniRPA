@@ -20,7 +20,7 @@ public sealed class OrderReportController : ControllerBase
         if (file is not { Length: > 0 })
             return BadRequest(new { error = MissingFileMessage });
 
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
         return Ok(OrderReportBuilder.BuildData(stream));
     }
 
@@ -30,18 +30,9 @@ public sealed class OrderReportController : ControllerBase
         if (file is not { Length: > 0 })
             return BadRequest(new { error = MissingFileMessage });
 
-        using var stream = await CopyToSeekableStreamAsync(file, cancellationToken);
+        using var stream = file.OpenReadStream();
         var bytes = OrderReportBuilder.Build(stream);
 
         return File(bytes, XlsxContentType, "Gec Kargolama ve Iptal Raporu.xlsx");
-    }
-
-    /// <summary>ClosedXML needs a seekable stream; the raw request body is not one.</summary>
-    static async Task<MemoryStream> CopyToSeekableStreamAsync(IFormFile file, CancellationToken cancellationToken)
-    {
-        var stream = new MemoryStream();
-        await file.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-        return stream;
     }
 }

@@ -8,8 +8,16 @@ namespace YeniRPA.Web.Services.Automation;
 public sealed record WhatsAppMessage(string GroupName, string SellerId, string SellerName, string Body);
 
 /// <summary>
-/// Posts one warning message per seller group by driving WhatsApp Web, streaming progress through
+/// Posts one message per WhatsApp group by driving WhatsApp Web, streaming progress through
 /// <see cref="AutomationJobBus"/> like every other automation module.
+///
+/// <para>Deliberately says nothing about <em>why</em> a message is being sent. Nothing below reads a
+/// deadline, an incident or a seller record — a <see cref="WhatsAppMessage"/> arrives with its
+/// destination and its final body already decided, and this class only types it. That is what lets
+/// Late Order Warnings and Incident Warnings share one sender instead of two copies of the three
+/// guards below drifting apart. The calling module identifies itself through the <c>module</c>
+/// argument on <see cref="TryStart"/>, which is what the run slot, the progress stream and the
+/// failure-screenshot folder are keyed on.</para>
 ///
 /// <para>Structurally a sibling of <see cref="CreateReturnRunner"/>, but the blast radius is different:
 /// a Mirakl return can be undone by hand, a WhatsApp message cannot be recalled and lands in front of
@@ -26,9 +34,20 @@ public sealed record WhatsAppMessage(string GroupName, string SellerId, string S
 ///   focus steal, all while everything is still reversible.</description></item>
 /// </list>
 /// </summary>
-public sealed class LateOrderWhatsAppRunner
+public sealed class WhatsAppMessageRunner
 {
-    public const string ModuleName = "late-orders";
+    /// <summary>
+    /// The two modules that send through this runner. They are the names the browser sees on the
+    /// event stream, so they must match the module keys <c>late-orders.js</c> and
+    /// <c>incidents-report.js</c> latch their run logs on.
+    ///
+    /// <para>There is deliberately no <c>ModuleName</c> default any more: a single-module constant
+    /// silently sent every incident run's progress to the Late Orders console, because that panel
+    /// latches on the module named in the <c>started</c> event.</para>
+    /// </summary>
+    public const string LateOrderModule = "late-orders";
+
+    public const string IncidentWarningModule = "incident-warnings";
 
     /// <summary>
     /// Randomised pause between groups. A fixed interval is the single most machine-legible signal a
@@ -82,9 +101,9 @@ public sealed class LateOrderWhatsAppRunner
 
     readonly AutomationJobBus _bus;
     readonly WhatsAppBrowser _browser;
-    readonly ILogger<LateOrderWhatsAppRunner> _logger;
+    readonly ILogger<WhatsAppMessageRunner> _logger;
 
-    public LateOrderWhatsAppRunner(AutomationJobBus bus, WhatsAppBrowser browser, ILogger<LateOrderWhatsAppRunner> logger)
+    public WhatsAppMessageRunner(AutomationJobBus bus, WhatsAppBrowser browser, ILogger<WhatsAppMessageRunner> logger)
     {
         _bus = bus;
         _browser = browser;
@@ -93,11 +112,18 @@ public sealed class LateOrderWhatsAppRunner
 
     /// <summary>Claims the app-wide run slot and starts the batch in the background. False when another
     /// automation run already holds it.</summary>
-    public bool TryStart(IReadOnlyList<WhatsAppMessage> messages, bool dryRun)
+    /// <param name="module">
+    /// Which module is sending — <see cref="LateOrderModule"/> or <see cref="IncidentWarningModule"/>.
+    /// Carried all the way through the run: it keys the run slot, names the module on the
+    /// <c>started</c> event the panels latch their consoles on, and separates the failure screenshots
+    /// into <c>artifacts/&lt;module&gt;</c>.
+    /// </param>
+    public bool TryStart(IReadOnlyList<WhatsAppMessage> messages, bool dryRun, string module)
     {
         ArgumentNullException.ThrowIfNull(messages);
+        ArgumentException.ThrowIfNullOrWhiteSpace(module);
 
-        if (!_bus.TryBeginRun(ModuleName))
+        if (!_bus.TryBeginRun(module))
             return false;
 
         // Deliberately not awaited: the POST returns as soon as the batch is accepted, and progress
@@ -106,7 +132,7 @@ public sealed class LateOrderWhatsAppRunner
         {
             try
             {
-                await RunAsync(messages, dryRun);
+                await RunAsync(messages, dryRun, module);
             }
             catch (Exception ex)
             {
@@ -123,9 +149,9 @@ public sealed class LateOrderWhatsAppRunner
         return true;
     }
 
-    async Task RunAsync(IReadOnlyList<WhatsAppMessage> messages, bool dryRun)
+    async Task RunAsync(IReadOnlyList<WhatsAppMessage> messages, bool dryRun, string module)
     {
-        _bus.Started(ModuleName, messages.Count);
+        _bus.Started(module, messages.Count);
         _bus.Log(dryRun
             ? $"DRY RUN — composing {messages.Count} message(s). Nothing will be sent."
             : $"LIVE — sending {messages.Count} message(s).");
@@ -180,7 +206,7 @@ public sealed class LateOrderWhatsAppRunner
                 _logger.LogWarning(ex, "WhatsApp send failed for group {GroupName}.", message.GroupName);
 
                 var screenshotPath = await AutomationArtifacts.TryCaptureFailureScreenshotAsync(
-                    _bus, page, ModuleName, message.GroupName);
+                    _bus, page, module, message.GroupName);
                 var suffix = screenshotPath is null ? string.Empty : $" | screenshot: {screenshotPath}";
                 _bus.Log($"Failed: {message.GroupName} - {ex.Message}{suffix}");
             }
