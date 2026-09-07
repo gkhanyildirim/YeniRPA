@@ -255,6 +255,10 @@ public static class TitleCleanBuilder
             }
         }
 
+        // A cell value that only reads part of a phrase its own column recognises is thrown out
+        // before anything is decided — see Fragments.
+        pool.RemoveAll(c => Fragments(c, pool));
+
         var accepted = Resolve(pool, title);
 
         // Spans that some attribute has confirmed as its own value. Nothing else may cite them as
@@ -889,6 +893,34 @@ public static class TitleCleanBuilder
 
         return true;
     }
+
+    /// <summary>
+    /// Whether a cell-value match is reading half of a phrase its own column already recognises.
+    ///
+    /// <para>A cell reading "Windows" against a title reading "Windows 11 Pro" is the case. Searching
+    /// the cell's own value finds that first word and, being what the row says, it outranks
+    /// everything — so the title came out "… RAM 11 Pro F8", cut down the middle, and the row was not
+    /// even reported because as far as the column was concerned it had found its value. A cell
+    /// reading "120U" does the same to "Core 5 120U".</para>
+    ///
+    /// <para>The catalogue is the more informed of the two claims: it is a record of how titles
+    /// actually write this attribute, and a longer entry covering the same characters means the title
+    /// is writing that phrase, not the fragment. So the fragment is dropped, the longer match stays as
+    /// evidence, and the row is reported as the disagreement it is — the cell says one thing, the
+    /// title says a more specific one. Nothing is removed on a guess.</para>
+    ///
+    /// <para>Only the cell's own value is ever dropped this way. Catalogue entries compete with each
+    /// other on length as they always did, and a cell value nothing longer covers is untouched.</para>
+    /// </summary>
+    static bool Fragments(Candidate candidate, List<Candidate> pool) =>
+        candidate.Match.FromCell &&
+        pool.Any(other =>
+            !ReferenceEquals(other, candidate) &&
+            ReferenceEquals(other.Attr, candidate.Attr) &&
+            !other.Match.FromCell &&
+            other.Start <= candidate.Start &&
+            candidate.End <= other.End &&
+            other.Match.Length > candidate.Match.Length);
 
     static bool BareSupported(Candidate candidate, List<Candidate> accepted)
     {

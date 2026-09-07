@@ -2401,6 +2401,15 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   font-size: .72rem;
 }
 
+/* The count keeps the right-hand end of the head; Stop sits beside it rather than splitting the row
+   into thirds. Written on the count instead of the button so the head still reads correctly while
+   nothing is running and there is no button at all. */
+.run-head .mono { margin-left: auto; }
+
+/* A button is inline-flex, which outranks the plain [hidden] attribute — the Stop button would stay
+   on screen with no run to stop. Spelled out here the way the other components do it. */
+.btn[hidden] { display: none; }
+
 .progress {
   height: 6px;
   border: 1px solid var(--line);

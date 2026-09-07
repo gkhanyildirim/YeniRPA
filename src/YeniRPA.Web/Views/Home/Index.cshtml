@@ -2029,6 +2029,10 @@
                             <label for="ow-min-offers">Minimum offers</label>
                             <input type="number" id="ow-min-offers" min="0" step="1" value="0" />
                         </div>
+                        <div class="field" style="flex: 0 1 200px">
+                            <label for="ow-lead-times">Lead times to warn about</label>
+                            <input type="text" id="ow-lead-times" spellcheck="false" placeholder="0, 1" />
+                        </div>
                         <span class="filter-summary" id="ow-lead-summary"></span>
                     </div>
 
@@ -2269,6 +2273,10 @@
                     <div class="run-head">
                         <span id="ow-progress-label">Mails processed</span>
                         <span class="mono" id="ow-progress-text">0 / 0</span>
+                        <button type="button" class="btn btn-ghost btn-sm" id="ow-stop" hidden>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Stop</span>
+                        </button>
                     </div>
                     <div class="progress" id="ow-progress" role="progressbar"
                          aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
@@ -2582,6 +2590,10 @@
                     <div class="run-head">
                         <span id="vw-progress-label">Mails processed</span>
                         <span class="mono" id="vw-progress-text">0 / 0</span>
+                        <button type="button" class="btn btn-ghost btn-sm" id="vw-stop" hidden>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Stop</span>
+                        </button>
                     </div>
                     <div class="progress" id="vw-progress" role="progressbar"
                          aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"

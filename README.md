@@ -10,7 +10,7 @@ with tab navigation between them and results rendered in place.
 | **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
 | **Product Status** | A seller list (`.xlsx` or `.csv`, names in the first column) or pasted seller names | Reads each seller's catalogue breakdown off the Mirakl Catalog Manager — four sellers at a time — and returns one seller × status table, sortable in place and exportable to Excel. Read-only: nothing is written to the marketplace |
 | **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per WhatsApp group (copy to clipboard or export to Excel) |
-| **Seller Offer Warnings** | The Mirakl `offers` export + the seller address list (`Onboarding Check List.xlsx`, sheet `Data`) | One `.xlsx` per seller listing their offers with a lead time to ship of 1–2 days, then one warning mail per seller carrying their own file, previewed in full and sent through Outlook with a live run log |
+| **Seller Offer Warnings** | The Mirakl `offers` export + the seller address list (`Onboarding Check List.xlsx`, sheet `Data`) | One `.xlsx` per seller listing their offers with one of the warned lead times to ship (0–1 days by default, a settings box), then one warning mail per seller carrying their own file, previewed in full and sent through Outlook with a live run log |
 | **Seller VAT Warnings** | The "offers with no VAT rate" export (needs a `State Reasons` column) + the same seller address list | One `.xlsx` per seller listing the products whose *only* state reason is `VAT_RATE_MISSING`, mailed the same way |
 | **Incident Warnings** | The incidents already loaded in the Incidents Report + the same seller → WhatsApp group mapping | The incidents open past a day threshold with the seller still to reply, by seller, plus a funnel and one composed warning message per WhatsApp group |
 | **Title Cleaner** | A product export (`.xlsx` or `.csv`) with a title column and attribute columns | Each title stripped of what that row's own attributes name, the cells that disagreed with their title, and the cells completed from it — previewed in full, then a 3-sheet workbook |
@@ -101,24 +101,58 @@ The two modules are deliberately separate code — see [The guards](#the-guards)
 
 ### What it selects
 
-Only offers whose **`Lead time to ship` is 1 or 2 days**. On the current export that is 86 912 of
-203 543 rows, belonging to 287 of 444 sellers. Zero is excluded on purpose: it is what the export
-writes for offers the seller does not ship at all. A blank cell — a third of the file — is not a
-promise anyone made, so it is not one anyone is warned about.
+Offers whose **`Lead time to ship` is one of the days the operator warns about** — a settings box,
+defaulting to **0 and 1 days**. A marketplace judgement that has already changed once (it was 1 and 2)
+belongs to the operator rather than to a constant, so the same value drives the filter, the mail, the
+attachment's heading and the panel's summary, and none of them can disagree with the run that
+actually happened.
+
+A **blank cell is never warned about**, and that is load-bearing now that zero can be: a third of the
+real export leaves this column empty, and reading those as "ships same day" would invent a promise
+the seller never made. `OfferSplitBuilder.ReadLeadTime` parses the cell directly rather than through
+`TabularFile.ParseNumber`, which answers 0 for "not a number" — telling the two apart by comparing
+the text against `"0"` would drop `"00"` and `"0.00"` on the floor, and a seller who is silently
+never warned is the one failure this module exists to prevent.
 
 The attachment has **two columns: `Product SKU` and `Termin (Gün)`**. Nothing else from the 26-column
 export reaches the record the workbook is written from, so no price, stock, discount or category can
 be written into a file that leaves the building. Rows are sorted by lead time so a seller can work
-down the one-day offers first.
+down the shortest promises first.
 
-### 287 sellers against a 250-mail run
+### The templates and the days
 
-More sellers qualify than one run may mail, and the cap is a **refusal, not a truncation** — sending
-the first 250 silently would leave the operator believing all of them went out. Two levers:
-**Minimum offers**, which drops sellers with only a handful of short-lead offers before anything is
-written for them, and the per-card selection, which splits a run into two passes. The prepare says so
-in a warning as soon as it knows, while the threshold box is still on screen, rather than letting the
-send refuse after 287 cards have been read.
+The mail carries two lead-time placeholders: `{leadTimes}`, the run's own setting rendered as it
+reads in a sentence ("0-1"), and `{leadTimeBreakdown}`, this seller's split as one line per day they
+actually hold offers on. There is no token per day, because the number of days is not known until the
+run — a fixed `{leadTime2}` would print nothing the moment the operator stopped warning about two.
+The cost is that the breakdown's Turkish sentence lives in `OfferMailBuilder` rather than in the
+template; the operator can still move the block or drop it.
+
+Saving the panel stores the text of the boxes rather than a null, so an operator who never edited a
+word ends up with a frozen copy of whatever the default was that day. `OfferMailBuilder.Superseded*`
+lists this module's earlier defaults and `OfferMailStore.Load` drops a **byte-for-byte** match so the
+current default takes over — otherwise that frozen copy would keep quoting a placeholder the build no
+longer fills, and the mail would leave with `{leadTime2}` printed in it. Only an exact match is
+dropped: a template the operator changed by one character is theirs.
+
+### 287 sellers, sent in passes of 250
+
+More sellers qualify than one burst of mail should carry, so a large run is **split, not refused**:
+`OfferMailRunner` cuts it into passes of 250, pauses two minutes between them, and re-checks Outlook
+at the start of each one — an application that closed mid-run would otherwise fail every remaining
+row with the same line. Splitting it by hand worked, but it left the operator remembering which half
+had gone out.
+
+Above **1 000 mails** the send is still refused outright, and that refusal is a refusal rather than a
+truncation: sending the first thousand silently would leave the operator believing all of them went
+out. The lever for getting under it is **Minimum offers**, which drops sellers with only a handful of
+short-lead offers before anything is written for them. The prepare says how many passes a run will
+take as soon as it knows, while the threshold box is still on screen, rather than letting the operator
+discover it from a progress bar that has stalled.
+
+A run of that size holds the automation slot for the better part of an hour, so the run log carries a
+**Stop** button. It is not an undo — a sent mail cannot be recalled — so it stops before the next mail
+rather than abandoning the one in flight, and the log then names how many were never attempted.
 
 ### Why the export is not read like every other upload
 
@@ -203,8 +237,8 @@ A mail cannot be recalled, and its attachment is a complete list of one seller's
 Plus: one seller per mail (the same seller twice in a run is refused; the same *address* across
 different sellers is fine and expected — each of those mails carries a different attachment), the
 file confirmed on disk again immediately before Outlook is called, dry run the default (it `Save`s a
-real draft with the real attachment instead of sending), at most 250 mails per run (refused, not
-truncated) and 2–5 s randomised between them.
+real draft with the real attachment instead of sending), at most 1 000 mails per run (refused, not
+truncated) in passes of 250, and 2–5 s randomised between them.
 
 **Why the two modules are separate code.** `OfferSplitBuilder`/`VatSplitBuilder`,
 `OfferMailStore`/`VatMailStore` and `OfferBatchStore`/`VatBatchStore` are near-copies rather than a
@@ -851,7 +885,7 @@ src/YeniRPA.Web/
 │   ├── SellerMailStore.cs           How an address cell is split, joined and checked
 │   ├── SellerMailDirectory.cs       The uploaded seller -> e-mail list; id, then folded name
 │   ├── OfferExportReader.cs         Streaming xlsx reader for the 200k-row offer export
-│   ├── OfferSplitBuilder.cs         Offers with a 1-2 day lead time, grouped by seller
+│   ├── OfferSplitBuilder.cs         Offers with a warned lead time, grouped by seller
 │   ├── OfferSellerWorkbook.cs       One seller -> Product SKU + lead time, one sheet
 │   ├── OfferMailBuilder.cs          One seller -> subject, body, and the containment rule
 │   ├── OfferMailStore.cs            offer-warnings.json: templates, folder, typed addresses
@@ -888,10 +922,10 @@ src/YeniRPA.Web/
 ├── Controllers/                     Home, one per report, Automation (session + events)
 ├── Infrastructure/                  400 { error } filter for input-validation failures
 ├── Views/Home/Index.cshtml          The single page: every module, one visible at a time
-└── wwwroot/
+└── wwwroot/                         Served to the browser — assets only, no data
     ├── css/app.css                  Design tokens, light + dark themes
-
-tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrier names
+    ├── images/                      Brand mark and favicons
+    ├── lib/                         Chart.js and the IBM Plex faces
     ├── js/app.js                    Shell: nav, theme, uploads, fetch
     ├── js/order-report.js           Order dashboard aggregation + charts
     ├── js/return-sla-report.js      Return SLA dashboard
@@ -902,7 +936,17 @@ tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrie
     ├── js/offer-warnings.js         Seller Offer Warnings: two uploads, preview, send
     ├── js/vat-warnings.js           Seller VAT Warnings: the same, with the VAT filter
     └── js/title-cleaner.js          Title Cleaner: rule editor, preview, download
+
+tests/YeniRPA.Tests/                 Join, SLA verdict, template reading, carrier names
+└── samples/                         Marketplace exports the real-file tests run against
 ```
+
+**Nothing under `wwwroot` is private.** `UseStaticFiles` serves the whole folder with no
+authentication, so a file left there is downloadable by anyone who guesses its name. The sample
+marketplace exports used to sit there and now live under `tests/YeniRPA.Tests/samples/`, next to the
+only code that reads them. They stay untracked (`.gitignore` covers `*.xlsx`), so a fresh clone has no
+sample data and `TitleCleanerRealFileTests` fails its `File.Exists` guard rather than passing on an
+empty set — deliberate: silent coverage loss is the worse outcome.
 
 ## API
 

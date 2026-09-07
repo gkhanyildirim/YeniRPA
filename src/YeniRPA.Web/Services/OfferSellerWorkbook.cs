@@ -111,10 +111,15 @@ public static class OfferSellerWorkbook
         title.Style.Font.FontSize = 14;
         title.Style.Font.FontColor = NavyColor;
 
+        // Built from this seller's own counts rather than from the run's setting: the heading has to
+        // describe the list underneath it, and a seller with no same-day offers should not be handed a
+        // file headed as though they had some.
+        var days = OfferMailBuilder.DescribeLeadTimes([.. seller.LeadTimeCounts.Select(c => c.LeadTime)]);
+        var split = string.Join(", ", seller.LeadTimeCounts.Select(c => $"{c.Offers:N0} × {c.LeadTime} gün"));
+
         var subtitle = sheet.Cell(SubtitleRow, 1);
         subtitle.SetValue(
-            $"Termini 1-2 gün olan teklifler · {seller.Offers.Count:N0} teklif " +
-            $"({seller.LeadTime1:N0} × 1 gün, {seller.LeadTime2:N0} × 2 gün) · {date}");
+            $"Termini {days} gün olan teklifler · {seller.Offers.Count:N0} teklif ({split}) · {date}");
         subtitle.Style.Font.Italic = true;
         subtitle.Style.Font.FontSize = 9;
         subtitle.Style.Font.FontColor = MutedColor;

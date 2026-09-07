@@ -13,8 +13,10 @@ namespace YeniRPA.Tests;
 /// first place. A change that satisfies every unit test and still ruins a real file is the failure
 /// mode worth spending a slow test on.</para>
 ///
-/// <para>The workbooks are the ones served from <c>wwwroot</c>, copied into the test output by the web
-/// project's content glob. They are read, never written.</para>
+/// <para>The workbooks live in this project's <c>samples/</c> folder and are copied into the test
+/// output by its own item group. They are read, never written, and they are deliberately <em>not</em>
+/// under the web project any more: sitting in <c>wwwroot</c> made real seller exports downloadable
+/// from the running app by anyone who guessed a filename.</para>
 /// </summary>
 public class TitleCleanerRealFileTests
 {
@@ -119,7 +121,7 @@ public class TitleCleanerRealFileTests
 
     static List<List<string>> Table(string fileName)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "wwwroot", fileName);
+        var path = Path.Combine(AppContext.BaseDirectory, "samples",fileName);
         Assert.True(File.Exists(path), $"The sample workbook is missing from the test output: {path}");
 
         using var stream = File.OpenRead(path);
@@ -131,7 +133,7 @@ public class TitleCleanerRealFileTests
     static TitleReferenceList Processors()
     {
         const string file = "intel_amd_tum_islemci_modelleri_2026-08-17 1.xlsx";
-        var path = Path.Combine(AppContext.BaseDirectory, "wwwroot", file);
+        var path = Path.Combine(AppContext.BaseDirectory, "samples",file);
         Assert.True(File.Exists(path), $"The processor catalogue is missing from the test output: {path}");
 
         using var stream = File.OpenRead(path);
@@ -223,12 +225,16 @@ public class TitleCleanerRealFileTests
     [InlineData("laptop-test.xlsx")]
     [InlineData("dizüstü-per4mance.xlsx")]
     [InlineData("ocaklar.xlsx")]
+    [InlineData("laptop-deneme-2.xlsx")]
+    [InlineData("laptop-deneme-3.xlsx")]
     public void NothingReportedAsRemovedIsStillInTheTitle(string fileName)
     {
         var rules = fileName switch
         {
             "teknoraks0109.xlsx" => CompiledRuleSet.Compile(LaptopRules(), [Processors()]),
             "laptop-test.xlsx" => CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]),
+            "laptop-deneme-2.xlsx" or "laptop-deneme-3.xlsx" =>
+                CompiledRuleSet.Compile(TunedLaptopRules(), [MessyReference()]),
             _ => CompiledRuleSet.Compile(TitleRuleSuggester.Suggest(Table(fileName), fileName).RuleSet),
         };
 
@@ -391,11 +397,17 @@ public class TitleCleanerRealFileTests
     [Theory]
     [InlineData("teknoraks0109.xlsx")]
     [InlineData("laptop-test.xlsx")]
+    [InlineData("laptop-deneme-2.xlsx")]
+    [InlineData("laptop-deneme-3.xlsx")]
     public void ASecondPassOverALaptopExportChangesNothing(string fileName)
     {
-        var rules = fileName == "teknoraks0109.xlsx"
-            ? CompiledRuleSet.Compile(LaptopRules(), [Processors()])
-            : CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]);
+        var rules = fileName switch
+        {
+            "teknoraks0109.xlsx" => CompiledRuleSet.Compile(LaptopRules(), [Processors()]),
+            "laptop-deneme-2.xlsx" or "laptop-deneme-3.xlsx" =>
+                CompiledRuleSet.Compile(TunedLaptopRules(), [MessyReference()]),
+            _ => CompiledRuleSet.Compile(SecondSellerRules(), [Processors()]),
+        };
 
         var table = Table(fileName);
         var first = TitleCleanBuilder.Clean(rules, table);
@@ -531,6 +543,213 @@ public class TitleCleanerRealFileTests
     /// <summary>The catalogue under the name the operator's set refers to it by.</summary>
     static TitleReferenceList MessyReference() =>
         Processors() with { Name = "İşlemciler" };
+
+    /// <summary>
+    /// The operator's saved <c>Laptop</c> set as it stands today, after three exports' worth of
+    /// tuning — a copy of <c>title-rules.json</c>, kept in step with it.
+    ///
+    /// <para>Three things separate it from <see cref="MessyLaptopRules"/>, and each was a decision
+    /// taken in front of a real file. The processor column is <b>Metin + Kısmi</b> rather than a value
+    /// list: this seller writes "Ultra 7 265HX" in the title exactly as the cell spells it, and the
+    /// catalogue reading never looked at the cell's own value. The screen column carries the three
+    /// size pairs the operator answered — a 15.6" panel filed under 16 inches, and so on. And the
+    /// operating-system column learned this seller's four spellings of Windows 11 Pro plus
+    /// Ubuntu.</para>
+    /// </summary>
+    static TitleRuleSet TunedLaptopRules()
+    {
+        var set = MessyLaptopRules();
+
+        return set with
+        {
+            Attributes = set.AttributeList.Select(rule => rule.Column switch
+            {
+                "İşletim Sistemi" => rule with
+                {
+                    Aliases =
+                    [
+                        ["FreeDOS", "FDOS", "İşletim Sistemi Bulunmuyor"],
+                        ["Windows 11 Pro", "W11P", "Win11Pro", "W11Pro", "Win11 Pro", "W11 Pro"],
+                        ["Windows 11 Home", "W11H", "Win11Home", "W11Home"],
+                        ["Ubuntu"],
+                    ],
+                },
+
+                // Plain text, so the cell's own value is what the title is searched for; the
+                // catalogue below is inert while that is the case, and is kept only so switching
+                // back does not land on the stray "Ultra9" that used to conflict on every row.
+                "İşlemci (tr_TR)" => rule with
+                {
+                    Kind = TitleAttributeKind.Text,
+                    AllowPartial = true,
+                    Aliases = rule.AliasGroups
+                        .Where(g => !(g.Count == 1 && g[0] == "Ultra9"))
+                        .Concat<IReadOnlyList<string>>(
+                        [
+                            ["Intel Core Ultra 9", "Ultra9"],
+                            ["Intel Core Ultra 7", "Ultra7"],
+                            ["Intel Core Ultra 5", "Ultra5"],
+                        ])
+                        .ToList(),
+                },
+
+                "Ekran Boyutu (inç)" => rule with
+                {
+                    Aliases =
+                    [
+                        ["15.6 inç", "16 inç"],
+                        ["15.3 inç", "15 inç"],
+                        ["17.3 inç", "17 inç"],
+                    ],
+                },
+
+                // "40 GB RAM" is how the fourth seller writes it, so that is a spelling of the unit.
+                // Listed before the bare "GB" because the longer spelling has to be tried first, or
+                // the word is left behind on every row that uses it.
+                "RAM Bellek Boyutu" => rule with
+                {
+                    Units =
+                    [
+                        new MeasureUnit("GB", ["gb ram", "gb"], 1),
+                        new MeasureUnit("TB", ["tb ram", "tb"], 1024),
+                    ],
+                },
+
+                _ => rule,
+            }).ToList(),
+        };
+    }
+
+    static IReadOnlyList<TitleCleanRow> Tuned(string fileName) =>
+        TitleCleanBuilder.Clean(
+            CompiledRuleSet.Compile(TunedLaptopRules(), [MessyReference()]), Table(fileName));
+
+    // -----------------------------------------------------------------
+    // 8. The third seller
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// This seller writes the processor in the title exactly as the cell spells it — "Ultra 7 265HX"
+    /// on both sides — and before the value-list kind learned to search the cell's own value, not one
+    /// of them came out.
+    /// </summary>
+    [Theory]
+    [InlineData(7, "Pro Max 18 Plus 16GB RTX Pro 4000 Blackwell 18 QHD+ 120Hz")]
+    [InlineData(8, "Pro Max 18 Plus 8GB RTX Pro 2000 Blackwell 18 QHD+ 120Hz")]
+    [InlineData(16, "ThinkPad E14 21M70091TX 14 WUXGA")]
+    [InlineData(6, "255R G10 D30M3ET 15.6 FHD")]
+    public void TheThirdSellersExportCleans(int rowNumber, string expected)
+    {
+        Assert.Equal(expected, Title(Tuned("laptop-deneme-2.xlsx"), rowNumber));
+    }
+
+    /// <summary>
+    /// The whole file, held to four reported rows. Every one is a disagreement in the data rather
+    /// than a rule the engine is missing — a RAM cell against two other sizes in the title, a screen
+    /// filed as 15.6" where the title says 15.3", and two product types whose cell says "Oyun" where
+    /// the title says "Gaming" and "Oyun Bilgisayarı". A regression here means the engine started
+    /// guessing.
+    /// </summary>
+    [Fact]
+    public void TheThirdSellersExportReportsOnlyItsRealDataErrors()
+    {
+        var rows = Tuned("laptop-deneme-2.xlsx");
+
+        Assert.Equal(100, rows.Count);
+        Assert.Equal(4, rows.Count(r => r.HasConflict));
+    }
+
+    /// <summary>
+    /// The screen size stays. Every title here writes it without a unit — "18 QHD+", "14 WUXGA" —
+    /// and a bare number is only ever removed when it is glued to another confirmed value.
+    ///
+    /// <para>This file is the argument for that rule, not against it. Row 3 is
+    /// "MSI Katana 17 HX … 17.3 QHD" against a cell reading 17.0 inç: the model's own "17" is the
+    /// same number as the screen. Row 7's "Dell Pro Max 18 Plus … 18 QHD+" sets the trap twice. Let
+    /// bare numbers match and the product name loses a digit on rows nobody would think to check.</para>
+    /// </summary>
+    [Fact]
+    public void ABareScreenSizeIsNeverCutOutOfAModelName()
+    {
+        var rows = Tuned("laptop-deneme-2.xlsx");
+
+        Assert.Contains("Katana 17 HX", Title(rows, 3), StringComparison.Ordinal);
+        Assert.Contains("Pro Max 18 Plus", Title(rows, 7), StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
+    // 9. The fourth seller
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// A processor column holding nothing but the model code — "120U" against a title reading
+    /// "Core 5 120U" — completed from the catalogue.
+    ///
+    /// <para>The reference list used to be read forwards only, from the cell's value to the end of
+    /// the entry, because the words a title drops are the manufacturer's. This seller shows the
+    /// other half of the same case: the cell holds the tail of the name and the title carries the
+    /// front. Removing only "120U" left "Core 5" stranded on 46 rows.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(3, "Vivobook 15 X1504VA-NJ3664W F25")]
+    [InlineData(8, "Vivobook 15 X1504VA-NJ3663W F27")]
+    [InlineData(10, "IdeaPad Slim 3 83K10016TR i5-13420H F9")]
+    public void TheFourthSellersProcessorIsCompletedFromTheCatalogue(int rowNumber, string expected)
+    {
+        Assert.Equal(expected, Title(Tuned("laptop-deneme-3.xlsx"), rowNumber));
+    }
+
+    /// <summary>
+    /// "40 GB RAM" is one measurement, not a measurement plus a stray word. Writing the unit as this
+    /// seller writes it is a rule-set line, not an engine change — the word was left standing on 199
+    /// of the 200 rows until the column's units said "GB RAM".
+    /// </summary>
+    [Fact]
+    public void TheWordRamIsPartOfTheUnitThisSellerWrites()
+    {
+        Assert.DoesNotContain(
+            Tuned("laptop-deneme-3.xlsx"),
+            r => r.CleanTitle.Contains(" RAM", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ninety rows whose operating-system cell reads only "Windows" against a title reading
+    /// "Windows 11 Pro". The title is left whole and every one of them is reported: which edition the
+    /// machine ships is a fact about the product, and the cell not saying it is a gap in the data,
+    /// not a spelling the engine may fill in.
+    /// </summary>
+    [Fact]
+    public void TheFourthSellersUnderSpecifiedWindowsCellsAreReportedNotGuessed()
+    {
+        var rows = Tuned("laptop-deneme-3.xlsx");
+
+        Assert.Equal(200, rows.Count);
+        Assert.Equal(90, rows.Count(r => r.HasConflict));
+
+        var row = rows.First(r => r.HasConflict);
+        Assert.Contains("Windows 11 Pro", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The tuning carries the earlier files with it rather than trading them away. Both come out
+    /// with fewer rows to review than the set they were originally built against, and the "Ultra9"
+    /// rows that used to conflict with a catalogue value now clean.
+    /// </summary>
+    [Fact]
+    public void TheTunedSetImprovesTheEarlierFilesToo()
+    {
+        foreach (var file in new[] { "teknoraks0109.xlsx", "laptop-test.xlsx" })
+        {
+            var before = TitleCleanBuilder.Clean(
+                CompiledRuleSet.Compile(MessyLaptopRules(), [MessyReference()]), Table(file));
+
+            Assert.True(
+                Tuned(file).Count(r => r.HasConflict) < before.Count(r => r.HasConflict),
+                $"{file} should have fewer rows to review after the tuning.");
+        }
+
+        Assert.Equal("Omen Slim16 AN0017NT CD7K1EA004 RTX5070", Title(Tuned("laptop-test.xlsx"), 15));
+    }
 
     static IReadOnlyList<TitleCleanRow> Messy(string fileName) =>
         TitleCleanBuilder.Clean(

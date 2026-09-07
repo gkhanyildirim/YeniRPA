@@ -125,17 +125,148 @@ public class OfferMailStoreTests
         Assert.Equal(expected, OfferMailStore.NormalizeMinimum(saved));
     }
 
-    /// <summary>The threshold is the lever that brings a 287-seller run under the 250-mail limit, so a
-    /// saved one has to survive the round trip it is written and read back through.</summary>
+    /// <summary>The threshold is the lever that shortens a run that would otherwise take several passes,
+    /// so a saved one has to survive the round trip it is written and read back through.</summary>
     [Fact]
     public void ASavedThresholdComesBackAsItWasWritten()
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        var written = new OfferMailFile(1, null, null, null, null, 40, null, null, []);
+        var written = new OfferMailFile(1, null, null, null, null, 40, null, null, null, []);
 
         var read = JsonSerializer.Deserialize<OfferMailFile>(JsonSerializer.Serialize(written, options), options);
 
         Assert.Equal(40, read?.MinOfferCount);
+    }
+
+    // ---------------------------------------------------------------------
+    // The lead times
+    // ---------------------------------------------------------------------
+
+    /// <summary>Nobody typed anything, so the shipped days apply. Not an error — the box is optional,
+    /// and every operator had this before it existed.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AnEmptyLeadTimeBoxMeansTheDefault(string? raw)
+    {
+        var (days, problem) = OfferMailStore.NormalizeLeadTimes(raw);
+
+        Assert.Null(days);
+        Assert.Null(problem);
+    }
+
+    /// <summary>However the operator separates them, and in whatever order — the filter is a set.</summary>
+    [Theory]
+    [InlineData("0,1", new[] { 0, 1 })]
+    [InlineData("0, 1", new[] { 0, 1 })]
+    [InlineData("0 1", new[] { 0, 1 })]
+    [InlineData("0;1", new[] { 0, 1 })]
+    [InlineData("1, 0", new[] { 0, 1 })]
+    [InlineData("0, 0, 1", new[] { 0, 1 })]
+    [InlineData("2", new[] { 2 })]
+    public void TheLeadTimesAreSplitDeduplicatedAndSorted(string raw, int[] expected)
+    {
+        var (days, problem) = OfferMailStore.NormalizeLeadTimes(raw);
+
+        Assert.Equal(expected, days);
+        Assert.Null(problem);
+    }
+
+    /// <summary>
+    /// Named rather than quietly dropped: this is the moment the operator is looking at what they
+    /// typed, and a box read as nothing is a filter nobody chose.
+    /// </summary>
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("1O")]        // a letter O where a zero was meant
+    [InlineData("1.5")]
+    [InlineData("-1")]
+    [InlineData("99")]
+    [InlineData("0,1,2,3,4,5,6")]
+    public void ALeadTimeBoxThatCannotBeUsedIsRefusedWithAReason(string raw)
+    {
+        var (days, problem) = OfferMailStore.NormalizeLeadTimes(raw);
+
+        Assert.Null(days);
+        Assert.NotNull(problem);
+    }
+
+    /// <summary>A settings file written before this was a setting has no lead times in it and must open
+    /// on the default rather than on an empty filter that warns nobody.</summary>
+    [Fact]
+    public void AFileWithNoLeadTimesResolvesToTheDefault()
+    {
+        var file = new OfferMailFile(1, null, null, null, null, null, null, null, null, []);
+
+        Assert.Equal(OfferSplitBuilder.DefaultWarnedLeadTimes, OfferMailStore.ResolveLeadTimes(file));
+    }
+
+    [Fact]
+    public void TheOperatorsSavedLeadTimesWinOverTheDefault()
+    {
+        var file = new OfferMailFile(1, null, null, null, null, null, [3, 2], null, null, []);
+
+        Assert.Equal([2, 3], OfferMailStore.ResolveLeadTimes(file));
+    }
+
+    // ---------------------------------------------------------------------
+    // Superseded templates
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// <b>The operator's real settings file is this case.</b> Saving the panel stores the text of the
+    /// boxes rather than a null, so an operator who never edited a word still has a frozen copy of the
+    /// default from the day they first pressed Save. When the tokens change, that copy keeps quoting a
+    /// placeholder the build no longer fills — and the mail leaves with "{leadTime2}" printed in it.
+    /// </summary>
+    [Fact]
+    public void AFrozenCopyOfAnOldDefaultIsDroppedSoTheCurrentOneApplies()
+    {
+        var old = OfferMailBuilder.SupersededBodyTemplates[0];
+
+        Assert.Null(OfferMailStore.DropSuperseded(old, OfferMailBuilder.SupersededBodyTemplates));
+    }
+
+    /// <summary>The same text saved by an editor that rewrote the line endings is still the same text;
+    /// a settings file round-tripped through Windows must not escape the migration on that alone.</summary>
+    [Fact]
+    public void LineEndingsDoNotHideAFrozenCopy()
+    {
+        var old = OfferMailBuilder.SupersededBodyTemplates[0].Replace("\n", "\r\n");
+
+        Assert.Null(OfferMailStore.DropSuperseded(old, OfferMailBuilder.SupersededBodyTemplates));
+    }
+
+    /// <summary>
+    /// The other half, and the more important one: a template the operator actually wrote is theirs.
+    /// One changed character is enough to keep it, because the alternative — a heuristic that decides
+    /// their wording is "close enough" to a default — silently deletes work nobody can get back.
+    /// </summary>
+    [Theory]
+    [InlineData("Sayın yetkili,")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ATemplateTheOperatorWroteIsNeverTouched(string saved)
+    {
+        Assert.Equal(saved, OfferMailStore.DropSuperseded(saved, OfferMailBuilder.SupersededBodyTemplates));
+    }
+
+    [Fact]
+    public void OneChangedCharacterIsEnoughToKeepATemplate()
+    {
+        var edited = OfferMailBuilder.SupersededBodyTemplates[0].Replace("Sayın", "Sayin");
+
+        Assert.Equal(edited, OfferMailStore.DropSuperseded(edited, OfferMailBuilder.SupersededBodyTemplates));
+    }
+
+    /// <summary>The current default is not superseded — dropping it would be harmless but it would mean
+    /// the list had been edited rather than appended to.</summary>
+    [Fact]
+    public void TheCurrentDefaultIsNotOnTheSupersededList()
+    {
+        Assert.DoesNotContain(OfferMailBuilder.DefaultBodyTemplate, OfferMailBuilder.SupersededBodyTemplates);
+        Assert.DoesNotContain(OfferMailBuilder.DefaultSubjectTemplate, OfferMailBuilder.SupersededSubjectTemplates);
     }
 
     // ---------------------------------------------------------------------

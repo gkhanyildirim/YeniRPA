@@ -26,8 +26,16 @@ public sealed class AutomationController : ControllerBase
         hasSession = _browser.HasSavedSession,
         browserReady = _browser.IsBrowserReady,
         isRunning = _bus.IsRunning,
-        runningModule = _bus.RunningModule
+        runningModule = _bus.RunningModule,
+        stopRequested = _bus.StopRequested
     });
+
+    /// <summary>
+    /// Asks the running module to stop at its next safe point. Not a rollback: whatever has already
+    /// been sent stays sent, and the run log says how far it got.
+    /// </summary>
+    [HttpPost("stop")]
+    public IActionResult Stop() => Ok(new { stopping = _bus.RequestStop() });
 
     /// <summary>Opens a real browser window on the Mirakl login page. Blocks until Chrome is up.</summary>
     [HttpPost("login")]

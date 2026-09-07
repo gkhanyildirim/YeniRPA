@@ -1658,6 +1658,51 @@ public class TitleCleanerTests
         row.Attributes.First(a => string.Equals(a.Column, column, StringComparison.Ordinal));
 
     // -----------------------------------------------------------------
+    // A cell that reads half of a phrase
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// The cell says "Windows", the title says "Windows 11 Pro". Searching the cell's own value
+    /// finds that first word, and being what the row asserts it outranks everything — so the title
+    /// came out cut down the middle, as "… 11 Pro", with nothing reported.
+    ///
+    /// <para>The column's own value list is the better-informed claim: it is a record of how titles
+    /// write this attribute, and an entry covering the same characters means the title is writing
+    /// that phrase rather than the fragment. So the fragment loses, the title is left whole, and the
+    /// row is reported as the disagreement it is.</para>
+    /// </summary>
+    [Fact]
+    public void ACellValueMayNotBreakUpAPhraseItsOwnColumnRecognises()
+    {
+        var row = Run(
+            LaptopRules(),
+            "Lenovo IdeaPad Slim 3 83K100Q0TR 512GB SSD Windows 11 Pro",
+            ("İşletim Sistemi", "Windows"));
+
+        var os = Attr(row, "İşletim Sistemi");
+
+        Assert.Equal(TitleAttributeStatus.Conflict, os.Status);
+        Assert.Contains("Windows 11 Pro", row.CleanTitle, StringComparison.Ordinal);
+        Assert.DoesNotContain("11 Pro F", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The guard reaches no further than that. A cell value nothing longer covers is removed exactly
+    /// as it always was — this is the ordinary case and the one the whole module is built on.
+    /// </summary>
+    [Fact]
+    public void ACellValueNoLongerPhraseCoversIsStillRemoved()
+    {
+        var row = Run(
+            LaptopRules(),
+            "Lenovo IdeaPad Slim 3 83K100Q0TR 512GB SSD FreeDOS",
+            ("İşletim Sistemi", "FreeDOS"));
+
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(row, "İşletim Sistemi").Status);
+        Assert.DoesNotContain("FreeDOS", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
     // Two sizes the operator has declared equal
     // -----------------------------------------------------------------
     //
@@ -1723,6 +1768,28 @@ public class TitleCleanerTests
 
         Assert.Equal(TitleAttributeStatus.Conflict, Attr(row, "Ekran Boyutu").Status);
         Assert.Contains("15.6\"", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A pair answers a disagreement and must stay out of a row that has none. Both sides here read
+    /// 16 inches, and 16 is one of the two sizes the pair names — so an equal-keys check is the only
+    /// thing standing between this row and having its screen rewritten to 15.6".
+    /// </summary>
+    [Fact]
+    public void ADeclaredPairLeavesARowWhereBothSidesAgree()
+    {
+        var row = Run(
+            ScreenRules("15.6\"|16\""),
+            "Dell Pro Max 16 Plus MB16250-3 16\" FHD+",
+            ("Ekran Boyutu", "16 inç"));
+
+        var screen = Attr(row, "Ekran Boyutu");
+
+        // Sixteen inches, in the column's canonical form. What it must never be is the pair's other
+        // half: this screen is 16", and 15.6" would be a size nobody wrote anywhere on the row.
+        Assert.Equal("16\"", screen.Value);
+        Assert.DoesNotContain("15.6", screen.Value, StringComparison.Ordinal);
+        Assert.Equal("Dell Pro Max 16 Plus MB16250-3 FHD+", row.CleanTitle);
     }
 
     /// <summary>A pair says nothing about any other size. 17.3" against a cell of 17 is a different

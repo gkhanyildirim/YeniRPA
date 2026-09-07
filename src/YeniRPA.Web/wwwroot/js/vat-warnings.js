@@ -61,7 +61,27 @@
   let defaultSubject = '';
   let defaultBody = '';
 
+  // How many mails go out in one pass before the run pauses. Read from the server rather than written
+  // here, so the number the panel quotes and the one the runner uses cannot drift apart.
+  let perPass = 0;
+
+  // Seconds the server waits between passes, and the rough seconds one live mail costs. Only ever used
+  // to estimate how long a run will hold the automation slot.
+  const PASS_BREAK_SECONDS = 120;
+  const SECONDS_PER_MAIL = 3.5;
+
   function el(id) { return document.getElementById(id); }
+
+  /** How many passes a run of this size takes, mirroring OfferMailRunner.PlanPasses. */
+  function passCount(count) {
+    return perPass > 0 ? Math.ceil(count / perPass) : 1;
+  }
+
+  /** Roughly how long a live run of this size holds the automation slot, in whole minutes. */
+  function runMinutes(count) {
+    const seconds = count * SECONDS_PER_MAIL + (passCount(count) - 1) * PASS_BREAK_SECONDS;
+    return Math.max(1, Math.round(seconds / 60));
+  }
 
   function fmtBytes(bytes) {
     if (!bytes) return '';
@@ -115,15 +135,19 @@
       badge.textContent = 'Not checked yet';
     }
 
-    setRunning(status.isRunning, status.runningModule);
+    perPass = status.mailsPerPass || perPass;
+
+    setRunning(status.isRunning, status.runningModule, status.stopRequested);
   }
 
   /** Idempotent: the run state arrives from the POST, from /status and from the event stream. */
-  function setRunning(isRunning, runningModule) {
+  function setRunning(isRunning, runningModule, stopRequested) {
     running = !!isRunning;
 
     const send = el('vw-send');
-    RPA.setBusy(send, running && runningModule === MODULE, 'Running…');
+    const mineNow = running && runningModule === MODULE;
+
+    RPA.setBusy(send, mineNow, 'Running…');
     send.disabled = running || selectedMails().length === 0;
 
     if (running && runningModule && runningModule !== MODULE) {
@@ -132,7 +156,36 @@
       send.removeAttribute('title');
     }
 
+    // Only this panel's own run can be stopped from here. Another module's run is stoppable on its
+    // own panel, where the operator can see what they would be cutting short.
+    const stop = el('vw-stop');
+    stop.hidden = !mineNow;
+    stop.disabled = !mineNow || !!stopRequested;
+    stop.querySelector('.btn-text').textContent = stopRequested ? 'Stopping…' : 'Stop';
+
     if (running) el('vw-run').hidden = false;
+  }
+
+  /**
+   * Asks the server to stop the run at its next safe point. Not an undo: what has already gone out
+   * has gone out, and the run log is what says how far it got.
+   */
+  async function stopRun() {
+    if (!window.confirm(
+      'Stop this run?\n\nMails already sent cannot be recalled. The run stops before the next one ' +
+      'and the log names how many were not attempted.')) return;
+
+    const stop = el('vw-stop');
+    stop.disabled = true;
+    stop.querySelector('.btn-text').textContent = 'Stopping…';
+
+    try {
+      await RPA.sendJson('/api/automation/stop', {});
+    } catch (err) {
+      RPA.showError('vw-mails-alert', 'The run could not be stopped: ' + err.message);
+      stop.disabled = false;
+      stop.querySelector('.btn-text').textContent = 'Stop';
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -687,10 +740,17 @@
       ? '\n  …and ' + rest + ' more (all of them are listed on the cards above)'
       : '';
 
+    // Said before the click because a run that goes quiet for two minutes mid-way looks like a run
+    // that has hung to anyone who was not told it comes in passes.
+    const passes = passCount(mails.length);
+    const paced = passes > 1
+      ? '\n\nThis goes out in ' + passes + ' passes of ' + RPA.fmtInt(perPass) +
+        ', pausing between them. Stop is on the run log.'
+      : '';
+
     const slotWarning = dryRun
       ? ''
-      : '\n\nThis holds the automation slot for roughly ' +
-        Math.max(1, Math.round(mails.length * 3.5 / 60)) + ' minute(s).';
+      : '\n\nThis holds the automation slot for roughly ' + runMinutes(mails.length) + ' minute(s).';
 
     // Stated once, above the list, because it applies to every line of it — and stated at all because
     // a CC is visible to each of these sellers.
@@ -702,7 +762,7 @@
       ? '\nYour Outlook signature goes under each one.'
       : '';
 
-    return window.confirm(heading + copy + signature + '\n\n  ' + shown.join('\n  ') + tail + slotWarning);
+    return window.confirm(heading + copy + signature + '\n\n  ' + shown.join('\n  ') + tail + paced + slotWarning);
   }
 
   async function send() {
@@ -775,6 +835,7 @@
 
     el('vw-prepare').addEventListener('click', prepare);
     el('vw-send').addEventListener('click', send);
+    el('vw-stop').addEventListener('click', stopRun);
     el('vw-save-settings').addEventListener('click', saveSettings);
     el('vw-override-add').addEventListener('click', addOverrideRow);
     el('vw-unmatched-save').addEventListener('click', saveUnmatched);

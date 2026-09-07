@@ -14,13 +14,12 @@ public class OfferMailBuilderTests
         SellerId: "12421",
         SellerName: "Tedarik Türkiye",
         SellerKey: "id:12421",
-        Offers: [.. Enumerable.Range(0, 1200).Select(i => new OfferLeadRow($"SKU{i}", i < 500 ? 1 : 2))],
-        LeadTime1: 500,
-        LeadTime2: 700);
+        Offers: [.. Enumerable.Range(0, 1200).Select(i => new OfferLeadRow($"SKU{i}", i < 500 ? 0 : 1))],
+        LeadTimeCounts: [new OfferLeadTimeCount(0, 500), new OfferLeadTimeCount(1, 700)]);
 
     static OfferSellerMail Render(string? subject, string? body) => OfferMailBuilder.Render(
         Seller, ["topcuu@mms-marketplace.com"], "12421 - Tedarik Türkiye.xlsx", 0,
-        "2026-08-20", subject, body, "directory", null);
+        "2026-08-20", [0, 1], subject, body, "directory", null);
 
     // -----------------------------------------------------------------
     // Rendering
@@ -30,12 +29,12 @@ public class OfferMailBuilderTests
     public void EveryPlaceholderIsFilledIn()
     {
         var mail = Render(
-            "{seller} ({sellerId})",
-            "{email} · {recipientCount} · {fileName} · {offerCount} · {leadTime1} / {leadTime2} · {date}");
+            "{seller} ({sellerId}) {leadTimes}",
+            "{email} · {recipientCount} · {fileName} · {offerCount} · {date}");
 
-        Assert.Equal("Tedarik Türkiye (12421)", mail.Subject);
+        Assert.Equal("Tedarik Türkiye (12421) 0-1", mail.Subject);
         Assert.Equal(
-            "topcuu@mms-marketplace.com · 1 · 12421 - Tedarik Türkiye.xlsx · 1.200 · 500 / 700 · 2026-08-20",
+            "topcuu@mms-marketplace.com · 1 · 12421 - Tedarik Türkiye.xlsx · 1.200 · 2026-08-20",
             mail.Body);
     }
 
@@ -46,16 +45,61 @@ public class OfferMailBuilderTests
         Assert.Contains("1.200", Render("s", "{offerCount}").Body);
     }
 
-    /// <summary>The two lead-time counts are what the mail is about; they have to come off the group
-    /// rather than being recounted anywhere else, or the mail and the attachment can disagree.</summary>
+    /// <summary>The split is what the mail is about; it has to come off the group rather than being
+    /// recounted anywhere else, or the mail and the attachment can disagree.</summary>
     [Fact]
     public void TheLeadTimeCountsComeFromTheGroup()
     {
         var mail = Render("s", "b");
 
-        Assert.Equal(500, mail.LeadTime1);
-        Assert.Equal(700, mail.LeadTime2);
+        Assert.Equal([(0, 500), (1, 700)], mail.LeadTimeCounts.Select(c => (c.LeadTime, c.Offers)));
         Assert.Equal(1200, mail.OfferCount);
+    }
+
+    /// <summary>One line per day, ascending, with the count grouped the Turkish way.</summary>
+    [Fact]
+    public void TheBreakdownIsOneLinePerDay()
+    {
+        var body = Render("s", "{leadTimeBreakdown}").Body;
+
+        Assert.Equal(
+            "Termini 0 gün olan teklif sayısı: 500\nTermini 1 gün olan teklif sayısı: 700",
+            body);
+    }
+
+    /// <summary>
+    /// <c>{leadTimes}</c> is a prefix of <c>{leadTimeBreakdown}</c>. Substituting the short one first
+    /// would leave "0-1Breakdown}" in the middle of the mail.
+    /// </summary>
+    [Fact]
+    public void TheShortTokenDoesNotEatTheBreakdownToken()
+    {
+        var body = Render("s", "{leadTimes} · {leadTimeBreakdown}").Body;
+
+        Assert.StartsWith("0-1 · Termini 0 gün", body);
+        Assert.DoesNotContain("Breakdown}", body);
+    }
+
+    /// <summary>A day the seller has no offers on is not a line — "0 offers at 0 days" is a line the
+    /// seller has to read and then discard.</summary>
+    [Fact]
+    public void ADayWithNoOffersIsNotInTheBreakdown()
+    {
+        Assert.Equal(
+            "Termini 1 gün olan teklif sayısı: 7",
+            OfferMailBuilder.DescribeBreakdown([new OfferLeadTimeCount(0, 0), new OfferLeadTimeCount(1, 7)]));
+    }
+
+    /// <summary>Consecutive days read as a range in a sentence; anything else is listed.</summary>
+    [Theory]
+    [InlineData(new[] { 0, 1 }, "0-1")]
+    [InlineData(new[] { 1, 2, 3 }, "1-3")]
+    [InlineData(new[] { 0, 2 }, "0, 2")]
+    [InlineData(new[] { 1 }, "1")]
+    [InlineData(new[] { 2, 0, 1 }, "0-2")]
+    public void TheWarnedDaysReadAsARangeWhenTheyAreOne(int[] days, string expected)
+    {
+        Assert.Equal(expected, OfferMailBuilder.DescribeLeadTimes(days));
     }
 
     [Fact]
@@ -64,8 +108,8 @@ public class OfferMailBuilderTests
         var mail = Render("", "   ");
 
         Assert.Contains("Tedarik Türkiye", mail.Subject);
-        Assert.Contains("500", mail.Body);
-        Assert.Contains("700", mail.Body);
+        Assert.Contains("Termini 0 gün olan teklif sayısı: 500", mail.Body);
+        Assert.Contains("Termini 1 gün olan teklif sayısı: 700", mail.Body);
     }
 
     /// <summary>
@@ -119,8 +163,9 @@ public class OfferMailBuilderTests
     [Fact]
     public void ASellerNameContainingAPlaceholderIsNotResubstituted()
     {
-        var hostile = new OfferSellerGroup("1", "{email}", "id:1", [], 0, 0);
-        var mail = OfferMailBuilder.Render(hostile, ["a@b.com"], "f.xlsx", 0, "2026-08-20", "s", "{seller}", "", null);
+        var hostile = new OfferSellerGroup("1", "{email}", "id:1", [], []);
+        var mail = OfferMailBuilder.Render(
+            hostile, ["a@b.com"], "f.xlsx", 0, "2026-08-20", [0, 1], "s", "{seller}", "", null);
 
         Assert.Equal("{email}", mail.Body);
     }
