@@ -147,9 +147,14 @@
     return '<span class="badge amber">Open</span>';
   }
 
+  // The operator's own Mirakl order page. Order numbers here always come straight off the export,
+  // unchanged, so the same string that identifies the row also addresses it on Mirakl.
+  const ORDER_BASE_URL = 'https://mediamarktsaturn.mirakl.net/mmp/operator/order/';
+
   function orderCell(r) {
     if (!r.orderNumber) return '<span class="badge amber">No order number</span>';
-    return RPA.escapeHtml(r.orderNumber);
+    return '<a class="order-link" href="' + ORDER_BASE_URL + encodeURIComponent(r.orderNumber) +
+      '" target="_blank" rel="noopener">' + RPA.escapeHtml(r.orderNumber) + '</a>';
   }
 
   function messagesCell(r) {
@@ -164,34 +169,6 @@
   // ---------------------------------------------------------------------------
   // Column sets
   // ---------------------------------------------------------------------------
-
-  /** The action lists — everything an operator needs to pick up the thread, nothing else. */
-  const queueColumns = [
-    { label: 'Opened', filter: 'text', value: r => r.openedOn || '', render: r => RPA.escapeHtml(r.openedOn || '-') },
-    { label: 'Age', numeric: true, filter: 'number', value: r => r.ageDays, render: ageCell },
-    { label: 'Silent', numeric: true, filter: 'number', value: r => r.silenceDays, render: silenceCell },
-    { label: 'Order', filter: 'text', value: r => r.orderNumber, render: orderCell },
-    { label: 'Seller', filter: 'select', value: r => r.seller, render: r => RPA.escapeHtml(r.seller || '-') },
-    { label: 'Reason', filter: 'select', value: r => r.reason, render: r => RPA.escapeHtml(r.reason || '-') },
-    { label: 'Waiting on', filter: 'select', value: waitingLabel, render: r => RPA.escapeHtml(waitingLabel(r)) },
-    { label: 'Msgs', numeric: true, filter: 'number', value: r => r.messageCount, render: messagesCell },
-    { label: 'Product', filter: 'text', value: r => r.product, render: r => RPA.escapeHtml(r.product || '-') },
-    { label: 'Customer', filter: 'text', value: r => r.customerName, render: r => RPA.escapeHtml(r.customerName || '-') }
-  ];
-
-  /** The "waiting on us" list: the seller's verdict is the thing to check, so it leads. */
-  const usColumns = [
-    { label: 'Resolved as', filter: 'select', value: r => r.closingReason, render: r => RPA.escapeHtml(r.closingReason || '-') },
-    { label: 'Age', numeric: true, filter: 'number', value: r => r.ageDays, render: ageCell },
-    { label: 'Silent', numeric: true, filter: 'number', value: r => r.silenceDays, render: silenceCell },
-    { label: 'Order', filter: 'text', value: r => r.orderNumber, render: orderCell },
-    { label: 'Seller', filter: 'select', value: r => r.seller, render: r => RPA.escapeHtml(r.seller || '-') },
-    { label: 'Reason', filter: 'select', value: r => r.reason, render: r => RPA.escapeHtml(r.reason || '-') },
-    { label: 'Msgs', numeric: true, filter: 'number', value: r => r.messageCount, render: messagesCell },
-    { label: 'Status', filter: 'select', value: r => r.status, render: r => RPA.escapeHtml(r.status || '-') },
-    { label: 'Opened', filter: 'text', value: r => r.openedOn || '', render: r => RPA.escapeHtml(r.openedOn || '-') },
-    { label: 'Customer', filter: 'text', value: r => r.customerName, render: r => RPA.escapeHtml(r.customerName || '-') }
-  ];
 
   const reviewColumns = [
     { label: 'Problem', filter: 'select', value: r => r.issues.join(' · '), render: r => RPA.escapeHtml(r.issues.join(' · ')) },
@@ -662,6 +639,75 @@
   // Render
   // ---------------------------------------------------------------------------
 
+  // A generic product icon — the export carries no image URL for any incident, so every card shows
+  // the same placeholder rather than pretending to have art it doesn't.
+  const PRODUCT_PLACEHOLDER_SVG =
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M21 8 12 3 3 8v8l9 5 9-5V8Z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>';
+
+  /** One incident, as a row-card: pill + reason, seller/order/date meta, product, and a right-side metric. */
+  function incidentCardHtml(r, opts) {
+    return '<div class="incident-card">' +
+      '<div class="incident-card-thumb">' + PRODUCT_PLACEHOLDER_SVG + '</div>' +
+      '<div class="incident-card-body">' +
+        '<div class="incident-card-top">' +
+          lifecycleCell(r) +
+          '<span class="incident-card-reason">' + RPA.escapeHtml(r.reason || '-') + '</span>' +
+        '</div>' +
+        '<div class="incident-card-meta">' +
+          '<span>' + RPA.escapeHtml(r.seller || '-') + '</span>' +
+          '<span>' + orderCell(r) + '</span>' +
+          '<span>' + RPA.escapeHtml(r.openedOn || '-') + '</span>' +
+        '</div>' +
+        '<div class="incident-card-product">' +
+          RPA.escapeHtml(r.product || '-') +
+          (r.productSku ? '<span class="cell-sub">SKU ' + RPA.escapeHtml(r.productSku) + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="incident-card-right">' + opts.rightRender(r) + '</div>' +
+    '</div>';
+  }
+
+  /**
+   * Renders one of the four incident queues as row-cards instead of a filterable table — this is the
+   * one part of the report meant to be scanned incident-by-incident, so it borrows Mirakl's own
+   * incident-panel layout rather than the report's usual grid. The Excel export still works: it is
+   * registered from the same rows against a small fixed column set, independent of what is on screen.
+   */
+  function renderIncidentQueue(wrapperId, rows, opts, emptyMessage) {
+    const wrap = document.getElementById(wrapperId);
+    if (!wrap) return;
+
+    const exportColumns = [
+      { label: 'Opened', value: r => r.openedOn || '' },
+      { label: opts.rightLabel, numeric: true, value: opts.rightValue },
+      { label: 'Order', value: r => r.orderNumber },
+      { label: 'Seller', value: r => r.seller },
+      { label: 'Reason', value: r => r.reason }
+    ].concat(opts.extraColumns || []).concat([
+      { label: 'Product', value: r => r.product },
+      { label: 'Product SKU', value: r => r.productSku },
+      { label: 'Customer', value: r => r.customerName }
+    ]);
+
+    RPA.registerExport(wrapperId, rows.length ? {
+      columns: exportColumns,
+      rows: rows.map(r => exportColumns.map(c => c.value(r)))
+    } : null);
+
+    if (!rows.length) {
+      wrap.innerHTML = '<div class="empty-state">' + RPA.escapeHtml(emptyMessage) + '</div>';
+      wrap.style.border = 'none';
+      RPA.syncExportButtons();
+      return;
+    }
+
+    wrap.style.border = '';
+    wrap.innerHTML = '<div class="incident-card-list">' + rows.map(r => incidentCardHtml(r, opts)).join('') + '</div>';
+    RPA.syncExportButtons();
+  }
+
   /** Hides one card without touching the heading above it — for a card that shares a section. */
   function showCard(wrapperId, show) {
     const wrap = document.getElementById(wrapperId);
@@ -784,13 +830,23 @@
     const byAge = (a, b) => (b.ageDays || 0) - (a.ageDays || 0);
     const bySilence = (a, b) => (b.silenceDays || 0) - (a.silenceDays || 0);
 
-    RPA.renderDataTable('inc-breach-wrap', [...breached].sort(byAge), queueColumns,
+    const waitingColumn = { label: 'Waiting on', value: waitingLabel };
+    const resolvedAsColumns = [
+      { label: 'Resolved as', value: r => r.closingReason },
+      { label: 'Status', value: r => r.status }
+    ];
+
+    renderIncidentQueue('inc-breach-wrap', [...breached].sort(byAge),
+      { rightLabel: 'Age', rightValue: r => r.ageDays, rightRender: ageCell, extraColumns: [waitingColumn] },
       'No open incident is past ' + META.breachDays + ' days.');
-    RPA.renderDataTable('inc-us-wrap', [...onUs].sort(byAge), usColumns,
+    renderIncidentQueue('inc-us-wrap', [...onUs].sort(byAge),
+      { rightLabel: 'Age', rightValue: r => r.ageDays, rightRender: ageCell, extraColumns: resolvedAsColumns },
       'Nothing is waiting on us — no seller has an unverified resolution open.');
-    RPA.renderDataTable('inc-stale-wrap', [...stale].sort(bySilence), queueColumns,
+    renderIncidentQueue('inc-stale-wrap', [...stale].sort(bySilence),
+      { rightLabel: 'Silent', rightValue: r => r.silenceDays, rightRender: silenceCell, extraColumns: [waitingColumn] },
       'Every open incident has been touched within the last ' + META.staleDays + ' days.');
-    RPA.renderDataTable('inc-escalation-wrap', [...escalation].sort(byAge), queueColumns,
+    renderIncidentQueue('inc-escalation-wrap', [...escalation].sort(byAge),
+      { rightLabel: 'Msgs', rightValue: r => r.messageCount, rightRender: messagesCell, extraColumns: [waitingColumn] },
       'No incident has run to ' + HOT_THREAD_MESSAGES + ' messages.');
 
     // ----- Scorecards -----
