@@ -36,10 +36,14 @@ namespace YeniRPA.Web.Services.TitleCleaner;
 /// to it; see <c>BareSupported</c> there. Carried on the match rather than decided there because only
 /// the scan knows whether a unit was read.
 /// </param>
+/// <param name="FromCell">Set where this match came from searching the cell's own value rather than
+/// the column's catalogue. Such a match is the weaker claim of the two: the catalogue is a record of
+/// how titles write things, and a cell value that happens to sit inside one of those phrases is
+/// reading half of it — see <c>TitleCleanBuilder.Fragments</c>.</param>
 public sealed record TitleMatch(
     int Start, int End, string Text, string Canonical, string Key, double? Quantity = null,
     IReadOnlyList<(int Start, int End)>? Parts = null,
-    double? BaseQuantity = null, int Decimals = 0, bool Bare = false)
+    double? BaseQuantity = null, int Decimals = 0, bool Bare = false, bool FromCell = false)
 {
     public int Length => End - Start;
 
@@ -212,6 +216,11 @@ public sealed class CompiledAttribute
     /// <summary>Sizes the operator has declared equal on this column. Empty on every other kind.</summary>
     internal IReadOnlyList<MeasurePair> MeasurePairs { get; }
 
+    /// <summary>Whether the value list already speaks for this value — in which case its own group's
+    /// spellings are what the title is searched for, and the raw cell text adds nothing.</summary>
+    internal bool Catalogued(string key) =>
+        AliasSpellings.Any(s => string.Equals(s.Key, key, StringComparison.Ordinal));
+
     /// <summary>
     /// The operator's decision covering these two readings of one measurement, if they made one.
     ///
@@ -222,6 +231,13 @@ public sealed class CompiledAttribute
     internal MeasurePair? PairFor(string? cellKey, string? titleKey)
     {
         if (MeasurePairs.Count == 0 || cellKey is null || titleKey is null)
+            return null;
+
+        // Only where the two sides actually disagree. A pair answers a question — "the title says
+        // 15.6\", the cell says 16 inç, which is right?" — and a row whose title and cell already say
+        // the same thing never asked it. Without this the pair fired on agreement too and rewrote
+        // every genuine 16" screen to 15.6", because 16 is one of the two sizes it names.
+        if (string.Equals(cellKey, titleKey, StringComparison.Ordinal))
             return null;
 
         foreach (var pair in MeasurePairs)
@@ -625,6 +641,34 @@ public static class AttributeMatcher
                 AddSpellings(
                     matches, title, attr.AliasSpellings,
                     attr.Rule.AllowSuffix, attr.Rule.AllowPartial);
+
+                // And the cell's own value, when the catalogue has no entry for it.
+                //
+                // A value list is a record of the spellings a title might use *instead* of the cell's
+                // — "W11P" for "Windows 11 Pro". It was never meant to be the only thing looked for,
+                // but that is what it had become: a column whose catalogue said nothing about this
+                // row's value searched for every entry in it and not for the one thing the row
+                // actually holds. A seller who writes the processor in the title exactly as the cell
+                // spells it — "Ultra 7 265HX" both sides — got nothing removed, on every row, and the
+                // only way out was to give up the catalogue by making the column plain text.
+                //
+                // The whitelist is untouched by this. The cell still has to carry the value and the
+                // title still has to spell it the same way; this is the same search
+                // <see cref="TitleAttributeKind.Text"/> has always done, and no less exact.
+                if (value is not null && value.Key.Length > 0 && !attr.Catalogued(value.Key))
+                {
+                    var before = matches.Count;
+
+                    AddSpellings(
+                        matches, title,
+                        [(FoldedTitle.Fold(value.Canonical), value.Canonical, value.Key)],
+                        attr.Rule.AllowSuffix, attr.Rule.AllowPartial,
+                        allowTruncated: false);
+
+                    for (var i = before; i < matches.Count; i++)
+                        matches[i] = matches[i] with { FromCell = true };
+                }
+
                 break;
 
             default:
@@ -693,7 +737,20 @@ public static class AttributeMatcher
             if (at < 0)
                 continue;
 
-            var tail = entry.Words.Skip(at).ToList();
+            // Where the entry starts being worth searching for. Normally at the cell's own value,
+            // because the words before it are the manufacturer a title drops. But a cell does not
+            // always hold the front of the name: this seller's processor column holds the model code
+            // alone — "120U" — and it is the title that carries the rest, in front of it
+            // ("Core 5 120U"). So the front is kept as far as the title actually writes it, and
+            // leading words the title never mentions are dropped as before.
+            var from = at;
+            while (from > 0 && letters.Contains(Bare(entry.Words[from - 1]), StringComparison.Ordinal))
+                from--;
+
+            var tail = entry.Words.Skip(from).ToList();
+
+            // How many of the kept words come before the cell's own value.
+            var head = at - from;
 
             // An entry that says no more than the cell does is not worth a search — the ordinary
             // path already looks for the cell's own value, and this one exists to find more than it.
@@ -706,8 +763,13 @@ public static class AttributeMatcher
             // back to the one word both sides did share: the bare "220". A reference entry that
             // matches nothing but an unqualified number is the exact deletion this module refuses
             // everywhere else, and it cost the whole file its processor removal.
-            if (!tail.Skip(needle.Length).All(w => letters.Contains(Bare(w), StringComparison.Ordinal)))
+            //
+            // "Adds" means every word that is not part of the cell's own value, on either side of it.
+            if (!tail.Where((_, i) => i < head || i >= head + needle.Length)
+                     .All(w => letters.Contains(Bare(w), StringComparison.Ordinal)))
+            {
                 continue;
+            }
 
             // And the end of it, which for a catalogue written "Intel Core i5-13420H" is inside the
             // last word rather than a word of its own.
@@ -727,7 +789,7 @@ public static class AttributeMatcher
             // span or there is no match.
             AddSpellings(
                 matches, title,
-                [(string.Join(' ', entry.Words.Skip(at)), value.Canonical, value.Key)],
+                [(string.Join(' ', tail), value.Canonical, value.Key)],
                 attr.Rule.AllowSuffix,
                 allowPartial: true);
 
@@ -896,12 +958,19 @@ public static class AttributeMatcher
     ///   apart to look for a second opinion is noise.</item>
     /// </list>
     /// </summary>
+    /// <param name="allowTruncated">Off where the spellings are the cell's own value rather than the
+    /// column's catalogue. A cut-off cell value is a question, not an answer: the title's
+    /// "Taşınabilir İş İstasy" is the tail of a phrase whose front — "Taşınabilir" — the cell does not
+    /// contain at all, so matching the cut value would take the half it knows about and leave the
+    /// other half stranded in the title. That case belongs to <c>TitleFixSuggester</c>, which
+    /// reconstructs the whole phrase and asks the operator to adopt it.</param>
     static void AddSpellings(
         List<TitleMatch> matches,
         FoldedTitle title,
         IReadOnlyList<(string Folded, string Canonical, string Key)> spellings,
         bool allowSuffix,
-        bool allowPartial)
+        bool allowPartial,
+        bool allowTruncated = true)
     {
         var unwritten = new List<(string Folded, string Canonical, string Key)>();
 
@@ -929,6 +998,9 @@ public static class AttributeMatcher
         // matched" meant the short one always won and the "Bi" stayed behind on every such row. The
         // truncated span is the longer and more specific reading of the same text; letting both into
         // the pool lets the ordinary arbitration prefer it.
+        if (!allowTruncated)
+            return;
+
         foreach (var (folded, canonical, key) in spellings)
             AddTruncated(matches, title, folded, canonical, key);
     }

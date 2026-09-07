@@ -22,4 +22,17 @@
     <ProjectReference Include="..\..\src\YeniRPA.Web\YeniRPA.Web.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The marketplace exports TitleCleanerRealFileTests runs against. They used to sit in the web
+         project's wwwroot and reached the test output through its content glob — which also meant
+         real seller data was served, unauthenticated, from the running app: GET /laptop-test.xlsx
+         handed the whole file to anyone. They live here now, next to the only code that reads them,
+         and the server has no route to them at all.
+
+         Still covered by the root .gitignore's "*.xlsx", so they stay out of the repository: a fresh
+         clone has no sample data and the real-file tests will fail their File.Exists guard rather
+         than pass emptily. -->
+    <None Include="samples\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -10,8 +10,8 @@ namespace YeniRPA.Web.Controllers;
 
 /// <summary>
 /// Seller Offer Warnings: splits the Mirakl offer export into one workbook per seller listing that
-/// seller's offers with a lead time to ship of 1 or 2 days, finds each seller's address in an uploaded
-/// list, and mails every seller their own file.
+/// seller's offers whose lead time to ship is one of the days the operator warns about, finds each
+/// seller's address in an uploaded list, and mails every seller their own file.
 ///
 /// <para>The twin of <see cref="VatWarningsController"/> and structurally identical to it: the app
 /// computes the seller → address → file pairing from two uploads, holds it in
@@ -60,6 +60,11 @@ public sealed class OfferWarningsController : ControllerBase
         [property: JsonPropertyName("bodyTemplate")] string? BodyTemplate,
         [property: JsonPropertyName("outputFolder")] string? OutputFolder,
         [property: JsonPropertyName("minOfferCount")] int? MinOfferCount,
+
+        /// <summary>The lead times to warn about, as the operator typed them ("0, 1"). Blank means the
+        /// default — parsed by <c>OfferMailStore.NormalizeLeadTimes</c>, never here.</summary>
+        [property: JsonPropertyName("leadTimes")] string? LeadTimes,
+
         [property: JsonPropertyName("ccAddresses")] string? CcAddresses,
         [property: JsonPropertyName("includeSignature")] bool? IncludeSignature,
         [property: JsonPropertyName("overrides")] IReadOnlyList<OfferOverrideEntry>? Overrides);
@@ -107,11 +112,14 @@ public sealed class OfferWarningsController : ControllerBase
             outlookError = _sender.LastError,
             isRunning = _bus.IsRunning,
             runningModule = _bus.RunningModule,
+            stopRequested = _bus.StopRequested,
             outputFolder = _store.ResolveOutputFolder(file),
             batchId = batch?.BatchId,
             batchFolder = batch?.OutputFolder,
             batchSellers = batch?.BySellerKey.Count ?? 0,
-            maxMailsPerRun = OfferMailRunner.MaxMailsPerRun
+            leadTimes = OfferMailStore.ResolveLeadTimes(file),
+            maxMailsPerRun = OfferMailRunner.MaxMailsPerRun,
+            mailsPerPass = OfferMailRunner.MailsPerPass
         });
     }
 
@@ -145,8 +153,10 @@ public sealed class OfferWarningsController : ControllerBase
             ccAddresses = file.CcAddresses ?? "",
             includeSignature = file.IncludeSignature ?? false,
             defaultSheetName = SellerMailDirectory.DefaultSheetName,
-            leadTimes = OfferSplitBuilder.WarnedLeadTimes,
+            leadTimes = OfferMailStore.ResolveLeadTimes(file),
+            defaultLeadTimes = OfferSplitBuilder.DefaultWarnedLeadTimes,
             maxMailsPerRun = OfferMailRunner.MaxMailsPerRun,
+            mailsPerPass = OfferMailRunner.MailsPerPass,
             overrides = file.Overrides,
             path = _store.FilePath,
             updatedUtc = file.UpdatedUtc,
@@ -165,6 +175,12 @@ public sealed class OfferWarningsController : ControllerBase
         if (ccProblem is not null)
             return BadRequest(new { error = $"The CC address was not saved: {ccProblem}" });
 
+        // Refused for the same reason as the CC: this is the moment the operator typed it, and a box
+        // that cannot be read is a filter nobody chose. Blank is allowed and means the default.
+        var (leadTimes, leadTimeProblem) = OfferMailStore.NormalizeLeadTimes(request?.LeadTimes);
+        if (leadTimeProblem is not null)
+            return BadRequest(new { error = $"The lead times were not saved: {leadTimeProblem}" });
+
         _store.Save(new OfferMailFile(
             Version: 0,                       // stamped by the store
             UpdatedUtc: null,                 // stamped by the store
@@ -172,6 +188,7 @@ public sealed class OfferWarningsController : ControllerBase
             BodyTemplate: NullIfBlank(request?.BodyTemplate),
             OutputFolder: NullIfBlank(request?.OutputFolder),
             MinOfferCount: OfferMailStore.NormalizeMinimum(request?.MinOfferCount),
+            LeadTimes: leadTimes,
             CcAddresses: cc,
             IncludeSignature: request?.IncludeSignature ?? false,
             Overrides: overrides));
@@ -184,6 +201,7 @@ public sealed class OfferWarningsController : ControllerBase
             saved = overrides.Count,
             overrides,
             minOfferCount = OfferMailStore.NormalizeMinimum(request?.MinOfferCount) ?? 0,
+            leadTimes = leadTimes ?? OfferSplitBuilder.DefaultWarnedLeadTimes,
             ccAddresses = cc ?? "",
             includeSignature = request?.IncludeSignature ?? false,
             path = _store.FilePath,
@@ -210,6 +228,7 @@ public sealed class OfferWarningsController : ControllerBase
         [FromForm] string? subjectTemplate,
         [FromForm] string? bodyTemplate,
         [FromForm] int? minOfferCount,
+        [FromForm] string? leadTimes,
         CancellationToken cancellationToken)
     {
         if (offers is not { Length: > 0 })
@@ -226,6 +245,15 @@ public sealed class OfferWarningsController : ControllerBase
         // without committing to it. 0 — and anything below it — means every seller is worth a mail.
         var minimum = Math.Max(0, minOfferCount ?? settings.MinOfferCount ?? 0);
 
+        // The lead times follow the same rule, so a month that needs a different set can be run without
+        // saving it. A box that cannot be read stops the build: filtering on the saved list instead
+        // would build 287 mails about days the operator did not ask about.
+        var (typedLeadTimes, leadTimeProblem) = OfferMailStore.NormalizeLeadTimes(leadTimes);
+        if (leadTimeProblem is not null)
+            throw new InvalidOperationException($"The lead times cannot be used: {leadTimeProblem}");
+
+        var warnedLeadTimes = typedLeadTimes ?? OfferMailStore.ResolveLeadTimes(settings);
+
         // Fixed into the batch here and read back at send time, like the recipients and the attachment.
         // Editing the settings box after this point changes nothing until the mails are built again, so
         // the address on the cards is the address that goes out.
@@ -241,7 +269,7 @@ public sealed class OfferWarningsController : ControllerBase
 
         OfferSplitBuilder.SplitResult split;
         using (var stream = await CopyToSeekableStreamAsync(offers, cancellationToken))
-            split = OfferSplitBuilder.Read(stream, offers.FileName);
+            split = OfferSplitBuilder.Read(stream, offers.FileName, warnedLeadTimes);
 
         SellerMailDirectory addresses;
         using (var stream = await CopyToSeekableStreamAsync(directory, cancellationToken))
@@ -258,7 +286,7 @@ public sealed class OfferWarningsController : ControllerBase
         {
             throw new InvalidOperationException(
                 "No seller in the export has an offer with a lead time to ship of " +
-                $"{string.Join(" or ", OfferSplitBuilder.WarnedLeadTimes)} day(s), so there is nothing to split.");
+                $"{string.Join(" or ", warnedLeadTimes)} day(s), so there is nothing to split.");
         }
 
         var date = DateTime.Now.ToString("yyyy-MM-dd");
@@ -380,7 +408,7 @@ public sealed class OfferWarningsController : ControllerBase
             }
 
             var mail = OfferMailBuilder.Render(
-                seller, recipients, fileName, size, date, subject, body, matchedBy, problem);
+                seller, recipients, fileName, size, date, warnedLeadTimes, subject, body, matchedBy, problem);
 
             mails.Add(mail);
 
@@ -424,9 +452,19 @@ public sealed class OfferWarningsController : ControllerBase
         if (ready > OfferMailRunner.MaxMailsPerRun)
         {
             warnings.Add(
-                $"{ready:N0} sellers are ready, over the {OfferMailRunner.MaxMailsPerRun}-mail limit for " +
-                "one run. Raise the minimum offers and build again, or send them in two passes by " +
-                "un-ticking part of the list.");
+                $"{ready:N0} sellers are ready, over the {OfferMailRunner.MaxMailsPerRun:N0}-mail ceiling " +
+                "for one run. Raise the minimum offers and build again, or un-tick part of the list.");
+        }
+        else if (ready > OfferMailRunner.MailsPerPass)
+        {
+            // Not a warning about anything being wrong — a run this size is now normal — but the
+            // operator is about to hold the automation slot for half an hour and should read that
+            // before the click rather than after it.
+            var passes = OfferMailRunner.PlanPasses(ready, OfferMailRunner.MailsPerPass).Count;
+
+            warnings.Add(
+                $"{ready:N0} sellers are ready. They go out in {passes} passes of " +
+                $"{OfferMailRunner.MailsPerPass}, with a break between them.");
         }
 
         return Ok(new OfferPrepareData(
@@ -507,9 +545,9 @@ public sealed class OfferWarningsController : ControllerBase
         {
             return BadRequest(new
             {
-                error = $"{raw.Count} mails is over the {OfferMailRunner.MaxMailsPerRun}-mail limit for one run. " +
-                        "Narrow the list and run it in batches — sending the first " +
-                        $"{OfferMailRunner.MaxMailsPerRun} silently would leave you believing all of them went out."
+                error = $"{raw.Count:N0} mails is over the {OfferMailRunner.MaxMailsPerRun:N0}-mail ceiling for " +
+                        "one run. Raise the minimum offers, or un-tick part of the list — sending the first " +
+                        $"{OfferMailRunner.MaxMailsPerRun:N0} silently would leave you believing all of them went out."
             });
         }
 
@@ -703,17 +741,32 @@ public sealed class OfferWarningsController : ControllerBase
         using var workbook = new XLWorkbook();
         var sheet = workbook.AddWorksheet("Mails");
 
+        // One column per lead time actually present in this run, rather than a fixed "Lead 1"/"Lead 2"
+        // pair: the days are the operator's setting now, and a sheet with a column for a day nobody
+        // warned about — and none for the day they did — is a record of the wrong run.
+        var days = mails
+            .SelectMany(m => m.LeadTimeCounts)
+            .Select(c => c.LeadTime)
+            .Distinct()
+            .Order()
+            .ToList();
+
         // CC is one value for the whole run, but it is repeated on every row: this sheet is the record
         // of what was sent, and a reader filtering it down to one seller still has to see who was copied.
         string[] headers =
         [
-            "Seller ID", "Seller", "E-mail", "CC", "Attachment", "Offers", "Lead 1", "Lead 2",
+            "Seller ID", "Seller", "E-mail", "CC", "Attachment", "Offers",
+            .. days.Select(d => $"Lead {d}"),
             "Address from", "Problem", "Subject", "Body"
         ];
 
         for (var c = 0; c < headers.Length; c++)
             sheet.Cell(1, c + 1).Value = headers[c];
         sheet.Row(1).Style.Font.Bold = true;
+
+        // Where the fixed columns resume, after however many lead-time columns this run needed.
+        var tail = 7 + days.Count;
+        var bodyColumn = tail + 3;
 
         for (var i = 0; i < mails.Count; i++)
         {
@@ -726,21 +779,28 @@ public sealed class OfferWarningsController : ControllerBase
             sheet.Cell(row, 4).SetValue(mail.Problem is null ? cc ?? "" : "");
             sheet.Cell(row, 5).SetValue(mail.AttachmentName);
             sheet.Cell(row, 6).SetValue(mail.OfferCount);
-            sheet.Cell(row, 7).SetValue(mail.LeadTime1);
-            sheet.Cell(row, 8).SetValue(mail.LeadTime2);
-            sheet.Cell(row, 9).SetValue(mail.MatchedBy);
-            sheet.Cell(row, 10).SetValue(mail.Problem ?? "");
-            sheet.Cell(row, 11).SetValue(mail.Subject);
-            sheet.Cell(row, 12).SetValue(mail.Body);
+
+            for (var d = 0; d < days.Count; d++)
+            {
+                // A seller with nothing on this day gets a 0 rather than a blank: the column is a count,
+                // and a blank in a count column reads as "not measured".
+                var count = mail.LeadTimeCounts.FirstOrDefault(c => c.LeadTime == days[d])?.Offers ?? 0;
+                sheet.Cell(row, 7 + d).SetValue(count);
+            }
+
+            sheet.Cell(row, tail).SetValue(mail.MatchedBy);
+            sheet.Cell(row, tail + 1).SetValue(mail.Problem ?? "");
+            sheet.Cell(row, tail + 2).SetValue(mail.Subject);
+            sheet.Cell(row, bodyColumn).SetValue(mail.Body);
         }
 
         // Ids and the body are text: an id loses its leading zeros as a number, and the body has to
         // keep the line breaks that make it a message rather than a paragraph.
         sheet.Column(1).Style.NumberFormat.Format = "@";
-        sheet.Column(12).Style.NumberFormat.Format = "@";
-        sheet.Column(12).Style.Alignment.WrapText = true;
-        sheet.Column(12).Width = 80;
-        sheet.Columns(1, 11).AdjustToContents();
+        sheet.Column(bodyColumn).Style.NumberFormat.Format = "@";
+        sheet.Column(bodyColumn).Style.Alignment.WrapText = true;
+        sheet.Column(bodyColumn).Width = 80;
+        sheet.Columns(1, bodyColumn - 1).AdjustToContents();
 
         using var buffer = new MemoryStream();
         workbook.SaveAs(buffer);

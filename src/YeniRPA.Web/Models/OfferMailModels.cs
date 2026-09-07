@@ -4,8 +4,8 @@ namespace YeniRPA.Web.Models;
 
 // ---------------------------------------------------------------------------
 // Seller Offer Warnings — splits the Mirakl offer export into one workbook per
-// seller, listing that seller's offers with a lead time to ship of 1 or 2 days,
-// and mails each seller their own.
+// seller, listing that seller's offers whose lead time to ship is one of the
+// days the operator warns about, and mails each seller their own.
 //
 // The twin of Seller VAT Warnings: two uploads in, one attachment per seller
 // out, the seller → address → file pairing computed here and re-read from the
@@ -32,6 +32,14 @@ public sealed record OfferLeadRow(
     string ProductSku,
     int LeadTime);
 
+/// <summary>
+/// How many of one seller's offers carry a given lead time. The mail quotes these counts and the
+/// attachment is a single mixed list, so the split has to be carried beside the offers.
+/// </summary>
+public sealed record OfferLeadTimeCount(
+    [property: JsonPropertyName("leadTime")] int LeadTime,
+    [property: JsonPropertyName("offers")] int Offers);
+
 /// <summary>Every short-lead-time offer belonging to one seller, as grouped out of the export.</summary>
 public sealed record OfferSellerGroup(
     string SellerId,
@@ -43,10 +51,15 @@ public sealed record OfferSellerGroup(
 
     IReadOnlyList<OfferLeadRow> Offers,
 
-    /// <summary>How many of <paramref name="Offers"/> ship in one day, and in two. Carried separately
-    /// because the mail quotes both counts and the attachment is a single mixed list.</summary>
-    int LeadTime1,
-    int LeadTime2);
+    /// <summary>
+    /// The split of <paramref name="Offers"/> by lead time, in ascending day order.
+    ///
+    /// <para>A list rather than a field per day, because which days are warned about is the operator's
+    /// setting now: a pair of <c>LeadTime1</c>/<c>LeadTime2</c> fields would name two specific days and
+    /// be wrong the moment that setting changed. Only days this seller actually has an offer on appear —
+    /// a line reading "0 offers at 0 days" is noise in a mail.</para>
+    /// </summary>
+    IReadOnlyList<OfferLeadTimeCount> LeadTimeCounts);
 
 /// <summary>
 /// One seller's mail, as it will be sent. Subject and body are the exact text — the preview, the
@@ -72,8 +85,10 @@ public sealed record OfferSellerMail(
     [property: JsonPropertyName("attachmentName")] string AttachmentName,
     [property: JsonPropertyName("attachmentSizeBytes")] long AttachmentSizeBytes,
     [property: JsonPropertyName("offerCount")] int OfferCount,
-    [property: JsonPropertyName("leadTime1")] int LeadTime1,
-    [property: JsonPropertyName("leadTime2")] int LeadTime2,
+
+    /// <summary>This seller's offers split by lead time, ascending. The panel renders it as the card's
+    /// one-line summary; see <see cref="OfferSellerGroup.LeadTimeCounts"/> for why it is a list.</summary>
+    [property: JsonPropertyName("leadTimeCounts")] IReadOnlyList<OfferLeadTimeCount> LeadTimeCounts,
 
     /// <summary>Where the address came from: <c>override</c> (typed in by hand) or <c>directory</c>
     /// (matched in the uploaded seller list). Shown on the card so a hand-entered address is visibly
@@ -113,7 +128,7 @@ public sealed record OfferFunnel(
 
     /// <summary>Fewer offers than the operator's minimum. Their workbook is not written and no mail is
     /// prepared for them — the one bucket in this funnel that is a choice rather than a fault, and the
-    /// lever that brings a 287-seller run under the 250-mail limit.</summary>
+    /// lever that shortens a run that would otherwise take several passes.</summary>
     [property: JsonPropertyName("belowMinimum")] int BelowMinimum,
 
     [property: JsonPropertyName("noEmail")] int NoEmail,
@@ -148,7 +163,7 @@ public sealed record OfferPrepareData(
     /// back: the panel shows what was fixed into the batch, not what the settings box says now.</summary>
     [property: JsonPropertyName("includeSignature")] bool IncludeSignature,
 
-    /// <summary>Rows in the export that carry a lead time of 1 or 2, before duplicates are folded
+    /// <summary>Rows in the export that carry one of the warned lead times, before duplicates are folded
     /// together. Not the size of the file: the export also holds every other lead time, and those rows
     /// are counted separately below.</summary>
     [property: JsonPropertyName("offersInFile")] int OffersInFile,
@@ -191,6 +206,13 @@ public sealed record OfferMailFile(
     /// <summary>How few offers it takes for a seller not to be worth a mail. <c>null</c> means no
     /// minimum, so an operator who never sets one mails every seller in the export.</summary>
     [property: JsonPropertyName("minOfferCount")] int? MinOfferCount,
+
+    /// <summary>
+    /// Which lead times to ship are worth a warning, ascending. <c>null</c> means
+    /// <c>OfferSplitBuilder.DefaultWarnedLeadTimes</c> — which is also what a settings file written
+    /// before this became a setting deserialises to, so an older file opens unchanged.
+    /// </summary>
+    [property: JsonPropertyName("leadTimes")] int[]? LeadTimes,
 
     /// <summary>Who is copied on every mail, as one <c>;</c>-joined line, or <c>null</c> for nobody.
     /// Visible to the seller: this is a CC, not a BCC.</summary>

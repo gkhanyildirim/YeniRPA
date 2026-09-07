@@ -29,9 +29,44 @@ public static partial class OfferMailBuilder
     /// operator owns this wording.
     /// </summary>
     public const string DefaultSubjectTemplate =
-        "{seller} — termin süresi 1-2 gün olan {offerCount} teklifiniz hakkında";
+        "{seller} — termin süresi {leadTimes} gün olan {offerCount} teklifiniz hakkında";
 
     public const string DefaultBodyTemplate =
+        """
+        Sayın {seller} yetkilisi,
+
+        Marketplace üzerindeki tekliflerinizi incelediğimizde, {offerCount} teklifinizin termin (kargoya veriliş) süresinin çok kısa tanımlandığını gördük.
+
+        {leadTimeBreakdown}
+
+        Etkilenen tekliflerin tamamı ekteki listede yer alıyor ({fileName}). Listede her teklifin Product SKU bilgisi ve tanımlı termin süresi bulunuyor.
+
+        Gerçekte karşılayamadığınız bir termin süresi, siparişin geç çıkmasına, iptallere ve mağaza puanınızın düşmesine yol açıyor. Ekteki listeyi kontrol edip karşılayamadığınız termin sürelerini satıcı panelinizden güncellemenizi rica ederiz.
+
+        Konuyla ilgili sorularınız için bu maili yanıtlamanız yeterli.
+
+        Bilginize sunar, iyi çalışmalar dileriz.
+        """;
+
+    /// <summary>
+    /// Defaults this module used to ship, kept so <see cref="OfferMailStore"/> can recognise an
+    /// untouched copy of one frozen in a settings file and let the current default take over.
+    ///
+    /// <para>Saving the panel stores the text of the boxes rather than a null, so every operator ends up
+    /// with a copy of whatever the default was on the day they first pressed Save. When the tokens
+    /// change — as they did when the two fixed lead-time lines became <c>{leadTimeBreakdown}</c> —
+    /// that copy would go on quoting a placeholder this build no longer fills, and the mail would leave
+    /// with <c>{leadTime2}</c> printed in it. Appended to, never edited: an entry here is a claim about
+    /// what some settings file on disk may still contain.</para>
+    /// </summary>
+    public static readonly string[] SupersededSubjectTemplates =
+    [
+        "{seller} — termin süresi 1-2 gün olan {offerCount} teklifiniz hakkında",
+    ];
+
+    /// <inheritdoc cref="SupersededSubjectTemplates"/>
+    public static readonly string[] SupersededBodyTemplates =
+    [
         """
         Sayın {seller} yetkilisi,
 
@@ -47,17 +82,23 @@ public static partial class OfferMailBuilder
         Konuyla ilgili sorularınız için bu maili yanıtlamanız yeterli.
 
         Bilginize sunar, iyi çalışmalar dileriz.
-        """;
+        """,
+    ];
 
     /// <summary>
-    /// <c>{offerCount}</c> is the number of lines in the attachment — the sum of <c>{leadTime1}</c> and
-    /// <c>{leadTime2}</c>, not the number of rows the export held, which differ when a seller lists one
-    /// SKU twice at the same lead time.
+    /// <c>{offerCount}</c> is the number of lines in the attachment — the total of the
+    /// <c>{leadTimeBreakdown}</c> lines, not the number of rows the export held, which differ when a
+    /// seller lists one SKU twice at the same lead time.
+    ///
+    /// <para><c>{leadTimes}</c> is the run's own setting ("0-1"), the same for every seller;
+    /// <c>{leadTimeBreakdown}</c> is this seller's split, one line per day they actually have offers on.
+    /// There is no token per day because which days are warned about is a setting now — a fixed
+    /// <c>{leadTime2}</c> would print nothing the moment the operator stopped warning about two.</para>
     /// </summary>
     public static readonly string[] Placeholders =
     [
         "{seller}", "{sellerId}", "{email}", "{recipientCount}", "{fileName}",
-        "{offerCount}", "{leadTime1}", "{leadTime2}", "{date}",
+        "{offerCount}", "{leadTimes}", "{leadTimeBreakdown}", "{date}",
     ];
 
     [GeneratedRegex(@"\{[A-Za-z][A-Za-z0-9]*\}")]
@@ -74,6 +115,7 @@ public static partial class OfferMailBuilder
         string attachmentName,
         long attachmentSizeBytes,
         string date,
+        IReadOnlyList<int> leadTimes,
         string? subjectTemplate,
         string? bodyTemplate,
         string matchedBy,
@@ -81,6 +123,7 @@ public static partial class OfferMailBuilder
     {
         ArgumentNullException.ThrowIfNull(seller);
         ArgumentNullException.ThrowIfNull(recipients);
+        ArgumentNullException.ThrowIfNull(leadTimes);
 
         var subject = string.IsNullOrWhiteSpace(subjectTemplate) ? DefaultSubjectTemplate : subjectTemplate;
         var body = string.IsNullOrWhiteSpace(bodyTemplate) ? DefaultBodyTemplate : bodyTemplate;
@@ -94,15 +137,14 @@ public static partial class OfferMailBuilder
             // Newlines in a subject line are silently dropped by every mail client and would make the
             // approved text differ from the sent text. Folded to spaces here, once — CRLF first, so a
             // subject pasted out of Word arrives with one space rather than two.
-            Subject: Fill(subject, seller, recipients, attachmentName, date)
+            Subject: Fill(subject, seller, recipients, attachmentName, date, leadTimes)
                 .Replace("\r\n", " ").Replace("\r", " ").Replace("\n", " ").Trim(),
-            Body: Fill(body, seller, recipients, attachmentName, date)
+            Body: Fill(body, seller, recipients, attachmentName, date, leadTimes)
                 .Replace("\r\n", "\n").Replace("\r", "\n"),
             AttachmentName: attachmentName,
             AttachmentSizeBytes: attachmentSizeBytes,
             OfferCount: seller.Offers.Count,
-            LeadTime1: seller.LeadTime1,
-            LeadTime2: seller.LeadTime2,
+            LeadTimeCounts: seller.LeadTimeCounts,
             MatchedBy: matchedBy,
             Problem: problem,
             UnknownPlaceholders: FindUnknown(subject, body));
@@ -113,19 +155,63 @@ public static partial class OfferMailBuilder
         OfferSellerGroup seller,
         IReadOnlyList<string> recipients,
         string attachmentName,
-        string date) => template
+        string date,
+        IReadOnlyList<int> leadTimes) => template
         .Replace("{sellerId}", seller.SellerId)
         .Replace("{email}", SellerMailStore.JoinAddresses(recipients))
         .Replace("{recipientCount}", Count(recipients.Count))
         .Replace("{fileName}", attachmentName)
         .Replace("{offerCount}", Count(seller.Offers.Count))
-        .Replace("{leadTime1}", Count(seller.LeadTime1))
-        .Replace("{leadTime2}", Count(seller.LeadTime2))
+        // Before {leadTimes}, because that token is a prefix of this one: replacing the short one first
+        // would turn "{leadTimeBreakdown}" into "0-1Breakdown}".
+        .Replace("{leadTimeBreakdown}", DescribeBreakdown(seller.LeadTimeCounts))
+        .Replace("{leadTimes}", DescribeLeadTimes(leadTimes))
         .Replace("{date}", date)
         // Substituted LAST, after every other placeholder. A seller whose storefront name contains a
         // literal "{email}" would otherwise have it re-substituted — the classic template-injection
         // foot-gun, and here it would put one seller's address in another seller's mail.
         .Replace("{seller}", seller.SellerName);
+
+    /// <summary>
+    /// The warned lead times as they read in a sentence: <c>0-1</c> for a run of consecutive days,
+    /// <c>0, 2</c> otherwise. Shared with the attachment's own heading so the mail and the file the mail
+    /// carries cannot describe the run differently.
+    /// </summary>
+    public static string DescribeLeadTimes(IReadOnlyList<int> leadTimes)
+    {
+        ArgumentNullException.ThrowIfNull(leadTimes);
+
+        var days = leadTimes.Distinct().Order().ToList();
+        if (days.Count == 0)
+            return "";
+
+        var consecutive = days.Count > 1 && days[^1] - days[0] == days.Count - 1;
+
+        return consecutive
+            ? $"{days[0]}-{days[^1]}"
+            : string.Join(", ", days);
+    }
+
+    /// <summary>
+    /// One seller's split, one line per day they actually hold offers on:
+    /// <c>Termini 0 gün olan teklif sayısı: 128</c>.
+    ///
+    /// <para>The Turkish sentence lives here rather than in the template, which is the price of letting
+    /// the operator choose the days: a template cannot carry a line per day when the number of days is
+    /// not known until the run. The operator can still move the block or drop it.</para>
+    ///
+    /// <para>Days with no offers are not listed. "Termini 0 gün olan teklif sayısı: 0" is a line the
+    /// seller has to read and then discard.</para>
+    /// </summary>
+    public static string DescribeBreakdown(IReadOnlyList<OfferLeadTimeCount> counts)
+    {
+        ArgumentNullException.ThrowIfNull(counts);
+
+        return string.Join("\n", counts
+            .Where(c => c.Offers > 0)
+            .OrderBy(c => c.LeadTime)
+            .Select(c => $"Termini {c.LeadTime} gün olan teklif sayısı: {Count(c.Offers)}"));
+    }
 
     /// <summary>Turkish groups thousands with a dot, and these counts run to four digits.</summary>
     static string Count(int value) => value.ToString("N0", CultureInfo.GetCultureInfo("tr-TR"));

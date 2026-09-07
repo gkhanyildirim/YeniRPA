@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using YeniRPA.Web.Models;
 
@@ -101,7 +102,10 @@ public sealed class OfferMailStore
             return file with
             {
                 Overrides = file.Overrides ?? [],
-                MinOfferCount = NormalizeMinimum(file.MinOfferCount)
+                MinOfferCount = NormalizeMinimum(file.MinOfferCount),
+                LeadTimes = NormalizeLeadTimes(file.LeadTimes),
+                SubjectTemplate = DropSuperseded(file.SubjectTemplate, OfferMailBuilder.SupersededSubjectTemplates),
+                BodyTemplate = DropSuperseded(file.BodyTemplate, OfferMailBuilder.SupersededBodyTemplates)
             };
         }
     }
@@ -139,6 +143,108 @@ public sealed class OfferMailStore
     /// </summary>
     public static int? NormalizeMinimum(int? value) => value is > 0 ? value : null;
 
+    /// <summary>The most days a lead time may name, and the most days one run may warn about. Both are
+    /// sanity bounds on a hand-typed box, not marketplace rules.</summary>
+    public const int MaxLeadTime = 30;
+    public const int MaxLeadTimeCount = 6;
+
+    /// <summary>
+    /// The lead times to warn about, as typed by the operator, or the reason the box cannot be used.
+    ///
+    /// <para>Follows <see cref="NormalizeCc"/>'s shape — a cleaned value or a stated problem — and for
+    /// the same reason: this is the moment the operator is looking at what they typed. Discovering
+    /// after a build that the filter was empty, or that "1O" was read as nothing, is the wrong moment.</para>
+    ///
+    /// <para>Blank is <c>null</c> and not a problem: it means "use the default", which is what an
+    /// operator who never opened this box has always had.</para>
+    /// </summary>
+    public static (int[]? LeadTimes, string? Problem) NormalizeLeadTimes(string? raw)
+    {
+        var text = (raw ?? "").Trim();
+        if (text.Length == 0)
+            return (null, null);
+
+        var parts = text.Split([',', ';', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        var days = new List<int>(parts.Length);
+
+        foreach (var part in parts)
+        {
+            if (!int.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out var day))
+                return (null, $"'{part}' is not a whole number of days.");
+
+            if (day < 0 || day > MaxLeadTime)
+                return (null, $"'{part}' is not a lead time between 0 and {MaxLeadTime} days.");
+
+            // Silently deduplicated rather than refused: "0, 0, 1" says the same thing as "0, 1", and
+            // there is nothing for the operator to decide about it.
+            if (!days.Contains(day))
+                days.Add(day);
+        }
+
+        if (days.Count == 0)
+            return (null, "No lead time was recognised in that.");
+
+        if (days.Count > MaxLeadTimeCount)
+        {
+            return (null,
+                $"{days.Count} lead times is more than the {MaxLeadTimeCount} this module warns about " +
+                "at once. Warning about most of the export is not a warning.");
+        }
+
+        days.Sort();
+        return ([.. days], null);
+    }
+
+    /// <summary>The stored lead times, cleaned the same way, or <c>null</c> for "use the default".</summary>
+    public static int[]? NormalizeLeadTimes(int[]? stored)
+    {
+        if (stored is null || stored.Length == 0)
+            return null;
+
+        var days = stored
+            .Where(d => d >= 0 && d <= MaxLeadTime)
+            .Distinct()
+            .Order()
+            .Take(MaxLeadTimeCount)
+            .ToArray();
+
+        return days.Length > 0 ? days : null;
+    }
+
+    /// <summary>The lead times a run should use: the operator's when they have set any, the default
+    /// otherwise. One place, so no caller can forget the fallback and filter on nothing.</summary>
+    public static IReadOnlyList<int> ResolveLeadTimes(OfferMailFile file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return NormalizeLeadTimes(file.LeadTimes) ?? OfferSplitBuilder.DefaultWarnedLeadTimes;
+    }
+
+    /// <summary>
+    /// A saved template that is byte-for-byte one of this module's own earlier defaults, dropped so the
+    /// current default takes its place.
+    ///
+    /// <para>Saving the panel's boxes stores the default text rather than a null, so an operator who
+    /// never edited a word still ends up with a copy of it frozen in their settings file. When the
+    /// default then changes — as it did when the two fixed lead-time lines became one breakdown — that
+    /// frozen copy would keep rendering a placeholder this build no longer knows, and the mail would
+    /// leave with <c>{leadTime2}</c> in it.</para>
+    ///
+    /// <para>Only an exact match is dropped. A template the operator changed by so much as a character
+    /// is theirs, and is returned untouched.</para>
+    /// </summary>
+    internal static string? DropSuperseded(string? saved, IReadOnlyList<string> superseded)
+    {
+        if (string.IsNullOrWhiteSpace(saved))
+            return saved;
+
+        var text = saved.Replace("\r\n", "\n").Replace("\r", "\n");
+
+        return superseded.Any(old =>
+            string.Equals(old.Replace("\r\n", "\n").Replace("\r", "\n"), text, StringComparison.Ordinal))
+            ? null
+            : saved;
+    }
+
     /// <summary>
     /// The CC line, cleaned, or the reason it cannot be used.
     ///
@@ -165,7 +271,7 @@ public sealed class OfferMailStore
     public string ResolveOutputFolder(OfferMailFile file) =>
         string.IsNullOrWhiteSpace(file.OutputFolder) ? DefaultOutputFolder : file.OutputFolder.Trim();
 
-    OfferMailFile Empty() => new(CurrentVersion, null, null, null, null, null, null, null, []);
+    OfferMailFile Empty() => new(CurrentVersion, null, null, null, null, null, null, null, null, []);
 
     // ---------------------------------------------------------------------
     // Overrides

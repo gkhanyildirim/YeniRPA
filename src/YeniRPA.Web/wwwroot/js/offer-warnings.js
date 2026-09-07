@@ -1,7 +1,7 @@
 /* =============================================================================
    Seller Offer Warnings — splits the Mirakl offer export into one workbook per
-   seller, listing that seller's offers with a lead time to ship of 1 or 2 days,
-   and mails each seller their own.
+   seller, listing that seller's offers whose lead time to ship is one of the
+   days the operator warns about, and mails each seller their own.
 
    The twin of vat-warnings.js: two uploads in, the server writes the
    attachments, and a batch id that every send has to quote — the server keeps
@@ -60,11 +60,29 @@
   let defaultSubject = '';
   let defaultBody = '';
 
-  // How many mails one run may carry. Read from the server rather than written here, so the number the
-  // panel quotes and the number the send endpoint enforces cannot drift apart.
+  // How many mails one run may carry, and how many go out in one pass before the run pauses. Read from
+  // the server rather than written here, so the numbers the panel quotes and the ones the send endpoint
+  // enforces cannot drift apart.
   let maxPerRun = 0;
+  let perPass = 0;
+
+  // Seconds the server waits between passes, and the rough seconds one live mail costs. Only ever used
+  // to estimate how long a run will hold the automation slot.
+  const PASS_BREAK_SECONDS = 120;
+  const SECONDS_PER_MAIL = 3.5;
 
   function el(id) { return document.getElementById(id); }
+
+  /** How many passes a run of this size takes, mirroring OfferMailRunner.PlanPasses. */
+  function passCount(count) {
+    return perPass > 0 ? Math.ceil(count / perPass) : 1;
+  }
+
+  /** Roughly how long a live run of this size holds the automation slot, in whole minutes. */
+  function runMinutes(count) {
+    const seconds = count * SECONDS_PER_MAIL + (passCount(count) - 1) * PASS_BREAK_SECONDS;
+    return Math.max(1, Math.round(seconds / 60));
+  }
 
   function fmtBytes(bytes) {
     if (!bytes) return '';
@@ -118,15 +136,22 @@
       badge.textContent = 'Not checked yet';
     }
 
-    setRunning(status.isRunning, status.runningModule);
+    // Also carried on /status, so the pass count beside the Send button is right even if the settings
+    // load failed and the panel is otherwise running on defaults.
+    maxPerRun = status.maxMailsPerRun || maxPerRun;
+    perPass = status.mailsPerPass || perPass;
+
+    setRunning(status.isRunning, status.runningModule, status.stopRequested);
   }
 
   /** Idempotent: the run state arrives from the POST, from /status and from the event stream. */
-  function setRunning(isRunning, runningModule) {
+  function setRunning(isRunning, runningModule, stopRequested) {
     running = !!isRunning;
 
     const send = el('ow-send');
-    RPA.setBusy(send, running && runningModule === MODULE, 'Running…');
+    const mineNow = running && runningModule === MODULE;
+
+    RPA.setBusy(send, mineNow, 'Running…');
     send.disabled = running || selectedMails().length === 0;
 
     if (running && runningModule && runningModule !== MODULE) {
@@ -135,7 +160,36 @@
       send.removeAttribute('title');
     }
 
+    // Only this panel's own run can be stopped from here. Another module's run is stoppable on its
+    // own panel, where the operator can see what they would be cutting short.
+    const stop = el('ow-stop');
+    stop.hidden = !mineNow;
+    stop.disabled = !mineNow || !!stopRequested;
+    stop.querySelector('.btn-text').textContent = stopRequested ? 'Stopping…' : 'Stop';
+
     if (running) el('ow-run').hidden = false;
+  }
+
+  /**
+   * Asks the server to stop the run at its next safe point. Not an undo: what has already gone out
+   * has gone out, and the run log is what says how far it got.
+   */
+  async function stopRun() {
+    if (!window.confirm(
+      'Stop this run?\n\nMails already sent cannot be recalled. The run stops before the next one ' +
+      'and the log names how many were not attempted.')) return;
+
+    const stop = el('ow-stop');
+    stop.disabled = true;
+    stop.querySelector('.btn-text').textContent = 'Stopping…';
+
+    try {
+      await RPA.sendJson('/api/automation/stop', {});
+    } catch (err) {
+      RPA.showError('ow-mails-alert', 'The run could not be stopped: ' + err.message);
+      stop.disabled = false;
+      stop.querySelector('.btn-text').textContent = 'Stop';
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -297,6 +351,7 @@
     defaultSubject = data.defaultSubjectTemplate || '';
     defaultBody = data.defaultBodyTemplate || '';
     maxPerRun = data.maxMailsPerRun || 0;
+    perPass = data.mailsPerPass || 0;
 
     overrides = data.overrides || [];
     renderOverrides();
@@ -309,15 +364,17 @@
     el('ow-folder').value = data.outputFolder || '';
     el('ow-sheet').value = data.defaultSheetName || '';
     el('ow-min-offers').value = data.minOfferCount || 0;
+    el('ow-lead-times').value = (data.leadTimes || []).join(', ');
     el('ow-settings-path').textContent = data.path || '';
     el('ow-settings-updated').textContent = data.updatedUtc ? 'Last saved ' + data.updatedUtc : 'Never saved';
     el('ow-output-summary').textContent = 'Default: ' + (data.defaultOutputFolder || '');
 
     // The one thing about this module a reader cannot infer from the controls: which lead times are
-    // selected, and how many mails a single run may carry.
+    // selected, how a large run is paced, and where the run is refused outright.
     const leads = data.leadTimes || [];
     el('ow-lead-summary').textContent =
       (leads.length ? 'Lead time to ship ' + leads.join(' and ') + ' day(s)' : '') +
+      (perPass ? ' · sent in passes of ' + RPA.fmtInt(perPass) : '') +
       (maxPerRun ? ' · at most ' + RPA.fmtInt(maxPerRun) + ' mails per run' : '');
 
     el('ow-placeholders').innerHTML = (data.placeholders || [])
@@ -333,6 +390,9 @@
       bodyTemplate: el('ow-body').value,
       outputFolder: el('ow-folder').value,
       minOfferCount: minOffers(),
+      // Sent as typed. The server is the one that parses it, so the box and the filter cannot end up
+      // disagreeing about what "0, 1" meant.
+      leadTimes: el('ow-lead-times').value,
       ccAddresses: el('ow-cc').value,
       includeSignature: el('ow-signature').checked,
       overrides: entries
@@ -346,9 +406,11 @@
     // What came back, not what was typed: the server splits and de-duplicates the CC line, so the box
     // shows the value that was actually stored.
     el('ow-min-offers').value = result.minOfferCount || 0;
+    el('ow-lead-times').value = (result.leadTimes || []).join(', ');
     el('ow-cc').value = result.ccAddresses || '';
     el('ow-signature').checked = !!result.includeSignature;
     el('ow-settings-updated').textContent = 'Saved just now · ' + result.saved + ' hand-entered address(es)' +
+      (result.leadTimes ? ' · lead time ' + result.leadTimes.join(' and ') + ' day(s)' : '') +
       (result.minOfferCount ? ' · minimum ' + RPA.fmtInt(result.minOfferCount) + ' offers' : '') +
       (result.ccAddresses ? ' · cc ' + result.ccAddresses : '') +
       (result.includeSignature ? ' · signed' : '');
@@ -551,9 +613,11 @@
     const signed = (lastSignature && !broken) ? ' · ✒ signed' : '';
 
     // The split is the point of the mail, so it belongs on the collapsed line rather than only in the
-    // body — a seller with 900 one-day offers is a different conversation from one with three.
+    // body — a seller with 900 same-day offers is a different conversation from one with three. Built
+    // from the counts the server sent rather than from a fixed pair of days: which days are warned
+    // about is a setting, and this line has to describe the run that actually happened.
     const split = RPA.fmtInt(mail.offerCount) + ' offer(s) · ' +
-      RPA.fmtInt(mail.leadTime1) + ' × 1 gün, ' + RPA.fmtInt(mail.leadTime2) + ' × 2 gün';
+      (mail.leadTimeCounts || []).map(c => RPA.fmtInt(c.offers) + ' × ' + c.leadTime + ' gün').join(', ');
 
     return '<div class="msg-card' + (open ? '' : ' is-collapsed') + '" data-key="' + RPA.escapeHtml(key) + '">' +
       '<div class="msg-head">' +
@@ -585,16 +649,21 @@
     const shownKeys = new Set(visibleMails().map(sellerKey));
     const hiddenPicked = selectedMails().filter(m => !shownKeys.has(sellerKey(m))).length;
 
-    // The run cap is not a truncation — the send is refused outright — so the count that is over it
-    // has to be visible beside the button rather than discovered on the click.
-    const overCap = maxPerRun && picked > maxPerRun
-      ? ' · ' + RPA.fmtInt(picked - maxPerRun) + ' over the ' + RPA.fmtInt(maxPerRun) + '-mail limit'
-      : '';
+    // The ceiling is not a truncation — the send is refused outright — so the count that is over it
+    // has to be visible beside the button rather than discovered on the click. Under the ceiling, the
+    // pass count is what the operator needs instead: it is why the run pauses and how long it takes.
+    let tail = '';
+    if (maxPerRun && picked > maxPerRun) {
+      tail = ' · ' + RPA.fmtInt(picked - maxPerRun) + ' over the ' + RPA.fmtInt(maxPerRun) + '-mail ceiling';
+    } else if (perPass && picked > perPass) {
+      tail = ' · ' + passCount(picked) + ' passes of ' + RPA.fmtInt(perPass) + ' · about ' +
+        runMinutes(picked) + ' minute(s)';
+    }
 
     el('ow-mails-summary').textContent = ready
       ? RPA.fmtInt(picked) + ' of ' + RPA.fmtInt(ready) + ' selected' +
         (hiddenPicked ? ' · ' + RPA.fmtInt(hiddenPicked) + ' of them hidden by the filter' : '') +
-        overCap
+        tail
       : '';
 
     el('ow-send').disabled = running || picked === 0;
@@ -680,6 +749,7 @@
       form.append('subjectTemplate', el('ow-subject').value);
       form.append('bodyTemplate', el('ow-body').value);
       form.append('minOfferCount', minOffers());
+      form.append('leadTimes', el('ow-lead-times').value);
 
       renderPrepared(await RPA.postJson('/api/offer-warnings/prepare', form));
     } catch (err) {
@@ -710,10 +780,17 @@
       ? '\n  …and ' + rest + ' more (all of them are listed on the cards above)'
       : '';
 
+    // Said before the click because a run that goes quiet for two minutes mid-way looks like a run
+    // that has hung to anyone who was not told it comes in passes.
+    const passes = passCount(mails.length);
+    const paced = passes > 1
+      ? '\n\nThis goes out in ' + passes + ' passes of ' + RPA.fmtInt(perPass) +
+        ', pausing between them. Stop is on the run log.'
+      : '';
+
     const slotWarning = dryRun
       ? ''
-      : '\n\nThis holds the automation slot for roughly ' +
-        Math.max(1, Math.round(mails.length * 3.5 / 60)) + ' minute(s).';
+      : '\n\nThis holds the automation slot for roughly ' + runMinutes(mails.length) + ' minute(s).';
 
     // Stated once, above the list, because it applies to every line of it — and stated at all because
     // a CC is visible to each of these sellers.
@@ -725,7 +802,7 @@
       ? '\nYour Outlook signature goes under each one.'
       : '';
 
-    return window.confirm(heading + copy + signature + '\n\n  ' + shown.join('\n  ') + tail + slotWarning);
+    return window.confirm(heading + copy + signature + '\n\n  ' + shown.join('\n  ') + tail + paced + slotWarning);
   }
 
   async function send() {
@@ -798,6 +875,7 @@
 
     el('ow-prepare').addEventListener('click', prepare);
     el('ow-send').addEventListener('click', send);
+    el('ow-stop').addEventListener('click', stopRun);
     el('ow-save-settings').addEventListener('click', saveSettings);
     el('ow-override-add').addEventListener('click', addOverrideRow);
     el('ow-unmatched-save').addEventListener('click', saveUnmatched);

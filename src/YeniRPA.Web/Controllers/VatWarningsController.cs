@@ -106,11 +106,13 @@ public sealed class VatWarningsController : ControllerBase
             outlookError = _sender.LastError,
             isRunning = _bus.IsRunning,
             runningModule = _bus.RunningModule,
+            stopRequested = _bus.StopRequested,
             outputFolder = _store.ResolveOutputFolder(file),
             batchId = batch?.BatchId,
             batchFolder = batch?.OutputFolder,
             batchSellers = batch?.BySellerKey.Count ?? 0,
-            maxMailsPerRun = OfferMailRunner.MaxMailsPerRun
+            maxMailsPerRun = OfferMailRunner.MaxMailsPerRun,
+            mailsPerPass = OfferMailRunner.MailsPerPass
         });
     }
 
@@ -497,9 +499,9 @@ public sealed class VatWarningsController : ControllerBase
         {
             return BadRequest(new
             {
-                error = $"{raw.Count} mails is over the {OfferMailRunner.MaxMailsPerRun}-mail limit for one run. " +
-                        "Narrow the list and run it in batches — sending the first " +
-                        $"{OfferMailRunner.MaxMailsPerRun} silently would leave you believing all of them went out."
+                error = $"{raw.Count:N0} mails is over the {OfferMailRunner.MaxMailsPerRun:N0}-mail ceiling for " +
+                        "one run. Un-tick part of the list — sending the first " +
+                        $"{OfferMailRunner.MaxMailsPerRun:N0} silently would leave you believing all of them went out."
             });
         }
 

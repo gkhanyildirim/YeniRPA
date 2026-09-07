@@ -1,3 +1,4 @@
+using System.Globalization;
 using YeniRPA.Web.Models;
 
 namespace YeniRPA.Web.Services;
@@ -31,14 +32,18 @@ public static class OfferSplitBuilder
         ["Lead time to ship", "Lead Time To Ship", "LeadTimeToShip", "Termin"];
 
     /// <summary>
-    /// The lead times this module warns about.
+    /// The lead times warned about when the operator has not chosen any.
     ///
-    /// <para>One and two days are the promises a seller most often cannot keep: an offer that claims
-    /// next-day dispatch and then ships on the fourth day is a late order, a customer complaint and a
-    /// hit to the seller's own rating. Zero is excluded on purpose — it is what the export writes for
-    /// offers that are not shipped by the seller at all, and warning about it would send noise.</para>
+    /// <para>Zero and one day are the promises a seller most often cannot keep: an offer that claims
+    /// same-day or next-day dispatch and then ships on the fourth day is a late order, a customer
+    /// complaint and a hit to the seller's own rating.</para>
+    ///
+    /// <para>A default rather than the rule, because which days are worth a warning is a marketplace
+    /// judgement that has already changed once and belongs to the operator, not to this file. A blank
+    /// lead-time cell is still never warned about — see <see cref="ReadLeadTime"/>, where blank stays
+    /// <c>null</c> instead of becoming a zero the seller never wrote.</para>
     /// </summary>
-    public static readonly int[] WarnedLeadTimes = [1, 2];
+    public static readonly int[] DefaultWarnedLeadTimes = [0, 1];
 
     /// <summary>
     /// An upper bound on the export, so a wrong file cannot turn into an unbounded allocation and a
@@ -59,10 +64,25 @@ public static class OfferSplitBuilder
 
         IReadOnlyList<string> Warnings);
 
-    /// <summary>Reads the export and groups it by seller, in the order the sellers first appear.</summary>
-    public static SplitResult Read(Stream stream, string fileName)
+    /// <summary>
+    /// Reads the export and groups it by seller, in the order the sellers first appear.
+    ///
+    /// <para><paramref name="leadTimes"/> is the operator's setting, passed in rather than read from a
+    /// static so that a run states which days it warned about — the same value then reaches the mail,
+    /// the attachment's heading and the panel's summary, and none of them can disagree with the
+    /// filter that actually ran.</para>
+    /// </summary>
+    public static SplitResult Read(Stream stream, string fileName, IReadOnlyList<int> leadTimes)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(leadTimes);
+
+        if (leadTimes.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "No lead time to ship is selected, so there is nothing to warn anyone about. " +
+                "Enter the lead times in the settings.");
+        }
 
         // Streamed, not materialised: this export is two orders of magnitude larger than anything else
         // the app reads. See OfferExportReader for what loading it whole would cost.
@@ -130,7 +150,7 @@ public static class OfferSplitBuilder
                 continue;
 
             var lead = ReadLeadTime(leadCell);
-            if (lead is null || !WarnedLeadTimes.Contains(lead.Value))
+            if (lead is null || !leadTimes.Contains(lead.Value))
             {
                 offersFilteredOut++;
                 continue;
@@ -165,8 +185,7 @@ public static class OfferSplitBuilder
                 SellerName: groups[key].SellerName,
                 SellerKey: key,
                 Offers: groups[key].Offers,
-                LeadTime1: groups[key].Offers.Count(o => o.LeadTime == 1),
-                LeadTime2: groups[key].Offers.Count(o => o.LeadTime == 2)))
+                LeadTimeCounts: CountByLeadTime(groups[key].Offers)))
             .ToList();
 
         var warnings = new List<string>();
@@ -195,9 +214,16 @@ public static class OfferSplitBuilder
     /// A lead-time cell as a whole number of days, or <c>null</c> when it is not one.
     ///
     /// <para>Blank is <c>null</c> rather than zero: a third of the real export leaves this column empty,
-    /// and reading those as "ships same day" would be inventing a promise the seller never made. A
-    /// fractional value is <c>null</c> for the same reason — the column is days, and half a day is not a
-    /// value this export writes.</para>
+    /// and reading those as "ships same day" would be inventing a promise the seller never made — which
+    /// matters more now that zero is a day the operator can warn about. A fractional value is
+    /// <c>null</c> for the same reason: the column is days, and half a day is not a value this export
+    /// writes.</para>
+    ///
+    /// <para><see cref="TabularFile.ParseNumber"/> is deliberately not used here. It answers 0 both for
+    /// <c>"0"</c> and for "not a number at all", which was harmless while zero was never warned about
+    /// and is not any more: telling the two apart by comparing the text against <c>"0"</c> would drop
+    /// <c>"00"</c> and <c>"0.00"</c> on the floor, and a seller who is silently never warned is the one
+    /// failure this module exists to prevent.</para>
     /// </summary>
     public static int? ReadLeadTime(string raw)
     {
@@ -205,17 +231,25 @@ public static class OfferSplitBuilder
         if (text.Length == 0)
             return null;
 
-        var value = TabularFile.ParseNumber(text);
-
-        // ParseNumber answers 0 both for "0" and for "not a number at all". Neither is a warned lead
-        // time, so the two do not have to be told apart — but a cell of "abc" must not become 0 and
-        // then look like a real reading to a later caller.
-        if (value == 0 && text != "0" && text != "0.0")
+        if (!double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
             return null;
 
         var rounded = (int)Math.Round(value);
         return Math.Abs(value - rounded) < 0.0001 ? rounded : null;
     }
+
+    /// <summary>
+    /// One seller's offers counted by lead time, ascending, skipping days they have none on.
+    ///
+    /// <para>Built from the offers themselves rather than from the warned list, so the counts describe
+    /// what is actually in the attachment. They agree by construction — every offer here passed the
+    /// filter — and that is the point: this cannot report a day the seller's own file does not hold.</para>
+    /// </summary>
+    static IReadOnlyList<OfferLeadTimeCount> CountByLeadTime(IReadOnlyList<OfferLeadRow> offers) =>
+        [.. offers
+            .GroupBy(o => o.LeadTime)
+            .OrderBy(g => g.Key)
+            .Select(g => new OfferLeadTimeCount(g.Key, g.Count()))];
 
     // ---------------------------------------------------------------------
     // File names
@@ -334,7 +368,7 @@ public static class OfferSplitBuilder
         /// Adds an offer unless this seller already has that exact line.
         ///
         /// <para>The key is the SKU <em>and</em> the lead time, not the SKU alone: a seller can hold two
-        /// offers on one product shipping in one day and in two, and both are things they are being
+        /// offers on one product at two different warned lead times, and both are things they are being
         /// asked to look at. Folding them would hide half the problem.</para>
         ///
         /// <para>A row with no SKU is never folded — every one is kept. Collapsing them onto a single
