@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using LiteDB;
 using YeniRPA.Web.Models;
 // LiteDB also declares a JsonSerializer type; this app's JSON is always System.Text.Json's.
@@ -256,13 +257,21 @@ public sealed class OfferMailStore : IOfferMailStore
         if (string.IsNullOrWhiteSpace(saved))
             return saved;
 
-        var text = saved.Replace("\r\n", "\n").Replace("\r", "\n");
+        var text = NormalizeLineEndings(saved);
 
-        return superseded.Any(old =>
-            string.Equals(old.Replace("\r\n", "\n").Replace("\r", "\n"), text, StringComparison.Ordinal))
+        return superseded.Any(old => string.Equals(NormalizeLineEndings(old), text, StringComparison.Ordinal))
             ? null
             : saved;
     }
+
+    /// <summary>
+    /// Collapses any run of one or more <c>\r</c> — optionally followed by <c>\n</c> — to a single
+    /// <c>\n</c>. A plain <c>"\r\n" → "\n"</c> replace is not enough: an editor that blindly inserts a
+    /// <c>\r</c> before every <c>\n</c> without checking whether one is already there turns an existing
+    /// <c>\r\n</c> into <c>\r\r\n</c>, and a two-step <c>Replace</c> leaves that as <c>\n\n</c> instead of
+    /// <c>\n</c> — the same text then compares as different, which is the one case this exists to catch.
+    /// </summary>
+    static string NormalizeLineEndings(string text) => Regex.Replace(text, "\r+\n?", "\n");
 
     /// <summary>
     /// The CC line, cleaned, or the reason it cannot be used.
