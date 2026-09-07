@@ -67,8 +67,103 @@
     return columns;
   }
 
+  // ---------------------------------------------------------------------------
+  // Accounting
+  //
+  // A file of 765 rows can honestly produce a table of 472, because the submitted
+  // list goes through five filters before the browser opens and nothing used to
+  // report any of them. These helpers name what each one took, so the row count
+  // can be reconciled with the spreadsheet it came from.
+  // ---------------------------------------------------------------------------
+
+  /** The parts of an intake worth naming: the skipped header, and anything that removed lines. */
+  function intakeBreakdown(intake) {
+    const parts = [];
+
+    // Named even though it is always one row: the skip is unconditional, so a file with no header
+    // loses a real seller here, and seeing a seller's name quoted back is the only way to catch it.
+    if (intake.headerRows) {
+      parts.push(intake.headerText
+        ? 'header skipped: "' + intake.headerText + '"'
+        : intake.headerRows + ' header row');
+    }
+
+    if (intake.blank) parts.push(intake.blank + ' blank');
+    if (intake.comments) parts.push(intake.comments + ' starting with #');
+    if (intake.duplicates) parts.push(intake.duplicates + ' duplicate(s) removed');
+
+    return parts;
+  }
+
+  // Held rather than printed straight away. The acceptance comes back over the POST while 'started'
+  // comes over the event stream, either can arrive first, and 'started' clears the console — so a
+  // line printed on the wrong side of that would be wiped.
+  let pendingIntake = null;
+
+  /** The one report the file path gets: what the server made of the spreadsheet it parsed. */
+  function logIntake(intake) {
+    if (!intake) return;
+
+    pendingIntake = intake;
+    if (mine) flushIntake();
+  }
+
+  function flushIntake() {
+    const intake = pendingIntake;
+    if (!intake) return;
+    pendingIntake = null;
+
+    const source = intake.fileRows
+      ? intake.fileRows + ' line(s) in file'
+      : intake.pastedLines + ' line(s) pasted';
+    const parts = intakeBreakdown(intake);
+
+    appendLog(source +
+      (parts.length ? ' · ' + parts.join(' · ') : '') +
+      ' · ' + intake.sellers + ' seller(s) to read');
+  }
+
+  /** The same account, kept with the result so it survives a reload — the run log does not. */
+  function renderIntakeNote(result) {
+    const note = el('ps-intake-note');
+    const intake = result.intake;
+
+    if (!intake) {
+      note.hidden = true;
+      return;
+    }
+
+    let text = result.rows.length + ' of ' + intake.sellers + ' seller(s) read · ' +
+      result.withoutProducts.length + ' had no products · ' +
+      result.failed.length + ' could not be read.';
+
+    const parts = intakeBreakdown(intake);
+    if (parts.length) {
+      text += ' From ' + (intake.fileRows + intake.pastedLines) + ' submitted line(s): ' +
+        parts.join(', ') + '.';
+    }
+
+    // Worth spelling out: a column of broken VLOOKUPs arrives as "#N/A" and is dropped by the rule
+    // that exists for comments, which looks like data loss unless you know what it is.
+    if (intake.comments) {
+      text += ' Lines starting with # are read as comments — a spreadsheet error cell such as ' +
+        '#N/A is dropped the same way.';
+    }
+
+    note.hidden = false;
+    note.textContent = text;
+  }
+
   function renderResult(result) {
     if (!result) return;
+
+    // A filter typed during an earlier run is held per table and would otherwise still be applied
+    // here, quietly narrowing both this table and the Excel export taken from it.
+    RPA.resetDataTables();
+
+    // Older held results predate these fields; the notes below read them unconditionally.
+    result.withoutProducts = result.withoutProducts || [];
+    result.failed = result.failed || [];
 
     el('ps-results').hidden = false;
     RPA.setExportContext('Product status read from Mirakl on ' +
@@ -81,6 +176,17 @@
       result.rows,
       columnsFor(result.labels),
       'No seller returned any product statuses.');
+
+    renderIntakeNote(result);
+
+    // Read successfully, and their catalogue is empty. Named for the same reason as the failures:
+    // they are missing from the table, and a count that does not say why is a count nobody trusts.
+    const skipped = el('ps-skipped-note');
+    skipped.hidden = !result.withoutProducts.length;
+    skipped.textContent = result.withoutProducts.length
+      ? result.withoutProducts.length + ' seller(s) have no products and are not in the table: ' +
+        result.withoutProducts.join(', ')
+      : '';
 
     // Sellers that could not be read are named here rather than left as zero rows in the table —
     // "no products" and "could not be read" are different answers.
@@ -148,6 +254,7 @@
         el('ps-progress').classList.remove('is-done');
         setProgress(0);
         setRunning(true);
+        flushIntake();     // after the clear, so the account survives it
         break;
 
       case 'log':
@@ -329,7 +436,10 @@
       el('ps-run').hidden = false;
 
       try {
-        await RPA.postJson('/api/product-status/start', form);
+        // The acceptance carries the intake, and it is the only report the file path gets: the
+        // spreadsheet is parsed on the server, so nothing here could have counted its rows.
+        const accepted = await RPA.postJson('/api/product-status/start', form);
+        logIntake(accepted && accepted.intake);
       } catch (err) {
         RPA.showError('ps-alert', err.message);
         setRunning(false);

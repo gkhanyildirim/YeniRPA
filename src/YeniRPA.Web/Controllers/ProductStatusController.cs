@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using YeniRPA.Web.Models;
 using YeniRPA.Web.Services;
 using YeniRPA.Web.Services.Automation;
 
@@ -33,7 +34,7 @@ public sealed class ProductStatusController : ControllerBase
         [FromForm] string? sellers,
         CancellationToken cancellationToken)
     {
-        var names = new List<string>();
+        List<string>? fileRows = null;
 
         if (file is { Length: > 0 })
         {
@@ -52,40 +53,41 @@ public sealed class ProductStatusController : ControllerBase
             }
 
             // First row is a header, first column holds the names — the shape the source module read.
-            names.AddRange(table.Skip(1).Select(row => TabularFile.GetCell(row, 0)));
+            // The header is still here rather than already dropped, because the account has to say
+            // what was skipped: an operator whose file has no header only finds out by reading it back.
+            fileRows = [.. table.Select(row => TabularFile.GetCell(row, 0))];
         }
 
-        if (!string.IsNullOrWhiteSpace(sellers))
-            names.AddRange(sellers.Split('\n'));
-
-        var sellerNames = names
-            .Select(name => name.Trim())
-            .Where(name => name.Length > 0 && !name.StartsWith('#'))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+        var (sellerNames, intake) = ProductStatusIntake.ParseLines(fileRows, sellers);
 
         if (sellerNames.Count == 0)
         {
             return BadRequest(new
             {
-                error = "No seller names were found. Upload a file with the names in the first column, " +
-                        "or paste them below."
+                error = $"None of the {intake.FileRows + intake.PastedLines} submitted line(s) is a seller name. " +
+                        "Upload a file with the names in the first column, or paste them below."
             });
         }
 
         if (sellerNames.Count > ProductStatusRunner.MaxSellersPerRun)
         {
+            // Says both figures: the limit is checked after de-duplication, so "765 rows" and
+            // "512 sellers" are different numbers and quoting only the second one reads as a
+            // miscount to whoever is looking at the spreadsheet.
             return BadRequest(new
             {
-                error = $"{sellerNames.Count} sellers is over the {ProductStatusRunner.MaxSellersPerRun}-seller " +
-                        "limit for one run. Narrow the list and run it in batches."
+                error = $"{intake.FileRows + intake.PastedLines} submitted line(s) came to {sellerNames.Count} " +
+                        $"distinct sellers, over the {ProductStatusRunner.MaxSellersPerRun}-seller limit for " +
+                        "one run. Narrow the list and run it in batches."
             });
         }
 
-        if (!_runner.TryStart(sellerNames))
+        if (!_runner.TryStart(sellerNames, intake))
             return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });
 
-        return Ok(new { count = sellerNames.Count });
+        // The intake goes back with the acceptance: the file is parsed here, so this response is the
+        // browser's only chance to tell the operator that their 765 rows became 472 sellers.
+        return Ok(new { count = sellerNames.Count, intake });
     }
 
     /// <summary>The last run's table. 204 before anything has run — not an error, just nothing yet.</summary>

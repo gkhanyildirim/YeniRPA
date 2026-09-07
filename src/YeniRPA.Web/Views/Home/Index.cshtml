@@ -1700,6 +1700,11 @@
                 </div>
                 <div class="card">
                     <div class="table-scroll" id="ps-table"></div>
+                    @* Reconciles the table's row count with the list that was submitted: a
+                       spreadsheet of 765 rows can honestly produce 472 rows, and until these notes
+                       existed there was nothing on the page that said so. *@
+                    <p class="table-note" id="ps-intake-note" hidden></p>
+                    <p class="table-note" id="ps-skipped-note" hidden></p>
                     <p class="table-note" id="ps-failed-note" hidden></p>
                 </div>
             </div>

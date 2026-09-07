@@ -77,6 +77,37 @@ public class ProductStatusPivotTests
     }
 
     [Fact]
+    public void EverySellerThatRanIsInExactlyOneOfTheThreeBuckets()
+    {
+        // What makes the accounting on the page trustworthy: a seller is a row, or has no products,
+        // or could not be read. If these three do not add up to the list that ran, the report is
+        // claiming sellers vanished — which is the very thing it exists to rule out.
+        var submitted = new[] { "Read", "Empty", "Broken" };
+
+        var result = ProductStatusResult.FromRows(
+            submitted,
+            [new ProductStatusRow("Read", "Online", 5)],
+            ["Broken"],
+            ["Empty"],
+            ProductStatusIntake.ParseLines(["Seller", .. submitted], null).Intake);
+
+        Assert.Equal(
+            result.Intake.Sellers,
+            result.Rows.Count + result.WithoutProducts.Count + result.Failed.Count);
+    }
+
+    [Fact]
+    public void AResultBuiltWithoutAnAccountStillBalances()
+    {
+        // The three-argument overload the tests above use, and the paths that have nothing to
+        // reconcile, get an account where every submitted name is a seller.
+        var result = Pivot(["Seller A"], new ProductStatusRow("Seller A", "Online", 1));
+
+        Assert.Equal(1, result.Intake.Sellers);
+        Assert.Empty(result.WithoutProducts);
+    }
+
+    [Fact]
     public void AnEmptyScrapeProducesAnEmptyTableRatherThanThrowing()
     {
         var result = Pivot(["Seller A"]);
