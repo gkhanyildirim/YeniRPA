@@ -207,6 +207,28 @@ public sealed class ProductStatusRunner
             Timeout = 10_000
         });
 
+        // The dropdown renders with every count at "(0)" the instant it opens; the real figures land a
+        // moment later from a background call the page makes once the menu is shown. The "no products"
+        // branch above already returned if this seller has none, so at least one status here is genuinely
+        // non-zero — reading all zeroes means the figures have not landed yet, not that they are correct.
+        // Retried briefly before it is believed, the same reasoning WhatsAppMessageRunner.VerifyHeaderAsync
+        // applies to a header that renders a moment after the panel it sits in.
+        var rows = await ReadStatusItemsAsync(container, sellerName);
+        for (var attempt = 0; attempt < 9 && rows.Count > 0 && rows.All(r => r.Count == 0); attempt++)
+        {
+            await page.WaitForTimeoutAsync(300);
+            rows = await ReadStatusItemsAsync(container, sellerName);
+        }
+
+        if (rows.Count > 0 && rows.All(r => r.Count == 0))
+            _bus.Log($"  [{sellerName}] Status counts still read as zero after waiting — kept as read.");
+
+        return rows;
+    }
+
+    /// <summary>One read of the currently open status dropdown's "label (count)" items.</summary>
+    async Task<List<ProductStatusRow>> ReadStatusItemsAsync(ILocator container, string sellerName)
+    {
         // :not(.fa) drops the icon spans, which carry no text of their own.
         var items = container.Locator(".mui-suggestion-item span:not(.fa)");
         var itemCount = await items.CountAsync();
