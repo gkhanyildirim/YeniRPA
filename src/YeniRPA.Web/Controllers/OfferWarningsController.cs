@@ -277,8 +277,9 @@ public sealed class OfferWarningsController : ControllerBase
             addresses = SellerMailDirectory.Read(
                 stream,
                 directory.FileName,
-                // Blank means "this file is a purpose-built single-sheet list"; the onboarding workbook
-                // needs its sheet named because its first sheet holds no addresses at all.
+                // Only a hint: SellerMailDirectory finds the sheet that actually has the address
+                // columns regardless of what its tab is named, so a wrong or blank value here never
+                // fails the upload.
                 NullIfBlank(sheetName) ?? SellerMailDirectory.DefaultSheetName);
         }
 
@@ -293,19 +294,11 @@ public sealed class OfferWarningsController : ControllerBase
 
         // A folder per run. Last month's files can then never be picked up by this month's send, and
         // the operator can compare two runs without one having overwritten the other.
-        var folder = Path.Combine(
-            _store.ResolveOutputFolder(settings),
-            DateTime.Now.ToString("yyyy-MM-dd-HHmm"));
-
-        try
-        {
-            Directory.CreateDirectory(folder);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw new InvalidOperationException(
-                $"The output folder '{folder}' could not be created: {ex.Message}", ex);
-        }
+        var runFolderName = DateTime.Now.ToString("yyyy-MM-dd-HHmm");
+        var folder = OutputFolderCreator.Create(
+            Path.Combine(_store.ResolveOutputFolder(settings), runFolderName),
+            runFolderName,
+            _store.DefaultOutputFolder);
 
         var clashes = OfferSplitBuilder.FindFileNameClashes(split.Sellers);
 

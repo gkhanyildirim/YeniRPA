@@ -23,7 +23,8 @@ public class VatSplitBuilderTests
 
     static VatSellerGroup Group(string id, string name, int offers = 1) => new(
         id, name, VatSplitBuilder.SellerKey(id, name),
-        [.. Enumerable.Range(0, offers).Select(i => new VatOfferRow($"{i:D13}", "t", ""))]);
+        [.. Enumerable.Range(0, offers).Select(i => new VatOfferRow($"{i:D13}", "t", "", $"o{i}"))],
+        []);
 
     [Fact]
     public void OffersAreGroupedByTheSellerTheExportNames()
@@ -73,9 +74,11 @@ public class VatSplitBuilderTests
     public void AGtinIsPaddedToThirteenDigits(string cell, string expected)
     {
         Assert.Equal(expected, VatSplitBuilder.NormalizeGtin(cell));
-        Assert.Equal(
-            expected,
-            Read($"11835;Prodesk;o1;t;{cell};LEGO;VAT_RATE_MISSING\n").Sellers.Single().Offers.Single().Gtin);
+
+        // A blank GTIN never reaches Offers — it lands in NoGtinOffers instead, unmailed.
+        var seller = Read($"11835;Prodesk;o1;t;{cell};LEGO;VAT_RATE_MISSING\n").Sellers.Single();
+        var offer = expected.Length > 0 ? seller.Offers.Single() : seller.NoGtinOffers.Single();
+        Assert.Equal(expected, offer.Gtin);
     }
 
     /// <summary>
@@ -109,10 +112,17 @@ public class VatSplitBuilderTests
         Assert.Equal("0858445004684", Assert.Single(Assert.Single(result.Sellers).Offers).Gtin);
     }
 
-    /// <summary>Folding every barcode-less row onto one key would delete real products from the
-    /// seller's list, so those fall back to the title and brand.</summary>
+    /// <summary>
+    /// A GTIN-less row used to fall back to a title-and-brand key, on the theory that folding every
+    /// barcode-less row onto one key would delete real products from the seller's list. But the
+    /// mailed workbook writes only the GTIN column, so a GTIN-less row is never mailable regardless
+    /// of its title — and folding on a key that can itself be blank is exactly what let five
+    /// distinct, uncatalogued offers collapse into one blank line (see
+    /// <see cref="AllOffersWithNoGtinAndNoTitleAreKeptAsSeparateUnmailedRows"/>). GTIN-less rows are
+    /// never mailed and never folded now, whatever their title.
+    /// </summary>
     [Fact]
-    public void ProductsWithNoGtinAreNotCollapsedTogether()
+    public void ProductsWithNoGtinAreNeverMailedAndNeverFolded()
     {
         var result = Read(
             "11835;Prodesk;o1;LEGO Icons;;LEGO;VAT_RATE_MISSING\n" +
@@ -120,7 +130,64 @@ public class VatSplitBuilderTests
             "11835;Prodesk;o3;LEGO Icons;;LEGO;VAT_RATE_MISSING\n");
 
         var seller = Assert.Single(result.Sellers);
-        Assert.Equal(["LEGO Icons", "LEGO Optimus"], seller.Offers.Select(o => o.ProductTitle));
+        Assert.Empty(seller.Offers);
+        Assert.Equal(["o1", "o2", "o3"], seller.NoGtinOffers.Select(o => o.OfferId));
+    }
+
+    /// <summary>
+    /// <b>The real bug this fixes.</b> "Pierre Cardin Electronics and Beauty" had 5 offers flagged
+    /// <c>VAT_RATE_MISSING</c>, every one of them with a blank GTIN, title and brand (Mirakl marks
+    /// their catalogue data as "Missing"). The old title-and-brand fallback key was identically blank
+    /// for all 5, so 4 were silently folded away and the mailed workbook carried one line with
+    /// nothing in it. Every one of the 5 must now survive, distinctly, in <c>NoGtinOffers</c> — and
+    /// none may end up in <c>Offers</c>, or the seller would be mailed a blank row again.
+    /// </summary>
+    [Fact]
+    public void AllOffersWithNoGtinAndNoTitleAreKeptAsSeparateUnmailedRows()
+    {
+        var result = Read(
+            "12988;Pierre Cardin Electronics and Beauty;1844727750;;;;VAT_RATE_MISSING\n" +
+            "12988;Pierre Cardin Electronics and Beauty;1844727753;;;;VAT_RATE_MISSING\n" +
+            "12988;Pierre Cardin Electronics and Beauty;1844727749;;;;VAT_RATE_MISSING\n" +
+            "12988;Pierre Cardin Electronics and Beauty;1844736204;;;;VAT_RATE_MISSING\n" +
+            "12988;Pierre Cardin Electronics and Beauty;1844727752;;;;VAT_RATE_MISSING\n");
+
+        var seller = Assert.Single(result.Sellers);
+        Assert.Empty(seller.Offers);
+        Assert.Equal(5, seller.NoGtinOffers.Count);
+        Assert.Equal(
+            ["1844727750", "1844727753", "1844727749", "1844736204", "1844727752"],
+            seller.NoGtinOffers.Select(o => o.OfferId));
+    }
+
+    /// <summary>A seller with a mix of GTIN-bearing and GTIN-less offers still gets the GTIN-bearing
+    /// ones mailed; only the GTIN-less ones are set aside.</summary>
+    [Fact]
+    public void AMixOfGtinAndNoGtinOffersSplitsBetweenTheTwoLists()
+    {
+        var result = Read(
+            "11835;Prodesk;o1;LEGO Icons;5702017829159;LEGO;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;o2;;;;VAT_RATE_MISSING\n" +
+            "11835;Prodesk;o3;;;;VAT_RATE_MISSING\n");
+
+        var seller = Assert.Single(result.Sellers);
+        Assert.Equal("5702017829159", Assert.Single(seller.Offers).Gtin);
+        Assert.Equal(["o2", "o3"], seller.NoGtinOffers.Select(o => o.OfferId));
+    }
+
+    /// <summary>Two different sellers offering the same GTIN both keep it — deduplication happens
+    /// inside one seller's own list, never across sellers, so neither one's mail loses a product to
+    /// the other's.</summary>
+    [Fact]
+    public void TwoDifferentSellersSharingAGtinBothKeepIt()
+    {
+        var result = Read(
+            "11835;Prodesk;o1;Shared Product;5702017829159;LEGO;VAT_RATE_MISSING\n" +
+            "11476;BL Müzik;o2;Shared Product;5702017829159;LEGO;VAT_RATE_MISSING\n");
+
+        Assert.Equal(2, result.Sellers.Count);
+        foreach (var seller in result.Sellers)
+            Assert.Equal("5702017829159", Assert.Single(seller.Offers).Gtin);
     }
 
     /// <summary>The seller id identifies the row, so a mid-month storefront rename is one seller, not
@@ -300,7 +367,7 @@ public class VatSplitBuilderTests
     {
         // Same id, different case in the name — one file on Windows.
         var a = Group("10001", "Prodesk");
-        var b = new VatSellerGroup("10001", "PRODESK", "name:prodesk-2", a.Offers);
+        var b = new VatSellerGroup("10001", "PRODESK", "name:prodesk-2", a.Offers, []);
 
         var clashes = VatSplitBuilder.FindFileNameClashes([a, b]);
 

@@ -69,7 +69,8 @@ public static partial class VatMailBuilder
         string? subjectTemplate,
         string? bodyTemplate,
         string matchedBy,
-        string? problem)
+        string? problem,
+        string? noGtinNotice = null)
     {
         ArgumentNullException.ThrowIfNull(seller);
         ArgumentNullException.ThrowIfNull(recipients);
@@ -98,6 +99,7 @@ public static partial class VatMailBuilder
             OfferCount: seller.Offers.Count,
             MatchedBy: matchedBy,
             Problem: problem,
+            NoGtinNotice: noGtinNotice,
             UnknownPlaceholders: FindUnknown(subject, body));
     }
 

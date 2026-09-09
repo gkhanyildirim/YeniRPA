@@ -150,4 +150,33 @@ public class SellerMailDirectoryTests
 
         Assert.Contains("Mail", error.Message);
     }
+
+    /// <summary>
+    /// The onboarding workbook's sheet is often renamed or retyped by hand, and none of that is
+    /// under the operator's control the way the column headers are. So the sheet name given (or the
+    /// "Data" default) is only a hint: the address sheet is found by its Mail column, wherever it
+    /// actually lives.
+    /// </summary>
+    [Fact]
+    public void AnAddressSheetIsFoundRegardlessOfItsName()
+    {
+        using var workbook = new ClosedXML.Excel.XLWorkbook();
+        workbook.AddWorksheet("Onboarding Funnel").Cell(1, 1).Value = "Convert Tarihi";
+
+        var addressSheet = workbook.AddWorksheet("Sayfa1");
+        addressSheet.Cell(1, 1).Value = "Satıcı";
+        addressSheet.Cell(1, 2).Value = "Mail";
+        addressSheet.Cell(2, 1).Value = "Prodesk";
+        addressSheet.Cell(2, 2).Value = "info@prodesk.com";
+
+        using var buffer = new MemoryStream();
+        workbook.SaveAs(buffer);
+        buffer.Position = 0;
+
+        // "Data" is the settings panel's default hint; the real sheet is named "Sayfa1" here.
+        var directory = SellerMailDirectory.Read(buffer, "onboarding.xlsx", "Data");
+
+        Assert.Equal(1, directory.RowCount);
+        Assert.Equal("info@prodesk.com", directory.Find("", "Prodesk").Email);
+    }
 }

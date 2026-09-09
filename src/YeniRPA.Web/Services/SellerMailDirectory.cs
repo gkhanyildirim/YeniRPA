@@ -17,8 +17,10 @@ public readonly record struct DirectoryMatch(string? Email, string? Problem);
 /// </summary>
 public sealed class SellerMailDirectory
 {
-    /// <summary>The sheet the onboarding workbook keeps addresses on. Its first sheet is a funnel
-    /// summary with no address column at all, so the name is not optional there.</summary>
+    /// <summary>The sheet the onboarding workbook has historically kept addresses on — used only as
+    /// a hint. Its first sheet is a funnel summary with no address column at all, but the sheet is
+    /// found by looking for the <see cref="EmailHeaders"/> column, not by requiring this exact
+    /// name.</summary>
     public const string DefaultSheetName = "Data";
 
     static readonly string[] SellerNameHeaders =
@@ -59,12 +61,20 @@ public sealed class SellerMailDirectory
     public IReadOnlyList<string> Warnings { get; }
 
     /// <summary>
-    /// Reads the address list. <paramref name="sheetName"/> selects the sheet in a multi-sheet
-    /// workbook; null or blank reads the first, which is what a purpose-built single-sheet list wants.
+    /// Reads the address list. <paramref name="sheetName"/> is only a hint for a multi-sheet
+    /// workbook: the sheet that actually has the <see cref="EmailHeaders"/> column is used
+    /// regardless of what its tab is named, so a renamed or retyped sheet name never fails the
+    /// upload — CSV has exactly one table and ignores it.
     /// </summary>
     public static SellerMailDirectory Read(Stream stream, string fileName, string? sheetName)
     {
-        var table = TabularFile.Read(stream, fileName, sheetName);
+        var isXlsx = fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ||
+                     fileName.EndsWith(".xls", StringComparison.OrdinalIgnoreCase);
+
+        var table = isXlsx
+            ? TabularFile.ReadXlsxAnySheetWithColumn(stream, sheetName, EmailHeaders)
+            : TabularFile.Read(stream, fileName, sheetName);
+
         if (table.Count == 0)
             throw new InvalidOperationException("The seller address list is empty.");
 

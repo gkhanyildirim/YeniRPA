@@ -162,7 +162,8 @@ public static class VatSplitBuilder
             builder.Add(new VatOfferRow(
                 Gtin: NormalizeGtin(TabularFile.GetCell(row, cGtin)),
                 ProductTitle: title,
-                Brand: TabularFile.GetCell(row, cBrand).Trim()));
+                Brand: TabularFile.GetCell(row, cBrand).Trim(),
+                OfferId: offerId));
 
             builder.SeeName(name);
         }
@@ -172,7 +173,8 @@ public static class VatSplitBuilder
                 SellerId: groups[key].SellerId,
                 SellerName: groups[key].SellerName,
                 SellerKey: key,
-                Offers: groups[key].Offers))
+                Offers: groups[key].Offers,
+                NoGtinOffers: groups[key].NoGtinOffers))
             .ToList();
 
         var warnings = new List<string>();
@@ -357,27 +359,38 @@ public static class VatSplitBuilder
         /// <summary>Other spellings the export used for the same seller, for the warning.</summary>
         public List<string> OtherNames { get; } = [];
 
+        /// <summary>Offers with a real GTIN — what actually reaches the mailed workbook.</summary>
         public List<VatOfferRow> Offers { get; } = [];
 
+        /// <summary>Offers with no GTIN at all. Never mailed and never folded into one another: with
+        /// no GTIN to compare, there is no reliable way to tell two such rows apart, so every one is
+        /// kept exactly as it came — see <see cref="VatMailModels.VatSellerGroup.NoGtinOffers"/>.</summary>
+        public List<VatOfferRow> NoGtinOffers { get; } = [];
+
         /// <summary>What is already in <see cref="Offers"/>, so the same product is not listed twice.</summary>
-        readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+        readonly HashSet<string> _seenGtin = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
-        /// Adds a product unless this seller already has it. A seller can hold two offers on one
-        /// product; the attachment no longer carries the offer number that would tell those two lines
-        /// apart, so a second identical line would read as a mistake in our file rather than as two
-        /// offers. The first row seen wins.
+        /// Adds a product. A seller can hold two offers on one product; the attachment no longer
+        /// carries the offer number that would tell those two lines apart, so a second offer with the
+        /// same GTIN would read as a mistake in our file rather than as two offers — the first row
+        /// seen wins.
         ///
-        /// <para>Rows with no GTIN fall back to title and brand — folding every barcode-less product
-        /// onto one key would delete real products from the seller's list.</para>
+        /// <para>A row with no GTIN goes to <see cref="NoGtinOffers"/> instead. This used to fall back
+        /// to a title-and-brand key so barcode-less products would not delete one another — but the
+        /// workbook writes only the GTIN column (see <see cref="VatOfferRow"/>), so a GTIN-less row is
+        /// never mailable regardless of its title, and folding on a key that can itself be blank is
+        /// what let five distinct, uncatalogued offers collapse into a single blank line.</para>
         /// </summary>
         public void Add(VatOfferRow offer)
         {
-            var key = offer.Gtin.Length > 0
-                ? "gtin:" + offer.Gtin
-                : $"name:{offer.ProductTitle}{offer.Brand}";
+            if (offer.Gtin.Length == 0)
+            {
+                NoGtinOffers.Add(offer);
+                return;
+            }
 
-            if (_seen.Add(key))
+            if (_seenGtin.Add(offer.Gtin))
                 Offers.Add(offer);
         }
 

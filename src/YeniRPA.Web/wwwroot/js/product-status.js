@@ -179,12 +179,13 @@
 
     renderIntakeNote(result);
 
-    // Read successfully, and their catalogue is empty. Named for the same reason as the failures:
-    // they are missing from the table, and a count that does not say why is a count nobody trusts.
+    // No match in Mirakl and a real seller with an empty catalogue read the same way here, so both
+    // show as a zero row in the table below. Named anyway, so a row of zeroes reads as "not found /
+    // no products" instead of looking like a real, verified zero count.
     const skipped = el('ps-skipped-note');
     skipped.hidden = !result.withoutProducts.length;
     skipped.textContent = result.withoutProducts.length
-      ? result.withoutProducts.length + ' seller(s) have no products and are not in the table: ' +
+      ? result.withoutProducts.length + ' seller(s) have no products in Mirakl and show as 0 in the table: ' +
         result.withoutProducts.join(', ')
       : '';
 

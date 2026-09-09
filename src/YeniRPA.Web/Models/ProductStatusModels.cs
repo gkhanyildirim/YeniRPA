@@ -123,13 +123,16 @@ public sealed record ProductStatusIntake(
 /// scraper so it can be tested without a browser.</para>
 ///
 /// <para>Three of the fields exist so the table's row count can be reconciled with what was asked for.
-/// A seller is in exactly one of <see cref="Rows"/>, <see cref="WithoutProducts"/> and
-/// <see cref="Failed"/>, and <see cref="Intake"/> says how the submitted lines became that set of
-/// sellers in the first place.</para>
+/// Every submitted seller is in <see cref="Rows"/> or in <see cref="Failed"/> — never both — and
+/// <see cref="WithoutProducts"/> names which of the <see cref="Rows"/> are a zero row rather than a
+/// real read. <see cref="Intake"/> says how the submitted lines became that set of sellers in the
+/// first place.</para>
 /// </summary>
-/// <param name="WithoutProducts">Sellers that were read successfully and have an empty catalogue.
-/// They are not rows — a seller with nothing to report and a seller with zero online offers are
-/// different answers — but they used to vanish without being named anywhere.</param>
+/// <param name="WithoutProducts">Sellers that were read successfully and have an empty catalogue —
+/// no match in Mirakl's own provider filter is indistinguishable, from here, from a real seller with
+/// nothing in it. They still get a row, all zeroes, so the table accounts for every seller that was
+/// asked for; this list is what lets the page say why a given row is all zeroes instead of a real
+/// count.</param>
 public sealed record ProductStatusResult(
     DateTimeOffset CompletedUtc,
     IReadOnlyList<string> Labels,
@@ -143,9 +146,11 @@ public sealed record ProductStatusResult(
     ///
     /// <para><paramref name="sellerNames"/> is the list the operator submitted, and it — not the scrape
     /// — decides the row order, so the table reads back in the order it was asked for. A seller that
-    /// returned nothing (no products, or a failure) is left out rather than shown as a row of zeros:
-    /// zero online offers and "we could not read this seller" are different answers, and the failure
-    /// list is where the second one is reported.</para>
+    /// was read but had no products (<paramref name="withoutProducts"/>) still gets a row, all zeroes
+    /// — no match in Mirakl and a real seller with zero online offers are indistinguishable to this
+    /// module, and either way the table should account for a seller that was asked for. A seller the
+    /// scrape could not read at all (<paramref name="failed"/>) is left out instead: that is not a
+    /// count, zero or otherwise, and the failure list is where it is reported.</para>
     ///
     /// <para>Columns follow the order the labels were first encountered, which is the order Mirakl's own
     /// dropdown lists them in.</para>
@@ -183,15 +188,26 @@ public sealed record ProductStatusResult(
                       .ToDictionary(l => l.Key, l => l.Last().Count, StringComparer.Ordinal),
                 StringComparer.Ordinal);
 
+        var withoutProductsSet = new HashSet<string>(withoutProducts ?? [], StringComparer.Ordinal);
+
         var pivot = new List<ProductStatusPivotRow>();
         foreach (var seller in sellerNames)
         {
-            if (!bySeller.TryGetValue(seller, out var counts))
-                continue;
-
-            pivot.Add(new ProductStatusPivotRow(
-                seller,
-                [.. labels.Select(label => counts.GetValueOrDefault(label, 0))]));
+            if (bySeller.TryGetValue(seller, out var counts))
+            {
+                pivot.Add(new ProductStatusPivotRow(
+                    seller,
+                    [.. labels.Select(label => counts.GetValueOrDefault(label, 0))]));
+            }
+            else if (withoutProductsSet.Contains(seller))
+            {
+                // No match in Mirakl's provider filter and a real seller with an empty catalogue read
+                // the same way here — see the type's doc comment — so both get a zero row rather than
+                // vanishing from the table.
+                pivot.Add(new ProductStatusPivotRow(seller, [.. labels.Select(_ => 0)]));
+            }
+            // Neither a scraped row nor a known-empty seller — e.g. a failed read — is left out; see
+            // the "Failed" branch of FromRows' doc comment.
         }
 
         return new ProductStatusResult(

@@ -20,10 +20,12 @@ namespace YeniRPA.Web.Models;
 /// product-lifecycle columns are read out of no row at all: a column that never enters this record
 /// cannot be written into a file that leaves the building.</para>
 ///
-/// <para>Only <paramref name="Gtin"/> reaches the attachment. <paramref name="ProductTitle"/> and
-/// <paramref name="Brand"/> stay on this record because the grouping needs them — a row with no
-/// barcode is told apart from another by its title and brand, and an export with no
-/// <c>Product Title</c> column is refused as the wrong file.</para>
+/// <para>Only <paramref name="Gtin"/> reaches the attachment — see <c>VatSellerWorkbook</c>, which
+/// writes a single GTIN column. <paramref name="ProductTitle"/> and <paramref name="Brand"/> are
+/// informational only; an export with no <c>Product Title</c> column is still refused as the wrong
+/// file. <paramref name="OfferId"/> is never written either — it exists purely so a GTIN-less offer
+/// (see <c>VatSplitBuilder.Builder.NoGtinOffers</c>) can be named to the operator instead of just
+/// vanishing.</para>
 ///
 /// <para><paramref name="Gtin"/> is the export's <c>gtin</c> column padded to 13 digits — see
 /// <c>VatSplitBuilder.NormalizeGtin</c> for why it arrives short.</para>
@@ -31,7 +33,8 @@ namespace YeniRPA.Web.Models;
 public sealed record VatOfferRow(
     string Gtin,
     string ProductTitle,
-    string Brand);
+    string Brand,
+    string OfferId);
 
 /// <summary>Every product belonging to one seller, as grouped out of the export. One row per
 /// product: the same GTIN offered twice is one line, because the file no longer carries the offer
@@ -44,7 +47,15 @@ public sealed record VatSellerGroup(
     /// otherwise. The same precedence <c>SellerGroupMap.Resolve</c> applies.</summary>
     string SellerKey,
 
-    IReadOnlyList<VatOfferRow> Offers);
+    /// <summary>Offers with a real GTIN — what actually reaches the mailed workbook.</summary>
+    IReadOnlyList<VatOfferRow> Offers,
+
+    /// <summary>Offers with no GTIN at all. Never mailed — the workbook writes only the GTIN
+    /// column, so a GTIN-less row would be a blank cell under a header — and never folded into one
+    /// another: with no GTIN to compare, there is no reliable way to tell two such rows apart, and
+    /// pretending otherwise is exactly the bug this list exists to avoid (five distinct, uncatalogued
+    /// offers collapsing into one blank line).</summary>
+    IReadOnlyList<VatOfferRow> NoGtinOffers);
 
 /// <summary>
 /// One seller's mail, as it will be sent. Subject and body are the exact text — the preview, the
@@ -80,6 +91,12 @@ public sealed record VatSellerMail(
     /// <summary>Why this seller cannot be mailed, or <c>null</c> when they are ready.</summary>
     [property: JsonPropertyName("problem")] string? Problem,
 
+    /// <summary>Not a blocking problem — this seller may still be sent, with whatever offers do
+    /// have a GTIN. Set alongside a normal ready/problem status when one or more of this seller's
+    /// flagged offers had no GTIN and were left out of the file, naming their offer ids so the
+    /// operator sees the count did not just come up short with no explanation.</summary>
+    [property: JsonPropertyName("noGtinNotice")] string? NoGtinNotice,
+
     /// <summary>Placeholders the operator typed that we do not recognise, so the panel can point at
     /// the typo instead of shipping "Sayın ," to a seller.</summary>
     [property: JsonPropertyName("unknownPlaceholders")] IReadOnlyList<string> UnknownPlaceholders);
@@ -111,6 +128,12 @@ public sealed record VatFunnel(
     /// <summary>Fewer products than the operator's minimum. Their workbook is not written and no mail
     /// is prepared for them — the one bucket in this funnel that is a choice rather than a fault.</summary>
     [property: JsonPropertyName("belowMinimum")] int BelowMinimum,
+
+    /// <summary>Every one of this seller's flagged offers is missing a GTIN in the export — a data
+    /// problem in Mirakl's own catalogue, not something fixable here. Their workbook is not written
+    /// and no mail is prepared; the offer ids are named on the seller's card so the gap can be
+    /// chased there.</summary>
+    [property: JsonPropertyName("noGtin")] int NoGtin,
 
     [property: JsonPropertyName("noEmail")] int NoEmail,
     [property: JsonPropertyName("invalidEmail")] int InvalidEmail,

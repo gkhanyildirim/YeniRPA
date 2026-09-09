@@ -514,6 +514,7 @@
       { label: 'Sellers in the export', count: funnel.sellersInFile },
       { label: 'Ready to send', count: funnel.ready },
       { label: 'Under the minimum product count', count: funnel.belowMinimum },
+      { label: 'No GTIN on any product — not mailed', count: funnel.noGtin },
       { label: 'No address for this seller', count: funnel.noEmail },
       { label: 'An address does not look valid', count: funnel.invalidEmail },
       { label: 'Address list gives two different addresses', count: funnel.ambiguousEmail },
@@ -596,7 +597,9 @@
       '<div class="msg-head">' +
         head +
         '<span class="msg-meta">✉ ' + to + copy + ' · 📎 ' + attachment +
-          ' · ' + RPA.fmtInt(mail.offerCount) + ' product(s)' + source + signed + '</span>' +
+          ' · ' + RPA.fmtInt(mail.offerCount) + ' product(s)' + source + signed +
+          (!broken && mail.noGtinNotice ? ' · ⚠ ' + RPA.escapeHtml(mail.noGtinNotice) : '') +
+        '</span>' +
         '<button type="button" class="btn btn-ghost btn-sm vw-toggle" aria-controls="' + bodyId + '"' +
           ' aria-expanded="' + (open ? 'true' : 'false') + '">' +
           '<span class="spinner" aria-hidden="true"></span>' +

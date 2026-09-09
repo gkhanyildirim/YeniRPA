@@ -11,7 +11,8 @@ public class VatMailBuilderTests
 {
     static VatSellerGroup Seller(string id, string name, int offers = 1) => new(
         id, name, VatSplitBuilder.SellerKey(id, name),
-        [.. Enumerable.Range(0, offers).Select(i => new VatOfferRow($"{i:D13}", "t", ""))]);
+        [.. Enumerable.Range(0, offers).Select(i => new VatOfferRow($"{i:D13}", "t", "", $"o{i}"))],
+        []);
 
     static VatSellerMail Render(
         VatSellerGroup seller,
@@ -135,5 +136,20 @@ public class VatMailBuilderTests
             Seller("11835", "Prodesk", 1), ["a@b.com"], "f.xlsx", 0, "2026-08-24", null, null, "override", null);
 
         Assert.Equal("override", mail.MatchedBy);
+    }
+
+    /// <summary>Non-blocking: a seller can carry a GTIN-less-offers notice while still being ready
+    /// to send — the notice and the problem are independent fields.</summary>
+    [Fact]
+    public void TheNoGtinNoticeIsCarriedThroughWithoutBlockingTheMail()
+    {
+        var mail = VatMailBuilder.Render(
+            Seller("11835", "Prodesk", 1), ["a@b.com"], "f.xlsx", 0, "2026-08-24", null, null, "directory", null,
+            noGtinNotice: "2 product(s) with no GTIN were left out of this file. Offer id(s): o1, o2.");
+
+        Assert.Null(mail.Problem);
+        Assert.Equal(
+            "2 product(s) with no GTIN were left out of this file. Offer id(s): o1, o2.",
+            mail.NoGtinNotice);
     }
 }

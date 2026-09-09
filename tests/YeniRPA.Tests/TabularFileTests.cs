@@ -157,6 +157,46 @@ public class TabularFileTests
         Assert.Equal(["Mail"], TabularFile.Read(buffer, "x.xlsx", "Data")[0]);
     }
 
+    /// <summary>
+    /// The sheet name is only a hint for this reader: a workbook whose address sheet was renamed
+    /// away from "Data" (or was never named that) is still read correctly, because the sheet that
+    /// actually has the Mail column is found regardless of what the hint says.
+    /// </summary>
+    [Fact]
+    public void AWrongOrUnmatchedSheetNameStillFindsTheColumn()
+    {
+        using var stream = TwoSheetWorkbook();
+        var table = TabularFile.ReadXlsxAnySheetWithColumn(stream, "Adresler", ["Mail"]);
+
+        Assert.Equal(["Satıcı", "Mail"], table[0]);
+        Assert.Equal(["Prodesk", "info@prodesk.com"], table[1]);
+    }
+
+    /// <summary>No hint at all reads the same way — every sheet is tried until one has the column.</summary>
+    [Fact]
+    public void NoSheetNameHintStillFindsTheColumn()
+    {
+        using var stream = TwoSheetWorkbook();
+        var table = TabularFile.ReadXlsxAnySheetWithColumn(stream, null, ["Mail"]);
+
+        Assert.Equal(["Satıcı", "Mail"], table[0]);
+    }
+
+    /// <summary>Only when no sheet anywhere has the column does this refuse the file, naming the
+    /// sheets that are actually there.</summary>
+    [Fact]
+    public void NoMatchingColumnOnAnySheetListsWhatTheWorkbookHolds()
+    {
+        using var stream = TwoSheetWorkbook();
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => TabularFile.ReadXlsxAnySheetWithColumn(stream, null, ["Telefon"]));
+
+        Assert.Contains("Telefon", error.Message);
+        Assert.Contains("Onboarding Funnel", error.Message);
+        Assert.Contains("Data", error.Message);
+    }
+
     static MemoryStream TwoSheetWorkbook()
     {
         using var workbook = new ClosedXML.Excel.XLWorkbook();

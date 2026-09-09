@@ -169,9 +169,11 @@ and read the `EAN` column as the lead time.
 
 ### Where the addresses come from
 
-The **Onboarding Check List** workbook, on the sheet named `Data` — its first sheet is a funnel
-summary with no address column at all, which is why the sheet has to be named and why a wrong name is
-refused with the real sheet list rather than silently falling back to sheet one.
+The **Onboarding Check List** workbook, normally on a sheet named `Data` — its first sheet is a
+funnel summary with no address column at all. The sheet name is only a hint: the reader tries every
+sheet in the workbook and uses whichever one actually has the `Mail` column, so a renamed tab or a
+blank/wrong hint never fails the upload. Only a workbook with no `Mail` column on any sheet is
+refused, with the real sheet list named.
 
 `SellerMailDirectory` indexes it by seller id and by folded name, and **matches on nothing else**. A
 key that appears twice with two different addresses is poisoned rather than resolved — picking one

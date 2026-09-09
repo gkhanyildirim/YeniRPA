@@ -53,15 +53,32 @@ public class ProductStatusPivotTests
     }
 
     [Fact]
-    public void ASellerThatReturnedNothingIsLeftOutRatherThanShownAsZeros()
+    public void ASellerNotAccountedForInAnyBucketIsLeftOut()
     {
-        // "No products" and "could not be read" both produce no rows; neither is the same claim as a
-        // catalogue of zero online offers, so neither gets a row.
+        // A seller that is neither a scraped row nor named in withoutProducts (the 3-argument overload
+        // passes none) cannot be told apart from a failed read, so it is left out rather than guessed
+        // at as a zero.
         var result = Pivot(
             ["Seller A", "Empty Seller"],
             new ProductStatusRow("Seller A", "Online", 5));
 
         Assert.Equal(["Seller A"], result.Rows.Select(r => r.SellerName));
+    }
+
+    [Fact]
+    public void ASellerWithoutProductsInMiraklGetsAZeroRow()
+    {
+        // No match in Mirakl's provider filter and a real seller with an empty catalogue are the same
+        // thing to this module, so a seller named in withoutProducts still gets a row — all zeroes —
+        // instead of vanishing from the table and the Excel export taken from it.
+        var result = ProductStatusResult.FromRows(
+            ["Seller A", "Empty Seller"],
+            [new ProductStatusRow("Seller A", "Online", 5), new ProductStatusRow("Seller A", "Taslak", 2)],
+            [],
+            ["Empty Seller"]);
+
+        Assert.Equal(["Seller A", "Empty Seller"], result.Rows.Select(r => r.SellerName));
+        Assert.Equal([0, 0], result.Rows.Single(r => r.SellerName == "Empty Seller").Counts);
     }
 
     [Fact]
@@ -77,11 +94,13 @@ public class ProductStatusPivotTests
     }
 
     [Fact]
-    public void EverySellerThatRanIsInExactlyOneOfTheThreeBuckets()
+    public void EverySubmittedSellerIsARowOrAFailureNeverBoth()
     {
-        // What makes the accounting on the page trustworthy: a seller is a row, or has no products,
-        // or could not be read. If these three do not add up to the list that ran, the report is
-        // claiming sellers vanished — which is the very thing it exists to rule out.
+        // What makes the accounting on the page trustworthy: a seller is a row (real counts, or zero
+        // because withoutProducts says so) or it could not be read. If these two do not add up to the
+        // list that ran, the report is claiming sellers vanished — which is the very thing it exists
+        // to rule out. WithoutProducts is not a third bucket any more: it is a note on which rows are
+        // zero rather than a real read, so it is a subset of Rows, not additional to it.
         var submitted = new[] { "Read", "Empty", "Broken" };
 
         var result = ProductStatusResult.FromRows(
@@ -91,9 +110,11 @@ public class ProductStatusPivotTests
             ["Empty"],
             ProductStatusIntake.ParseLines(["Seller", .. submitted], null).Intake);
 
-        Assert.Equal(
-            result.Intake.Sellers,
-            result.Rows.Count + result.WithoutProducts.Count + result.Failed.Count);
+        Assert.Equal(result.Intake.Sellers, result.Rows.Count + result.Failed.Count);
+        Assert.Contains("Empty", result.Rows.Select(r => r.SellerName));
+        Assert.All(
+            result.Rows.Single(r => r.SellerName == "Empty").Counts,
+            count => Assert.Equal(0, count));
     }
 
     [Fact]

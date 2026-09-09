@@ -248,8 +248,9 @@ public sealed class VatWarningsController : ControllerBase
             addresses = SellerMailDirectory.Read(
                 stream,
                 directory.FileName,
-                // Blank means "this file is a purpose-built single-sheet list"; the onboarding workbook
-                // needs its sheet named because its first sheet holds no addresses at all.
+                // Only a hint: SellerMailDirectory finds the sheet that actually has the address
+                // columns regardless of what its tab is named, so a wrong or blank value here never
+                // fails the upload.
                 NullIfBlank(sheetName) ?? SellerMailDirectory.DefaultSheetName);
         }
 
@@ -268,19 +269,11 @@ public sealed class VatWarningsController : ControllerBase
 
         // A folder per run. Last month's files can then never be picked up by this month's send, and
         // the operator can compare two runs without one having overwritten the other.
-        var folder = Path.Combine(
-            _store.ResolveOutputFolder(settings),
-            DateTime.Now.ToString("yyyy-MM-dd-HHmm"));
-
-        try
-        {
-            Directory.CreateDirectory(folder);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw new InvalidOperationException(
-                $"The output folder '{folder}' could not be created: {ex.Message}", ex);
-        }
+        var runFolderName = DateTime.Now.ToString("yyyy-MM-dd-HHmm");
+        var folder = OutputFolderCreator.Create(
+            Path.Combine(_store.ResolveOutputFolder(settings), runFolderName),
+            runFolderName,
+            _store.DefaultOutputFolder);
 
         var clashes = VatSplitBuilder.FindFileNameClashes(split.Sellers);
 
@@ -288,7 +281,7 @@ public sealed class VatWarningsController : ControllerBase
         var unmatched = new List<VatUnmatchedSeller>();
         var batchMails = new List<VatBatchMail>();
 
-        int ready = 0, belowMinimum = 0, noEmail = 0, invalidEmail = 0, ambiguousEmail = 0,
+        int ready = 0, belowMinimum = 0, noGtin = 0, noEmail = 0, invalidEmail = 0, ambiguousEmail = 0,
             fileNameClash = 0, writeFailed = 0;
 
         foreach (var seller in split.Sellers)
@@ -296,10 +289,12 @@ public sealed class VatWarningsController : ControllerBase
             var fileName = VatSplitBuilder.FileNameFor(seller);
 
             string? problem = null;
+            string? noGtinNotice = null;
             var matchedBy = "";
             IReadOnlyList<string> recipients = [];
             long size = 0;
             var underMinimum = false;
+            var allNoGtin = false;
 
             if (clashes.Contains(seller.SellerKey))
             {
@@ -311,6 +306,23 @@ public sealed class VatWarningsController : ControllerBase
                 problem = $"'{fileName}' is also another seller's file name. Neither seller is mailed — " +
                           "give one of them a distinct name in the export.";
                 fileNameClash++;
+            }
+            else if (seller.Offers.Count == 0)
+            {
+                // Every offer this seller has is missing a GTIN, and the workbook writes only the
+                // GTIN column — a file built from these would be nothing but blank cells under a
+                // header. Nothing is written and nothing is mailed; the offers are named here so an
+                // operator can chase the missing catalogue data in Mirakl instead of the seller just
+                // going quiet.
+                //
+                // Checked before the minimum for the same reason as fileNameClash: at the default
+                // minimum of 0, "0 products" does not trip the belowMinimum branch below, which would
+                // otherwise write and mail a completely empty file.
+                problem = $"{seller.NoGtinOffers.Count:N0} product(s) with '{VatSplitBuilder.VatRateMissing}' " +
+                          "have no GTIN in the export, so none can be listed for this seller. Not mailed. " +
+                          $"Offer id(s): {FormatOfferIds(seller.NoGtinOffers)}.";
+                allNoGtin = true;
+                noGtin++;
             }
             else if (seller.Offers.Count < minimum)
             {
@@ -380,10 +392,19 @@ public sealed class VatWarningsController : ControllerBase
                         ready++;
                     }
                 }
+
+                // Not a blocking problem — this seller is still mailed, with whatever offers do have
+                // a GTIN. Named so the operator sees a few of the flagged offers were left out rather
+                // than the count just coming up short with no explanation.
+                if (seller.NoGtinOffers.Count > 0)
+                {
+                    noGtinNotice = $"{seller.NoGtinOffers.Count:N0} product(s) with no GTIN were left " +
+                                   $"out of this file. Offer id(s): {FormatOfferIds(seller.NoGtinOffers)}.";
+                }
             }
 
             var mail = VatMailBuilder.Render(
-                seller, recipients, fileName, size, date, subject, body, matchedBy, problem);
+                seller, recipients, fileName, size, date, subject, body, matchedBy, problem, noGtinNotice);
 
             mails.Add(mail);
 
@@ -397,11 +418,11 @@ public sealed class VatWarningsController : ControllerBase
                     AttachmentPath: Path.Combine(folder, fileName),
                     AttachmentName: fileName));
             }
-            else if (matchedBy.Length == 0 && !clashes.Contains(seller.SellerKey) && !underMinimum)
+            else if (matchedBy.Length == 0 && !clashes.Contains(seller.SellerKey) && !underMinimum && !allNoGtin)
             {
                 // The editable list: sellers whose file is ready and waiting on nothing but an address.
-                // A seller under the threshold is not waiting on anything, so entering an address for
-                // them would answer a question nobody asked.
+                // A seller under the threshold — or with no GTIN on any offer — is not waiting on an
+                // address at all, so entering one for them would answer a question nobody asked.
                 unmatched.Add(new VatUnmatchedSeller(
                     SellerId: seller.SellerId,
                     SellerName: seller.SellerName,
@@ -436,12 +457,29 @@ public sealed class VatWarningsController : ControllerBase
                 SellersInFile: split.Sellers.Count,
                 Ready: ready,
                 BelowMinimum: belowMinimum,
+                NoGtin: noGtin,
                 NoEmail: noEmail,
                 InvalidEmail: invalidEmail,
                 AmbiguousEmail: ambiguousEmail,
                 FileNameClash: fileNameClash,
                 WriteFailed: writeFailed),
             Warnings: warnings));
+    }
+
+    /// <summary>Offer ids for a "not mailed"/"left out" message, capped so one very messy export
+    /// cannot turn into an unreadable wall of numbers.</summary>
+    const int MaxOfferIdsShown = 20;
+
+    static string FormatOfferIds(IReadOnlyList<VatOfferRow> offers)
+    {
+        var ids = offers.Select(o => o.OfferId).Where(id => id.Length > 0).ToList();
+        if (ids.Count == 0)
+            return "(no offer id)";
+
+        var shown = string.Join(", ", ids.Take(MaxOfferIdsShown));
+        return ids.Count > MaxOfferIdsShown
+            ? $"{shown}, and {ids.Count - MaxOfferIdsShown:N0} more"
+            : shown;
     }
 
     /// <summary>

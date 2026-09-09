@@ -216,7 +216,61 @@ internal static class TabularFile
     static List<List<string>> ReadXlsx(Stream stream, string? sheetName)
     {
         using var workbook = new XLWorkbook(stream);
-        var sheet = FindSheet(workbook, sheetName);
+        return ReadSheet(FindSheet(workbook, sheetName));
+    }
+
+    /// <summary>
+    /// Reads whichever sheet actually carries one of <paramref name="columnHeaders"/>, instead of
+    /// requiring the caller to name it correctly.
+    ///
+    /// <para>Unlike <see cref="FindSheet"/>, a sheet name here is only a hint: if <paramref
+    /// name="sheetName"/> names a real sheet that also has one of the columns, that sheet is read
+    /// (fast path — behaviour is unchanged for every file whose sheet is already named right).
+    /// Otherwise every sheet in the workbook is tried in turn, in the order
+    /// <see cref="YeniRPA.Web.Services.TitleCleaner.TitleReferenceStore.ReadWorkbook"/> already uses
+    /// for the same reason: an onboarding
+    /// checklist's tab gets renamed or retyped far more often than its column headers do, and what
+    /// actually matters to the reader is which sheet holds the data, not what its tab is called. Only
+    /// when no sheet anywhere in the workbook has the column does this throw, listing the sheets that
+    /// are actually there.</para>
+    /// </summary>
+    public static List<List<string>> ReadXlsxAnySheetWithColumn(
+        Stream stream, string? sheetName, IReadOnlyList<string> columnHeaders)
+    {
+        using var workbook = new XLWorkbook(stream);
+
+        var wanted = (sheetName ?? "").Trim();
+        if (wanted.Length > 0)
+        {
+            var named = workbook.Worksheets.FirstOrDefault(s =>
+                string.Equals(s.Name.Trim(), wanted, StringComparison.OrdinalIgnoreCase));
+            if (named is not null && HasAnyColumn(named, columnHeaders))
+                return ReadSheet(named);
+        }
+
+        foreach (var sheet in workbook.Worksheets)
+        {
+            if (HasAnyColumn(sheet, columnHeaders))
+                return ReadSheet(sheet);
+        }
+
+        var available = string.Join(", ", workbook.Worksheets.Select(s => $"'{s.Name}'"));
+        throw new InvalidOperationException(
+            $"No sheet in this workbook has a '{columnHeaders[0]}' column. It holds: {available}.");
+    }
+
+    static bool HasAnyColumn(IXLWorksheet sheet, IReadOnlyList<string> columnHeaders)
+    {
+        var used = sheet.RangeUsed();
+        if (used is null)
+            return false;
+
+        return used.FirstRow().Cells().Any(c => columnHeaders.Any(h =>
+            string.Equals(c.GetString().Trim(), h, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    static List<List<string>> ReadSheet(IXLWorksheet sheet)
+    {
         var lastRow = sheet.LastRowUsed()?.RowNumber() ?? 0;
         var lastCol = sheet.LastColumnUsed()?.ColumnNumber() ?? 0;
 
