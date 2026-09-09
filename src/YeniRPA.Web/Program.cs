@@ -71,6 +71,15 @@ builder.Services.AddSingleton<MarkAsReceivedRunner>();
 builder.Services.AddSingleton<ProductStatusStore>();
 builder.Services.AddSingleton<ProductStatusRunner>();
 
+// Kargo Takip (17Track delivery check): also read-only, and also its own browser — 17track.net needs
+// no login, so Track17Browser carries none of MiraklBrowser's session/StorageState machinery and runs
+// headless. Track17BatchStore holds what "prepare" filtered out of the upload until "start" reads it
+// back; Track17Store holds the finished run's delivered rows, the same way ProductStatusStore does.
+builder.Services.AddSingleton<Track17BatchStore>();
+builder.Services.AddSingleton<Track17Store>();
+builder.Services.AddSingleton<Track17Browser>();
+builder.Services.AddSingleton<Track17Runner>();
+
 // The two WhatsApp warning modules — Late Order Warnings and Incident Warnings. The store owns the
 // seller → WhatsApp group mapping (shared by both) and each module's message templates; group names
 // are not credentials, so unlike the Mirakl session it is not encrypted. WhatsAppBrowser keeps its

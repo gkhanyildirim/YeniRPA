@@ -1070,6 +1070,9 @@ window.RPA = window.RPA || {};
     // The only Mirakl module that reads instead of writing: it comes back with a table rather than
     // having changed anything on the marketplace.
     'product-status': { tab: 'tab-product-status', panel: 'panel-product-status' },
+    // Reads an export like the reports do too, but checks each tracking number against a site outside
+    // Mirakl entirely (17track.net) instead of scraping the marketplace itself.
+    'track17': { tab: 'tab-track17', panel: 'panel-track17' },
     // Reads an export like the reports do, but its output is messages to external parties.
     'late-orders': { tab: 'tab-late-orders', panel: 'panel-late-orders' },
     // Also messages external parties, but its input is the mapping table itself rather than an
