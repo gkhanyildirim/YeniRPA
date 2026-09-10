@@ -23,6 +23,7 @@ public sealed class CreateReturnController : ControllerBase
 {
     const int OrderIdColumn = 1;
     const int TrackingNumberColumn = 2;
+    const int ReasonColumn = 3;
     const string XlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     readonly CreateReturnRunner _runner;
@@ -32,7 +33,8 @@ public sealed class CreateReturnController : ControllerBase
     /// <summary>One prepared row on its way back from the browser.</summary>
     public sealed record ListRow(
         [property: JsonPropertyName("orderNumber")] string? OrderNumber,
-        [property: JsonPropertyName("trackingNumber")] string? TrackingNumber);
+        [property: JsonPropertyName("trackingNumber")] string? TrackingNumber,
+        [property: JsonPropertyName("reason")] string? Reason);
 
     public sealed record ListRequest(
         [property: JsonPropertyName("rows")] IReadOnlyList<ListRow>? Rows);
@@ -114,7 +116,10 @@ public sealed class CreateReturnController : ControllerBase
             return [];
 
         return [.. request.Rows
-            .Select(r => new ReturnRow((r.OrderNumber ?? "").Trim(), (r.TrackingNumber ?? "").Trim()))
+            .Select(r => new ReturnRow(
+                (r.OrderNumber ?? "").Trim(),
+                (r.TrackingNumber ?? "").Trim(),
+                string.IsNullOrWhiteSpace(r.Reason) ? ReturnReasonMapper.Other : r.Reason.Trim()))
             .Where(r => r.OrderId.Length > 0 && r.TrackingNumber.Length > 0)];
     }
 
@@ -130,6 +135,7 @@ public sealed class CreateReturnController : ControllerBase
 
         sheet.Cell(1, OrderIdColumn).Value = "Order number";
         sheet.Cell(1, TrackingNumberColumn).Value = "Tracking number";
+        sheet.Cell(1, ReasonColumn).Value = "Reason";
         sheet.Row(1).Style.Font.Bold = true;
 
         // Text, not numbers: a 12-digit tracking code stored as a number comes back out of
@@ -141,9 +147,10 @@ public sealed class CreateReturnController : ControllerBase
         {
             sheet.Cell(i + 2, OrderIdColumn).SetValue(rows[i].OrderId);
             sheet.Cell(i + 2, TrackingNumberColumn).SetValue(rows[i].TrackingNumber);
+            sheet.Cell(i + 2, ReasonColumn).SetValue(rows[i].Reason);
         }
 
-        sheet.Columns(OrderIdColumn, TrackingNumberColumn).AdjustToContents();
+        sheet.Columns(OrderIdColumn, ReasonColumn).AdjustToContents();
 
         using var buffer = new MemoryStream();
         workbook.SaveAs(buffer);

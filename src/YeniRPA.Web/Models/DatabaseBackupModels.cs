@@ -16,7 +16,8 @@ public sealed record DatabaseBackup(
     [property: JsonPropertyName("categoryRules")] CategoryRuleFile? CategoryRules,
     [property: JsonPropertyName("titleReferenceLists")] TitleReferenceFile? TitleReferenceLists,
     [property: JsonPropertyName("offerMail")] OfferMailFile? OfferMail,
-    [property: JsonPropertyName("vatMail")] VatMailFile? VatMail);
+    [property: JsonPropertyName("vatMail")] VatMailFile? VatMail,
+    [property: JsonPropertyName("sellerNotificationTemplates")] SellerNotificationTemplateFile? SellerNotificationTemplates);
 
 /// <summary>What <see cref="Services.DatabaseBackupService.Import"/> actually did, for the panel to
 /// report back to the operator.</summary>

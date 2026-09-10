@@ -194,7 +194,8 @@
     { label: 'Tracking number', render: r => RPA.escapeHtml(r.trackingNumber), numeric: true },
     { label: 'Seller', render: r => RPA.escapeHtml(r.seller || '-') },
     { label: 'Type / state', render: r => '<span class="badge">' + RPA.escapeHtml(r.typeOrState || '-') + '</span>' },
-    { label: 'Request date', render: r => RPA.escapeHtml(r.requestDate || '-'), numeric: true }
+    { label: 'Request date', render: r => RPA.escapeHtml(r.requestDate || '-'), numeric: true },
+    { label: 'Return reason', render: r => RPA.escapeHtml(r.reason || '-') }
   ];
 
   const EXCLUDED_COLUMNS = [
@@ -238,10 +239,10 @@
     el('cr-prepared').hidden = false;
   }
 
-  /** Only the two fields the run needs travel back to the server. */
+  /** Only the fields the run needs travel back to the server. */
   function listPayload() {
     return {
-      rows: preparedRows.map(r => ({ orderNumber: r.orderNumber, trackingNumber: r.trackingNumber }))
+      rows: preparedRows.map(r => ({ orderNumber: r.orderNumber, trackingNumber: r.trackingNumber, reason: r.reason }))
     };
   }
 

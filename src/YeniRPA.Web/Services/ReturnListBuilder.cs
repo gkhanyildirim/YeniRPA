@@ -49,7 +49,9 @@ public static class ReturnListBuilder
         string SellerId,
         string TypeOrState,
         DateTime? Date,
-        bool IsReturnRequest);
+        bool IsReturnRequest,
+        /// <summary>Template A's "Talep Nedeni", raw. Template B has no such column, so this stays empty.</summary>
+        string RawReason = "");
 
     /// <summary>What one template contributed, plus the counts behind its funnel.</summary>
     sealed record Scan(
@@ -249,7 +251,8 @@ public static class ReturnListBuilder
                 Seller: candidate.Seller,
                 SellerId: candidate.SellerId,
                 TypeOrState: candidate.TypeOrState,
-                RequestDate: FormatDate(candidate.Date)));
+                RequestDate: FormatDate(candidate.Date),
+                Reason: ReturnReasonMapper.Resolve(candidate.RawReason)));
         }
 
         return rows;
@@ -273,6 +276,7 @@ public static class ReturnListBuilder
         var cSeller = Optional(idx, "Satıcı Adı", "Satici Adi");
         var cType = Optional(idx, "Talep Tipi");
         var cDate = Optional(idx, "Talep Tarihi");
+        var cReason = Optional(idx, "Talep Nedeni");
 
         var candidates = new List<Candidate>();
         var excluded = new List<ReturnListExcludedRow>();
@@ -292,6 +296,7 @@ public static class ReturnListBuilder
             var sellerId = NormalizeSellerId(TabularFile.GetCell(row, cSellerId));
             var type = TabularFile.GetCell(row, cType).Trim();
             var date = ParseTemplateDate(TabularFile.GetCell(row, cDate));
+            var reason = TabularFile.GetCell(row, cReason).Trim();
 
             var (state, code) = ReadTracking(TabularFile.GetCell(row, cTracking));
             if (state == TrackingState.Missing)
@@ -319,7 +324,8 @@ public static class ReturnListBuilder
                 SellerId: sellerId,
                 TypeOrState: type,
                 Date: date,
-                IsReturnRequest: IsIade(type)));
+                IsReturnRequest: IsIade(type),
+                RawReason: reason));
         }
 
         return new Scan(TemplateASource, total, withTracking, candidates, excluded);

@@ -64,6 +64,7 @@ builder.Services.AddSingleton<AutomationJobBus>();
 builder.Services.AddSingleton<MiraklBrowser>();
 builder.Services.AddSingleton<CreateReturnRunner>();
 builder.Services.AddSingleton<MarkAsReceivedRunner>();
+builder.Services.AddSingleton<SellerNotificationRunner>();
 
 // Product Status reads rather than writes, so its own singleton is the result table: the scrape takes
 // minutes and the progress stream carries only log lines, so the table has to outlive the run for the
@@ -129,6 +130,11 @@ if (OperatingSystem.IsWindows())
 // interleave across the several controller actions that reach it — the rule sets are hand-built and
 // exist nowhere else, so a torn write has nothing to be rebuilt from.
 builder.Services.AddSingleton<ITitleRuleStore, TitleRuleStore>();
+
+// Seller Notification. The store owns every saved topic/message template — like the rule sets
+// above, it holds no credentials, so it is not encrypted. A singleton for the same reason: its
+// load and save must not interleave across the controller's GET/PUT/start actions.
+builder.Services.AddSingleton<ISellerNotificationStore, SellerNotificationStore>();
 
 // The marketplace's RuleSet, parsed once at upload. A singleton for the same reason, though this one
 // is derived data: it can always be rebuilt by uploading the workbook again.

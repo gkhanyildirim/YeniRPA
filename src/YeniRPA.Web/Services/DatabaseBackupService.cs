@@ -25,7 +25,8 @@ public sealed class DatabaseBackupService(
     ICategoryRuleStore categoryRules,
     ITitleReferenceStore titleReferences,
     IOfferMailStore offerMail,
-    IVatMailStore vatMail)
+    IVatMailStore vatMail,
+    ISellerNotificationStore sellerNotificationTemplates)
 {
     public const int CurrentVersion = 1;
 
@@ -46,7 +47,8 @@ public sealed class DatabaseBackupService(
             categoryRules.Load(),
             titleReferences.Load(),
             offerMail.Load(),
-            vatMail.Load());
+            vatMail.Load(),
+            sellerNotificationTemplates.Load());
 
         return JsonSerializer.SerializeToUtf8Bytes(backup, JsonOptions);
     }
@@ -114,6 +116,12 @@ public sealed class DatabaseBackupService(
         {
             vatMail.Save(backup.VatMail);
             sections.Add("Seller VAT Warnings settings");
+        }
+
+        if (backup.SellerNotificationTemplates is not null)
+        {
+            sellerNotificationTemplates.Save(backup.SellerNotificationTemplates);
+            sections.Add("Seller Notification templates");
         }
 
         if (sections.Count == 0)

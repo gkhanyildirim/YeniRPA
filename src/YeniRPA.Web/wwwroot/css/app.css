@@ -1021,6 +1021,52 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
   color: var(--accent-ink);
 }
 
+/* Collapsible variant, opted into per-bar with a second class so the other .filter-bar toolbars
+   (Title Cleaner, Create Return, warning panels, ...) keep their plain single-row layout. Column
+   because the head row (toggle + summary) and the field row now stack instead of free-flowing
+   together — the fields row is what collapses, the head and the section-nav never do. */
+.filter-bar--collapsible { flex-direction: column; align-items: stretch; }
+
+.filter-bar-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 6px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .14s, color .14s, border-color .14s;
+}
+.filter-toggle:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.filter-toggle .chevron {
+  width: 14px; height: 14px;
+  transition: transform var(--dur) var(--ease);
+}
+.filter-toggle[aria-expanded="false"] .chevron { transform: rotate(-90deg); }
+
+/* The fields row: exactly the flex-wrap toolbar layout .filter-bar itself used to provide, now
+   scoped to the part that actually hides. */
+.filter-bar--collapsible .filter-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s-3);
+}
+.filter-bar--collapsible.is-collapsed .filter-fields { display: none; }
+
 .field { display: flex; flex-direction: column; gap: 4px; }
 
 .field > label {

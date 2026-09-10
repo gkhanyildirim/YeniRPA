@@ -1053,6 +1053,40 @@ window.RPA = window.RPA || {};
   }
 
   // ---------------------------------------------------------------------------
+  // Filter bars: collapsed by default, remembered per panel once the operator opens one
+  // ---------------------------------------------------------------------------
+
+  function initFilterCollapse() {
+    document.querySelectorAll('.filter-bar--collapsible').forEach(function (bar) {
+      const toggle = bar.querySelector('.filter-toggle');
+      const fields = bar.querySelector('.filter-fields');
+      if (!toggle || !fields) return;
+
+      const key = 'rpa-filters-' + bar.id;
+
+      function setState(open) {
+        bar.classList.toggle('is-collapsed', !open);
+        toggle.setAttribute('aria-expanded', String(open));
+      }
+
+      let open = false;
+      try { open = localStorage.getItem(key) === 'open'; } catch (e) { /* private mode */ }
+      setState(open);
+
+      toggle.addEventListener('click', function () {
+        const next = bar.classList.contains('is-collapsed');
+        setState(next);
+        try { localStorage.setItem(key, next ? 'open' : 'closed'); } catch (e) { /* private mode */ }
+
+        // The bar's height just changed; initSectionNav's --filterbar-h (used by scroll-margin-top
+        // on every section heading) would otherwise stay stale until the next chip click.
+        const height = Math.round(bar.getBoundingClientRect().height);
+        if (height > 0) document.documentElement.style.setProperty('--filterbar-h', height + 'px');
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Module navigation (tabs + hash deep-links + remembered choice)
   // ---------------------------------------------------------------------------
 
@@ -1067,6 +1101,9 @@ window.RPA = window.RPA || {};
     'create-return': { tab: 'tab-create-return', panel: 'panel-create-return' },
     // Also drives Mirakl, but the input is nothing more than a list of order IDs.
     'mark-received': { tab: 'tab-mark-received', panel: 'panel-mark-received' },
+    // Also drives Mirakl from an order-ID list, but writes through the order's own conversation
+    // dialog instead of clicking a status button — the topic/message come from the saved templates.
+    'seller-notification': { tab: 'tab-seller-notification', panel: 'panel-seller-notification' },
     // The only Mirakl module that reads instead of writing: it comes back with a table rather than
     // having changed anything on the marketplace.
     'product-status': { tab: 'tab-product-status', panel: 'panel-product-status' },
@@ -1473,6 +1510,7 @@ window.RPA = window.RPA || {};
   document.addEventListener('DOMContentLoaded', function () {
     initTheme();
     initRail();
+    initFilterCollapse();
     initNav();
     RPA.applyChartDefaults();
 

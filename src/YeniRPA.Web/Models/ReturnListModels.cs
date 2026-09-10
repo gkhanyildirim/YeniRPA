@@ -35,7 +35,12 @@ public sealed record ReturnListRow(
     /// <summary>Talep Tipi on template A, State on template B — different fields, same review purpose.</summary>
     [property: JsonPropertyName("typeOrState")] string TypeOrState,
 
-    [property: JsonPropertyName("requestDate")] string? RequestDate);
+    [property: JsonPropertyName("requestDate")] string? RequestDate,
+
+    /// <summary>The Mirakl return-reason option the automation will pick — already mapped from
+    /// template A's "Talep Nedeni" via <see cref="Services.ReturnReasonMapper"/>, or "Other reason"
+    /// for template B and any unmapped/empty value.</summary>
+    [property: JsonPropertyName("reason")] string Reason);
 
 /// <summary>A candidate that was dropped, and why. Only rows that survived the tracking-code and
 /// date filters appear here; the two bulk filters are reported as counts on the funnel instead.</summary>

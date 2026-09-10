@@ -127,6 +127,49 @@ public class ReturnListBuilderTests
     }
 
     // -----------------------------------------------------------------
+    // Return reason mapping
+    // -----------------------------------------------------------------
+
+    /// <summary>Template A's "Talep Nedeni" is mapped to the Mirakl return-reason option the
+    /// create-return automation will pick, instead of always going in as "Other reason".</summary>
+    [Fact]
+    public void AKnownTalepNedeniIsMappedToItsMiraklReason()
+    {
+        var data = Build(
+            orders: Orders(new OrderRow("01259_321097726-A", "Received")),
+            templateA: TemplateA(new TemplateARow(
+                "321097726", RequestDate: DaysAgo(10), Reason: "Ürün arızalı çıktı")));
+
+        Assert.Equal("Defective item", Assert.Single(data.Rows).Reason);
+    }
+
+    /// <summary>An unfamiliar or empty "Talep Nedeni" falls back to "Other reason" rather than
+    /// failing the row — the same catch-all the automation used for every row before this mapping.</summary>
+    [Fact]
+    public void AnUnknownTalepNedeniFallsBackToOtherReason()
+    {
+        var data = Build(
+            orders: Orders(new OrderRow("01259_321097726-A", "Received")),
+            templateA: TemplateA(new TemplateARow(
+                "321097726", RequestDate: DaysAgo(10), Reason: "Bir şey söylemek istemiyorum")));
+
+        Assert.Equal("Other reason", Assert.Single(data.Rows).Reason);
+    }
+
+    /// <summary>Template B carries no reason column at all, so every row from it must still go in
+    /// as "Other reason".</summary>
+    [Fact]
+    public void TemplateBRowsAlwaysCarryOtherReason()
+    {
+        var data = Build(
+            orders: Orders(new OrderRow("01259_321097726-A", "Received")),
+            templateB: TemplateB(new TemplateBRow(
+                "321097726", MarketPlaceId: "01259_321097726-A", ShipDate: DaysAgo(10), State: "SHIPPED")));
+
+        Assert.Equal("Other reason", Assert.Single(data.Rows).Reason);
+    }
+
+    // -----------------------------------------------------------------
 
     /// <summary>
     /// CSV in memory, the same way <see cref="ReturnFiles"/> feeds the SLA report — the reader is

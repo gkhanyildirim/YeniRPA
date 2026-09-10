@@ -1,9 +1,12 @@
 using Microsoft.Playwright;
+using YeniRPA.Web.Services;
 
 namespace YeniRPA.Web.Services.Automation;
 
-/// <summary>One line of the uploaded workbook: the order to return, and the parcel coming back.</summary>
-public sealed record ReturnRow(string OrderId, string TrackingNumber);
+/// <summary>One line of the uploaded workbook: the order to return, the parcel coming back, and the
+/// Mirakl return-reason option to select — already mapped from the source template's "Talep
+/// Nedeni" via <see cref="ReturnReasonMapper"/>, or "Other reason" when there is none.</summary>
+public sealed record ReturnRow(string OrderId, string TrackingNumber, string Reason);
 
 /// <summary>
 /// Creates a return on the Mirakl back office for every row of the uploaded workbook, one order at
@@ -23,7 +26,6 @@ public sealed class CreateReturnRunner
     // ---------------------------------------------------------------------------
 
     const string ReturnMethod = "By mail";
-    const string ReturnReason = "Other reason";
     const string Carrier = "Other";
     const string CarrierName = "Yurtici";
     const string TrackingUrlFormat = "https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code={0}";
@@ -125,7 +127,7 @@ public sealed class CreateReturnRunner
 
         await SetQuantityAsync(page, row.OrderId);
         await SelectComboboxOptionAsync(page, ReturnMethodCombobox(page), ReturnMethod, row.OrderId, "return method");
-        await SelectReturnReasonAsync(page, row.OrderId, ReturnReason);
+        await SelectReturnReasonAsync(page, row.OrderId, row.Reason);
         await SelectComboboxOptionAsync(page, CarrierCombobox(page), Carrier, row.OrderId, "carrier");
         await FillInputAfterLabelAsync(page, "Name", CarrierName, row.OrderId);
         await FillInputAfterLabelAsync(page, "Tracking number", row.TrackingNumber, row.OrderId);
@@ -218,24 +220,45 @@ public sealed class CreateReturnRunner
         await selectButton.ScrollIntoViewIfNeededAsync();
         await selectButton.ClickAsync();
 
-        // The reason picker is a radio list on most orders, but renders as plain rows on some.
-        var reasonRadio = page.GetByRole(AriaRole.Radio, new() { Name = reasonText, Exact = true }).First;
-        if (await reasonRadio.CountAsync() > 0)
+        var found = await TryClickReasonAsync(page, reasonText);
+        if (!found && !string.Equals(reasonText, ReturnReasonMapper.Other, StringComparison.OrdinalIgnoreCase))
         {
-            await reasonRadio.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
-            await reasonRadio.ClickAsync();
+            // The mapped text is a guess about what the Mirakl UI currently shows; if the picker no
+            // longer has it (renamed option, unexpected tree shape), the order still needs a return
+            // filed rather than being skipped.
+            _bus.Log($"  [{orderId}] Reason '{reasonText}' not found in the picker, falling back to '{ReturnReasonMapper.Other}'.");
+            found = await TryClickReasonAsync(page, ReturnReasonMapper.Other);
         }
-        else
-        {
-            var reasonTextLocator = page.Locator($"text={reasonText}").First;
-            await reasonTextLocator.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
-            await reasonTextLocator.ClickAsync();
-        }
+
+        if (!found)
+            throw new InvalidOperationException($"Return reason '{reasonText}' (nor the fallback) was found in the picker.");
 
         var doneButton = page.GetByRole(AriaRole.Button, new() { Name = "Done", Exact = true }).First;
         await doneButton.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await doneButton.ClickAsync();
         await page.WaitForTimeoutAsync(500);
+    }
+
+    /// <summary>The reason picker is a radio list on most orders, but renders as plain rows on some.</summary>
+    static async Task<bool> TryClickReasonAsync(IPage page, string reasonText)
+    {
+        var reasonRadio = page.GetByRole(AriaRole.Radio, new() { Name = reasonText, Exact = true }).First;
+        if (await reasonRadio.CountAsync() > 0)
+        {
+            await reasonRadio.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+            await reasonRadio.ClickAsync();
+            return true;
+        }
+
+        var reasonTextLocator = page.Locator($"text={reasonText}").First;
+        if (await reasonTextLocator.CountAsync() > 0)
+        {
+            await reasonTextLocator.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+            await reasonTextLocator.ClickAsync();
+            return true;
+        }
+
+        return false;
     }
 
     async Task FillInputAfterLabelAsync(IPage page, string labelText, string value, string orderId, bool required = true)

@@ -18,6 +18,7 @@
         ["title-cleaner"]  = "<path d='m5 19 9-9'/><path d='m14.5 4.5 5 5-3 3-5-5z'/><path d='M6 4v3M4.5 5.5h3M18 15v2.5M16.8 16.2h2.4'/>",
         ["create-return"]  = "<path d='M3 12a9 9 0 1 0 2.6-6.4'/><path d='M3 4v5h5'/>",
         ["mark-received"]  = "<circle cx='12' cy='12' r='9'/><path d='m8.5 12.2 2.4 2.4 4.6-4.9'/>",
+        ["seller-notification"] = "<path d='M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8A2.5 2.5 0 0 1 17.5 16H10l-4.5 4v-4h-1A2.5 2.5 0 0 1 2 13.5v-5'/><path d='M8 8h8M8 11.5h5'/>",
         ["product-status"] = "<path d='M21 8 12 3 3 8v8l9 5 9-5z'/><path d='m3 8 9 5 9-5M12 13v8'/>",
         ["track17"]        = "<rect x='3' y='7' width='13' height='11' rx='1.5'/><path d='M16 10h3.2l2.3 3v5h-5.5'/><circle cx='7.5' cy='18.5' r='1.6'/><circle cx='17' cy='18.5' r='1.6'/>",
         ["late-orders"]    = "<path d='M3 7h10v9H3z'/><path d='M13 10h4l4 3.5V16h-8z'/><circle cx='7' cy='18' r='1.8'/><circle cx='17' cy='18' r='1.8'/>",
@@ -96,6 +97,12 @@
                     aria-controls="panel-mark-received" aria-selected="false" data-module="mark-received" tabindex="-1">
                 @NavIcon("mark-received")
                 <span class="nav-text">Mark as Received</span>
+            </button>
+
+            <button type="button" class="nav-item" role="tab" id="tab-seller-notification"
+                    aria-controls="panel-seller-notification" aria-selected="false" data-module="seller-notification" tabindex="-1">
+                @NavIcon("seller-notification")
+                <span class="nav-text">Seller Notification</span>
             </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-product-status"
@@ -247,26 +254,37 @@
 
             <div class="results" id="order-results" hidden>
 
-                <div class="filter-bar">
-                    <div class="field">
-                        <label for="order-date-from">From (date created)</label>
-                        <input type="date" id="order-date-from" />
+                <div class="filter-bar filter-bar--collapsible is-collapsed" id="order-filter-bar">
+                    <div class="filter-bar-head">
+                        <button type="button" class="filter-toggle" aria-expanded="false" aria-controls="order-filter-fields">
+                            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                            Filters
+                        </button>
+                        <span class="filter-summary" id="order-filter-summary"></span>
                     </div>
-                    <div class="field">
-                        <label for="order-date-to">To (date created)</label>
-                        <input type="date" id="order-date-to" />
+                    <div class="filter-fields" id="order-filter-fields">
+                        <div class="field">
+                            <label for="order-date-from">From (date created)</label>
+                            <input type="date" id="order-date-from" />
+                        </div>
+                        <div class="field">
+                            <label for="order-date-to">To (date created)</label>
+                            <input type="date" id="order-date-to" />
+                        </div>
+                        <div class="field">
+                            <label for="order-seller">Seller</label>
+                            @* Type-ahead rather than a <select>: an export carries hundreds of sellers,
+                               and a partial name still narrows the dashboard. *@
+                            <input type="search" id="order-seller" list="order-seller-list"
+                                   placeholder="All sellers" autocomplete="off" />
+                            <datalist id="order-seller-list"></datalist>
+                        </div>
+                        <button type="button" class="btn btn-primary" id="order-apply">Apply filter</button>
+                        <button type="button" class="btn btn-ghost" id="order-reset">Reset</button>
                     </div>
-                    <div class="field">
-                        <label for="order-seller">Seller</label>
-                        @* Type-ahead rather than a <select>: an export carries hundreds of sellers,
-                           and a partial name still narrows the dashboard. *@
-                        <input type="search" id="order-seller" list="order-seller-list"
-                               placeholder="All sellers" autocomplete="off" />
-                        <datalist id="order-seller-list"></datalist>
-                    </div>
-                    <button type="button" class="btn btn-primary" id="order-apply">Apply filter</button>
-                    <button type="button" class="btn btn-ghost" id="order-reset">Reset</button>
-                    <span class="filter-summary" id="order-filter-summary"></span>
 
                     @* Built from the sections themselves once the report renders, so it can never
                        list a section that is not there. *@
@@ -494,18 +512,29 @@
 
             <div class="results" id="return-results" hidden>
 
-                <div class="filter-bar">
-                    <div class="field">
-                        <label for="return-date-from">Shipped &mdash; from</label>
-                        <input type="date" id="return-date-from" />
+                <div class="filter-bar filter-bar--collapsible is-collapsed" id="return-filter-bar">
+                    <div class="filter-bar-head">
+                        <button type="button" class="filter-toggle" aria-expanded="false" aria-controls="return-filter-fields">
+                            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                            Filters
+                        </button>
+                        <span class="filter-summary" id="return-filter-summary"></span>
                     </div>
-                    <div class="field">
-                        <label for="return-date-to">Shipped &mdash; to</label>
-                        <input type="date" id="return-date-to" />
+                    <div class="filter-fields" id="return-filter-fields">
+                        <div class="field">
+                            <label for="return-date-from">Shipped &mdash; from</label>
+                            <input type="date" id="return-date-from" />
+                        </div>
+                        <div class="field">
+                            <label for="return-date-to">Shipped &mdash; to</label>
+                            <input type="date" id="return-date-to" />
+                        </div>
+                        <button type="button" class="btn btn-primary" id="return-apply">Apply filter</button>
+                        <button type="button" class="btn btn-ghost" id="return-reset">Reset</button>
                     </div>
-                    <button type="button" class="btn btn-primary" id="return-apply">Apply filter</button>
-                    <button type="button" class="btn btn-ghost" id="return-reset">Reset</button>
-                    <span class="filter-summary" id="return-filter-summary"></span>
 
                     <nav class="section-nav" id="return-section-nav" aria-label="Report sections"></nav>
                 </div>
@@ -629,45 +658,56 @@
                     the closed export is a full history dump and only the recent part is wanted. It is
                     an input rather than a server-side cut so widening it stays a date change.
                 *@
-                <div class="filter-bar">
-                    <div class="field">
-                        <label for="inc-open-from">Opened &mdash; from</label>
-                        <input type="date" id="inc-open-from" />
+                <div class="filter-bar filter-bar--collapsible is-collapsed" id="inc-filter-bar">
+                    <div class="filter-bar-head">
+                        <button type="button" class="filter-toggle" aria-expanded="false" aria-controls="inc-filter-fields">
+                            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                            Filters
+                        </button>
+                        <span class="filter-summary" id="inc-filter-summary"></span>
                     </div>
-                    <div class="field">
-                        <label for="inc-open-to">Opened &mdash; to</label>
-                        <input type="date" id="inc-open-to" />
+                    <div class="filter-fields" id="inc-filter-fields">
+                        <div class="field">
+                            <label for="inc-open-from">Opened &mdash; from</label>
+                            <input type="date" id="inc-open-from" />
+                        </div>
+                        <div class="field">
+                            <label for="inc-open-to">Opened &mdash; to</label>
+                            <input type="date" id="inc-open-to" />
+                        </div>
+                        <div class="field">
+                            <label for="inc-closed-from">Closed &mdash; from</label>
+                            <input type="date" id="inc-closed-from" />
+                        </div>
+                        <div class="field">
+                            <label for="inc-lifecycle">Lifecycle</label>
+                            <select id="inc-lifecycle"></select>
+                        </div>
+                        <div class="field">
+                            <label for="inc-status">Status</label>
+                            <select id="inc-status"></select>
+                        </div>
+                        <div class="field">
+                            <label for="inc-reason">Reason</label>
+                            <select id="inc-reason"></select>
+                        </div>
+                        <div class="field">
+                            <label for="inc-seller">Seller</label>
+                            <select id="inc-seller"></select>
+                        </div>
+                        <div class="field">
+                            <label for="inc-waiting">Waiting on</label>
+                            <select id="inc-waiting"></select>
+                        </div>
+                        <div class="field">
+                            <label for="inc-search">Search</label>
+                            <input type="text" id="inc-search" placeholder="Order / customer / product / SKU / e-mail" />
+                        </div>
+                        <button type="button" class="btn btn-ghost" id="inc-reset">Reset</button>
                     </div>
-                    <div class="field">
-                        <label for="inc-closed-from">Closed &mdash; from</label>
-                        <input type="date" id="inc-closed-from" />
-                    </div>
-                    <div class="field">
-                        <label for="inc-lifecycle">Lifecycle</label>
-                        <select id="inc-lifecycle"></select>
-                    </div>
-                    <div class="field">
-                        <label for="inc-status">Status</label>
-                        <select id="inc-status"></select>
-                    </div>
-                    <div class="field">
-                        <label for="inc-reason">Reason</label>
-                        <select id="inc-reason"></select>
-                    </div>
-                    <div class="field">
-                        <label for="inc-seller">Seller</label>
-                        <select id="inc-seller"></select>
-                    </div>
-                    <div class="field">
-                        <label for="inc-waiting">Waiting on</label>
-                        <select id="inc-waiting"></select>
-                    </div>
-                    <div class="field">
-                        <label for="inc-search">Search</label>
-                        <input type="text" id="inc-search" placeholder="Order / customer / product / SKU / e-mail" />
-                    </div>
-                    <button type="button" class="btn btn-ghost" id="inc-reset">Reset</button>
-                    <span class="filter-summary" id="inc-filter-summary"></span>
 
                     <nav class="section-nav" id="inc-section-nav" aria-label="Report sections"></nav>
                 </div>
@@ -1040,21 +1080,32 @@
 
             <div class="results" id="ts-results" hidden>
 
-                <div class="filter-bar">
-                    <div class="field">
-                        <label for="ts-queue">Queue</label>
-                        <select id="ts-queue"></select>
+                <div class="filter-bar filter-bar--collapsible is-collapsed" id="ts-filter-bar">
+                    <div class="filter-bar-head">
+                        <button type="button" class="filter-toggle" aria-expanded="false" aria-controls="ts-filter-fields">
+                            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                            Filters
+                        </button>
+                        <span class="filter-summary" id="ts-filter-summary"></span>
                     </div>
-                    <div class="field">
-                        <label for="ts-seller">Seller</label>
-                        <select id="ts-seller"></select>
+                    <div class="filter-fields" id="ts-filter-fields">
+                        <div class="field">
+                            <label for="ts-queue">Queue</label>
+                            <select id="ts-queue"></select>
+                        </div>
+                        <div class="field">
+                            <label for="ts-seller">Seller</label>
+                            <select id="ts-seller"></select>
+                        </div>
+                        <div class="field">
+                            <label for="ts-search">Search</label>
+                            <input type="text" id="ts-search" placeholder="Vaka / sipariş no / konu" />
+                        </div>
+                        <button type="button" class="btn btn-ghost" id="ts-reset">Reset</button>
                     </div>
-                    <div class="field">
-                        <label for="ts-search">Search</label>
-                        <input type="text" id="ts-search" placeholder="Vaka / sipariş no / konu" />
-                    </div>
-                    <button type="button" class="btn btn-ghost" id="ts-reset">Reset</button>
-                    <span class="filter-summary" id="ts-filter-summary"></span>
                 </div>
 
                 <div class="section-title">Overview</div>
@@ -1617,6 +1668,147 @@
             </div>
 
             <footer class="page-foot">Marketplace Reporting &middot; Mark as Received</footer>
+        </section>
+
+        @* ================= SELLER NOTIFICATION ================= *@
+        <section class="panel" id="panel-seller-notification" role="tabpanel" aria-labelledby="tab-seller-notification" hidden>
+
+            <header class="page-head">
+                @PageIcon("seller-notification")
+                <h1>Seller Notification</h1>
+                <span class="badge red"
+                      title="Sends a message through Mirakl's own order conversation for every order in the list. This cannot be undone from here.">Writes to Mirakl</span>
+                <span class="stamp" id="sn-stamp"></span>
+            </header>
+
+            <div class="section-title">Mirakl session</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="sn-session-badge">Checking&hellip;</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="sn-login">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Open login window</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="sn-save-session" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Save session</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="sn-clear-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Clear session</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            @* Saved templates are a convenience, not the source of truth for a run: the operator can
+               still type a one-off topic/message below without ever saving it. *@
+            <div class="section-title">Message templates</div>
+            <div class="card">
+                <h3>Saved topic/message pairs, for reuse across runs</h3>
+
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 20%">Name</th>
+                                <th style="width: 24%">Topic</th>
+                                <th style="width: 46%">Message</th>
+                                <th style="width: 10%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="sn-template-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="sn-template-add">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Add template</span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="sn-template-save">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Save templates</span>
+                    </button>
+                    <span class="filter-summary" id="sn-template-count"></span>
+                </div>
+
+                <div class="alert" id="sn-template-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+            </div>
+
+            <div class="section-title">Send notification</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="field">
+                        <label for="sn-template-select">Load a saved template</label>
+                        <select id="sn-template-select">
+                            <option value="">Custom (not saved)</option>
+                        </select>
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="sn-topic">Topic</label>
+                        <input type="text" id="sn-topic" spellcheck="false"
+                               placeholder="What the seller will see as the conversation subject" />
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="sn-message">Message</label>
+                        <textarea id="sn-message" rows="6" spellcheck="false"
+                                  placeholder="The message body sent to the seller"></textarea>
+                    </div>
+
+                    <div class="uploader-grid" style="margin-top: 14px">
+                        <label class="drop" id="sn-drop">
+                            <span class="drop-title">Order ID list</span>
+                            <span class="drop-hint">.txt &mdash; one order ID per line</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="sn-file" accept=".txt" aria-label="Order ID list (.txt)" />
+                        </label>
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="sn-orders-text">Or paste order IDs directly</label>
+                        <textarea id="sn-orders-text" rows="8" spellcheck="false"
+                                  placeholder="01259_303210452-A&#10;01259_303210748-A"></textarea>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="sn-start" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Start sending</span>
+                        </button>
+                        <span class="filter-summary" id="sn-order-count"></span>
+                    </div>
+
+                    <div class="alert" id="sn-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="results" id="sn-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span>Orders processed</span>
+                        <span class="mono" id="sn-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="sn-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Seller Notification progress">
+                        <span class="progress-fill" id="sn-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="sn-console"></pre>
+                </div>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Seller Notification</footer>
         </section>
 
         @* ================= PRODUCT STATUS ================= *@
@@ -3339,6 +3531,7 @@
     <script src="~/js/title-cleaner.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>
     <script src="~/js/mark-received.js" asp-append-version="true"></script>
+    <script src="~/js/seller-notification.js" asp-append-version="true"></script>
     <script src="~/js/product-status.js" asp-append-version="true"></script>
     <script src="~/js/track17.js" asp-append-version="true"></script>
     <script src="~/js/late-orders.js" asp-append-version="true"></script>
