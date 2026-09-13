@@ -1895,6 +1895,10 @@
             <div class="results" id="ps-results" hidden>
                 <div class="section-title">
                     Product status by seller
+                    <label class="check" for="ps-show-empty">
+                        <input type="checkbox" id="ps-show-empty" />
+                        <span>Show sellers with no products</span>
+                    </label>
                     <partial name="_ExportButton" model='new ExportButton("ps-table", "Product Status", "Automation")' />
                 </div>
                 <div class="card">

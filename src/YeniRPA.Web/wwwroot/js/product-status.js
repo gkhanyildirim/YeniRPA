@@ -20,6 +20,7 @@
   let stream = null;       // EventSource, once the panel has been visited
   let activated = false;
   let total = 0;
+  let lastResult = null;   // the result renderResult last drew — re-filtered when the checkbox changes
 
   function el(id) { return document.getElementById(id); }
 
@@ -154,6 +155,39 @@
     note.textContent = text;
   }
 
+  /** Rows for the table/export: all of them, or with the zero/not-found sellers left out. */
+  function filteredRows(result, showEmpty) {
+    if (showEmpty) return result.rows;
+    const empty = new Set(result.withoutProducts);
+    return result.rows.filter(r => !empty.has(r.sellerName));
+  }
+
+  // Re-run whenever the "Show sellers with no products" checkbox changes, so the table — and the
+  // Excel export taken from whatever it currently shows — stay in sync with it.
+  function renderTable() {
+    if (!lastResult) return;
+    const showEmpty = el('ps-show-empty').checked;
+
+    RPA.renderDataTable(
+      'ps-table',
+      filteredRows(lastResult, showEmpty),
+      columnsFor(lastResult.labels),
+      'No seller returned any product statuses.');
+
+    // No match in Mirakl and a real seller with an empty catalogue read the same way here, so both
+    // land in this bucket. Named anyway, so a row of zeroes (or its absence) reads as "not found /
+    // no products" instead of looking like a real, verified zero count.
+    const skipped = el('ps-skipped-note');
+    skipped.hidden = !lastResult.withoutProducts.length;
+    skipped.textContent = lastResult.withoutProducts.length
+      ? lastResult.withoutProducts.length + ' seller(s) have no products in Mirakl' +
+        (showEmpty
+          ? ' and show as 0 in the table: '
+          : ' and are hidden from the table below (tick "Show sellers with no products" to include them): ') +
+        lastResult.withoutProducts.join(', ')
+      : '';
+  }
+
   function renderResult(result) {
     if (!result) return;
 
@@ -164,6 +198,7 @@
     // Older held results predate these fields; the notes below read them unconditionally.
     result.withoutProducts = result.withoutProducts || [];
     result.failed = result.failed || [];
+    lastResult = result;
 
     el('ps-results').hidden = false;
     RPA.setExportContext('Product status read from Mirakl on ' +
@@ -171,23 +206,8 @@
         year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
       }));
 
-    RPA.renderDataTable(
-      'ps-table',
-      result.rows,
-      columnsFor(result.labels),
-      'No seller returned any product statuses.');
-
+    renderTable();
     renderIntakeNote(result);
-
-    // No match in Mirakl and a real seller with an empty catalogue read the same way here, so both
-    // show as a zero row in the table below. Named anyway, so a row of zeroes reads as "not found /
-    // no products" instead of looking like a real, verified zero count.
-    const skipped = el('ps-skipped-note');
-    skipped.hidden = !result.withoutProducts.length;
-    skipped.textContent = result.withoutProducts.length
-      ? result.withoutProducts.length + ' seller(s) have no products in Mirakl and show as 0 in the table: ' +
-        result.withoutProducts.join(', ')
-      : '';
 
     // Sellers that could not be read are named here rather than left as zero rows in the table —
     // "no products" and "could not be read" are different answers.
@@ -393,6 +413,8 @@
       if (el('ps-file').files.length) el('ps-sellers-text').value = '';
       updateCount();
     });
+
+    el('ps-show-empty').addEventListener('change', renderTable);
 
     el('ps-sellers-text').addEventListener('input', function () {
       if (el('ps-sellers-text').value.trim()) el('ps-file').value = '';
