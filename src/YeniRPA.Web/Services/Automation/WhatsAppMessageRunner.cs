@@ -37,9 +37,9 @@ public sealed record WhatsAppMessage(string GroupName, string SellerId, string S
 public sealed class WhatsAppMessageRunner
 {
     /// <summary>
-    /// The two modules that send through this runner. They are the names the browser sees on the
-    /// event stream, so they must match the module keys <c>late-orders.js</c> and
-    /// <c>incidents-report.js</c> latch their run logs on.
+    /// The modules that send through this runner. They are the names the browser sees on the
+    /// event stream, so they must match the module keys <c>late-orders.js</c>,
+    /// <c>incidents-report.js</c> and <c>stockout-warnings.js</c> latch their run logs on.
     ///
     /// <para>There is deliberately no <c>ModuleName</c> default any more: a single-module constant
     /// silently sent every incident run's progress to the Late Orders console, because that panel
@@ -48,6 +48,8 @@ public sealed class WhatsAppMessageRunner
     public const string LateOrderModule = "late-orders";
 
     public const string IncidentWarningModule = "incident-warnings";
+
+    public const string StockoutWarningModule = "stockout-warnings";
 
     /// <summary>
     /// Randomised pause between groups. A fixed interval is the single most machine-legible signal a

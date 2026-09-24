@@ -33,6 +33,16 @@ public interface ISellerGroupStore
     /// Late Order Warnings' templates exactly as they were.</summary>
     void SaveIncidentSettings(string? messageTemplate, string? lineTemplate, int thresholdDays);
 
+    /// <summary>Saves Stockout Warnings' templates and GMV threshold, leaving the mapping table and
+    /// the other two modules' fields exactly as they were.</summary>
+    void SaveStockoutSettings(string? messageTemplate, string? productLineTemplate, double gmvThreshold);
+
+    /// <summary>Saves only the mapping table, leaving every module's message templates exactly as
+    /// they were. Used by a module's own mapping editor (Stockout Warnings has one; Incident
+    /// Warnings does not and edits the table from the Late Order Warnings tab instead) so that
+    /// editing sellers from there can never touch another module's wording.</summary>
+    void SaveEntries(IReadOnlyList<SellerGroupEntry> entries);
+
     SellerGroupMap BuildMap();
 
     /// <summary>One-time import from <c>seller-groups.json</c>, run by <see cref="JsonToLiteDbMigrator"/>
@@ -140,6 +150,33 @@ public sealed class SellerGroupStore : ISellerGroupStore
                 IncidentLineTemplate = lineTemplate,
                 IncidentThresholdDays = thresholdDays,
             });
+        }
+    }
+
+    /// <summary>The mirror of <see cref="SaveIncidentSettings"/>: writes only the Stockout Warnings
+    /// fields and leaves the mapping table and the other two modules' fields untouched.</summary>
+    public void SaveStockoutSettings(string? messageTemplate, string? productLineTemplate, double gmvThreshold)
+    {
+        lock (_sync)
+        {
+            SaveCore(Load() with
+            {
+                StockoutMessageTemplate = messageTemplate,
+                StockoutProductLineTemplate = productLineTemplate,
+                StockoutGmvThreshold = gmvThreshold,
+            });
+        }
+    }
+
+    /// <summary>Writes only <see cref="SellerGroupFile.Entries"/>. A module whose own panel edits
+    /// the mapping table (rather than pointing the operator at Late Order Warnings' editor) saves
+    /// through this, not <see cref="SaveMapping"/> — that one also carries Late Order Warnings'
+    /// templates, and a caller with nothing to say about those would otherwise blank them.</summary>
+    public void SaveEntries(IReadOnlyList<SellerGroupEntry> entries)
+    {
+        lock (_sync)
+        {
+            SaveCore(Load() with { Entries = entries ?? [] });
         }
     }
 

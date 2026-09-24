@@ -26,7 +26,8 @@ public sealed class DatabaseBackupService(
     ITitleReferenceStore titleReferences,
     IOfferMailStore offerMail,
     IVatMailStore vatMail,
-    ISellerNotificationStore sellerNotificationTemplates)
+    ISellerNotificationStore sellerNotificationTemplates,
+    ICustomMailStore customMail)
 {
     public const int CurrentVersion = 1;
 
@@ -48,7 +49,8 @@ public sealed class DatabaseBackupService(
             titleReferences.Load(),
             offerMail.Load(),
             vatMail.Load(),
-            sellerNotificationTemplates.Load());
+            sellerNotificationTemplates.Load(),
+            customMail.Load());
 
         return JsonSerializer.SerializeToUtf8Bytes(backup, JsonOptions);
     }
@@ -122,6 +124,12 @@ public sealed class DatabaseBackupService(
         {
             sellerNotificationTemplates.Save(backup.SellerNotificationTemplates);
             sections.Add("Seller Notification templates");
+        }
+
+        if (backup.CustomMail is not null)
+        {
+            customMail.Save(backup.CustomMail);
+            sections.Add("Custom Mail hand-entered addresses");
         }
 
         if (sections.Count == 0)

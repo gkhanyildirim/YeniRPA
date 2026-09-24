@@ -61,6 +61,8 @@
   let CITIES = [''];
   let REASON_LABELS = {};
   let MISSING_COLUMNS = [];
+  let FRAUD_GROUPS = [];
+  let FRAUD_THRESHOLD = 0.8;
   const charts = {};
 
   // ---------------------------------------------------------------------------
@@ -896,6 +898,204 @@
     ], 'Every order line completed normally in the selected range.', { maxRows: 200 });
   }
 
+  // Computed server-side over the whole uploaded file (not the date/seller-filtered subset), so this
+  // section is rendered once per upload rather than from the filtered render path. A real export can
+  // put 20+ orders in one address group, so this renders one collapsed summary row per group — address,
+  // order count, similarity — instead of repeating the same address on dozens of near-identical rows;
+  // clicking a group reveals its member order numbers and amounts. There is no bespoke expand/collapse
+  // helper in RPA.renderDataTable for this (it only renders flat rows), so the list and its three
+  // filters (address text, similarity range, order-count range) are hand-built here, following the
+  // same collapsed-summary/expand-on-click convention used by title-cleaner.js's rule list. The Excel
+  // export button, however, is wired to the flat member list regardless of the collapsed view — an
+  // operator working the download in Excel needs every order number on its own row, not one row per
+  // group.
+  let FRAUD_FILTERS = { addr: '', simMin: null, simMax: null, sizeMin: null, sizeMax: null, amtMin: null, amtMax: null };
+
+  // Which groups the operator has ticked for a targeted download. A group id, not an object
+  // reference, so it survives the full-list re-render every filter change already does.
+  let FRAUD_SELECTED = new Set();
+
+  /** A group's range badge: a single value when every pair scores the same (always true for a
+   *  2-member group), a "min%–max%" range otherwise — a 17-member group's weakest pair can be a much
+   *  lower number than most of the pairs actually in it, and showing only the minimum made every row
+   *  in a large group look as weak as its single worst pair. */
+  function fraudSimilarityRangeHtml(simMin, simMax) {
+    const simClass = simMax >= 95 ? 'red' : 'amber';
+    const text = simMin.toFixed(1) === simMax.toFixed(1)
+      ? simMin.toFixed(1) + '%'
+      : simMin.toFixed(1) + '%–' + simMax.toFixed(1) + '%';
+    return '<span class="badge ' + simClass + '">' + text + '</span>';
+  }
+
+  function fraudGroupHtml(g) {
+    const members = g.members.map(m =>
+      '<tr>' +
+        '<td>' + RPA.escapeHtml(m.ord) + '</td>' +
+        '<td>' + (RPA.escapeHtml(m.name) || '—') + '</td>' +
+        '<td>' + RPA.escapeHtml(m.s) + '</td>' +
+        '<td>' + (RPA.escapeHtml(m.cust) || '—') + '</td>' +
+        '<td class="num">' + RPA.fmtMoney(m.amt, m.cur) + '</td>' +
+        '<td>' + RPA.escapeHtml(m.addr) + '</td>' +
+        '<td class="num">' + '<span class="badge ' + (m.sim >= 95 ? 'red' : 'amber') + '">' +
+          m.sim.toFixed(1) + '%</span></td>' +
+      '</tr>').join('');
+
+    // The checkbox is a sibling of the expand button, not nested inside it — an <input> inside a
+    // <button> is invalid content and browsers silently break the layout to fix it.
+    return '' +
+      '<div class="fraud-group" data-fraud-group>' +
+        '<div class="fraud-group-bar">' +
+          '<input type="checkbox" class="fraud-group-check" data-grp="' + g.grp + '" ' +
+            (FRAUD_SELECTED.has(g.grp) ? 'checked ' : '') +
+            'aria-label="Select this group for download" />' +
+          '<button type="button" class="fraud-group-head" aria-expanded="false" aria-controls="fraud-group-' + g.grp + '">' +
+            '<span class="fraud-group-caret" aria-hidden="true"></span>' +
+            '<span class="fraud-group-addr">' + RPA.escapeHtml(g.addr) + '</span>' +
+            '<span class="fraud-group-size">' + g.gsz + ' orders</span>' +
+            fraudSimilarityRangeHtml(g.simMin, g.simMax) +
+          '</button>' +
+        '</div>' +
+        '<div class="fraud-group-body" id="fraud-group-' + g.grp + '" hidden>' +
+          '<table class="fraud-group-table">' +
+            '<thead><tr><th>Order</th><th>Name</th><th>Seller</th><th>Customer</th>' +
+              '<th class="num">Amount</th><th>Shipping address</th>' +
+              '<th class="num">Similarity</th></tr></thead>' +
+            '<tbody>' + members + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>';
+  }
+
+  /** Opens/closes one group, mirroring title-cleaner.js's toggleRule. */
+  function toggleFraudGroup(group) {
+    const head = group.querySelector('.fraud-group-head');
+    const body = group.querySelector('.fraud-group-body');
+    const next = head.getAttribute('aria-expanded') !== 'true';
+    head.setAttribute('aria-expanded', next ? 'true' : 'false');
+    body.hidden = !next;
+  }
+
+  function wireFraudGroupToggle(wrap) {
+    if (wrap.dataset.fraudWired === 'on') return;
+    wrap.dataset.fraudWired = 'on';
+
+    wrap.addEventListener('click', event => {
+      if (!event.target.closest('.fraud-group-head')) return;
+      const group = event.target.closest('[data-fraud-group]');
+      if (group) toggleFraudGroup(group);
+    });
+
+    // Only the checkbox's own selection changes — never a full re-render, or every tick would
+    // collapse whatever groups the operator already had open and reset their scroll position.
+    wrap.addEventListener('change', event => {
+      const check = event.target.closest('.fraud-group-check');
+      if (!check) return;
+      const grp = Number(check.dataset.grp);
+      if (check.checked) FRAUD_SELECTED.add(grp); else FRAUD_SELECTED.delete(grp);
+      updateFraudExport();
+    });
+  }
+
+  // The group itself now carries a range (simMin-simMax), not one number, so the similarity filter
+  // is a range-overlap test rather than a single comparison: a group only fails the "≥" box when even
+  // its best pair (simMax) falls short, and only fails the "≤" box when even its worst pair (simMin)
+  // exceeds it — typing "≥95" surfaces any group containing at least one very tight pair, which is
+  // exactly the "I want to see the 95% too" case a bare minimum used to hide.
+  function fraudGroupPassesFilters(g) {
+    const f = FRAUD_FILTERS;
+    if (f.addr && RPA.fold(g.addr).indexOf(RPA.fold(f.addr)) === -1) return false;
+    if (f.simMin !== null && g.simMax < f.simMin) return false;
+    if (f.simMax !== null && g.simMin > f.simMax) return false;
+    if (f.sizeMin !== null && g.gsz < f.sizeMin) return false;
+    if (f.sizeMax !== null && g.gsz > f.sizeMax) return false;
+    // Amount lives on each member, not the group, so a group passes when at least one of its
+    // orders falls in range — the point is finding a group worth a second look because of what one
+    // order in it cost, not requiring every order in the group to be in that range.
+    if ((f.amtMin !== null || f.amtMax !== null) && !g.members.some(m =>
+      (f.amtMin === null || m.amt >= f.amtMin) && (f.amtMax === null || m.amt <= f.amtMax))) return false;
+    return true;
+  }
+
+  /** The groups an export should cover: only the ticked ones when anything is ticked, otherwise
+   *  every group the current filters leave visible — ticking is a narrowing choice on top of the
+   *  filters, not a replacement for them. */
+  function fraudExportSourceGroups() {
+    if (FRAUD_SELECTED.size > 0) return FRAUD_GROUPS.filter(g => FRAUD_SELECTED.has(g.grp));
+    return FRAUD_GROUPS.filter(fraudGroupPassesFilters);
+  }
+
+  /** Registers the Excel export data and updates the selection note, without touching the rendered
+   *  list — called on every filter change (after the list itself is rebuilt) and on every checkbox
+   *  change (where the list must NOT be rebuilt, see wireFraudGroupToggle). */
+  function updateFraudExport() {
+    const source = fraudExportSourceGroups();
+
+    // The point of downloading is to work the full order list in Excel, not a group summary, so
+    // this flattens to one row per order regardless of the collapsed on-screen view. Similarity % is
+    // each order's own best match (m.sim), the same number shown on its row on screen, not the
+    // group's weakest-link minimum.
+    const exportRows = source.flatMap(g => g.members.map(m =>
+      [m.ord, m.name, m.s, m.cust, m.amt, m.addr, m.sim, g.gsz]));
+    RPA.registerExport('fraud-suspect-wrap', exportRows.length ? {
+      columns: [
+        { label: 'Order' }, { label: 'Name' }, { label: 'Seller' }, { label: 'Customer' },
+        { label: 'Amount', numeric: true }, { label: 'Shipping address' },
+        { label: 'Similarity %', numeric: true }, { label: 'Similar orders', numeric: true }
+      ],
+      rows: exportRows
+    } : null);
+    RPA.syncExportButtons();
+
+    const note = document.getElementById('fraud-selection-note');
+    if (note) {
+      note.textContent = FRAUD_SELECTED.size > 0
+        ? FRAUD_SELECTED.size + ' group' + (FRAUD_SELECTED.size === 1 ? '' : 's') +
+          ' selected — download will include only ' + (FRAUD_SELECTED.size === 1 ? 'it' : 'them')
+        : '';
+    }
+  }
+
+  function applyFraudFilter() {
+    const wrap = document.getElementById('fraud-suspect-wrap');
+    if (!wrap) return;
+    wireFraudGroupToggle(wrap);
+
+    const visible = FRAUD_GROUPS.filter(fraudGroupPassesFilters);
+
+    wrap.innerHTML = visible.length
+      ? visible.map(fraudGroupHtml).join('')
+      : '<div class="empty-state">No fraud-suspect shipping addresses found above the ' +
+        Math.round(FRAUD_THRESHOLD * 100) + '% similarity threshold.</div>';
+
+    updateFraudExport();
+  }
+
+  function wireFraudFilterInput(id, onChange) {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.wired === 'on') return;
+    el.dataset.wired = 'on';
+    el.addEventListener('input', () => { onChange(el.value); applyFraudFilter(); });
+  }
+
+  const toNumberOrNull = value => (value === '' ? null : parseFloat(value));
+
+  function wireFraudFilters() {
+    wireFraudFilterInput('fraud-address-filter', v => { FRAUD_FILTERS.addr = v; });
+    wireFraudFilterInput('fraud-sim-min', v => { FRAUD_FILTERS.simMin = toNumberOrNull(v); });
+    wireFraudFilterInput('fraud-sim-max', v => { FRAUD_FILTERS.simMax = toNumberOrNull(v); });
+    wireFraudFilterInput('fraud-size-min', v => { FRAUD_FILTERS.sizeMin = toNumberOrNull(v); });
+    wireFraudFilterInput('fraud-size-max', v => { FRAUD_FILTERS.sizeMax = toNumberOrNull(v); });
+    wireFraudFilterInput('fraud-amt-min', v => { FRAUD_FILTERS.amtMin = toNumberOrNull(v); });
+    wireFraudFilterInput('fraud-amt-max', v => { FRAUD_FILTERS.amtMax = toNumberOrNull(v); });
+  }
+
+  function renderFraudSuspects(groups, threshold) {
+    FRAUD_GROUPS = groups;
+    FRAUD_THRESHOLD = threshold;
+    wireFraudFilters();
+    applyFraudFilter();
+  }
+
   function renderLeadTime(rows, cur) {
     if (emptyBecauseMissing('lt-opportunity-wrap', ['Lead time to ship'])) return;
 
@@ -1179,6 +1379,8 @@
     BRANDS = data.brands || [''];
     CITIES = data.cities || [''];
     MISSING_COLUMNS = data.missingColumns || [];
+    FRAUD_GROUPS = data.fraudGroups || [];
+    FRAUD_THRESHOLD = data.fraudThreshold || 0.8;
     if (data.minSampleSize) MIN_SAMPLE_SIZE = data.minSampleSize;
     if (data.minLeadTimeSample) MIN_LEAD_TIME_SAMPLE = data.minLeadTimeSample;
 
@@ -1198,7 +1400,9 @@
           ['Category performance', ['Category label']],
           ['Delivery quality', ['Acceptance date', 'Order with invoice']],
           ['Data quality', ['Amount transferred to seller (including taxes)', 'Order with invoice',
-            'Acceptance date', 'Cancellation Request Status']]
+            'Acceptance date', 'Cancellation Request Status']],
+          ['Fraud detection', ['Customer ID', 'Customer email address', 'Shipping address street 1',
+            'Shipping address zip']]
         ].filter(([, cols]) => cols.some(columnMissing)).map(([name]) => name);
 
         banner.innerHTML =
@@ -1218,6 +1422,14 @@
     RPA.fillDatalist('order-seller-list', SELLERS);
     RPA.seedDateRange('order-date-from', 'order-date-to', ROWS.map(r => r.dc));
     RPA.stamp('order-stamp');
+
+    // A filter (or a ticked group) carried over from a previous upload would silently hide or
+    // mis-target a download in a brand new file.
+    FRAUD_FILTERS = { addr: '', simMin: null, simMax: null, sizeMin: null, sizeMax: null, amtMin: null, amtMax: null };
+    FRAUD_SELECTED = new Set();
+    ['fraud-address-filter', 'fraud-sim-min', 'fraud-sim-max', 'fraud-size-min', 'fraud-size-max',
+      'fraud-amt-min', 'fraud-amt-max'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    renderFraudSuspects(FRAUD_GROUPS, FRAUD_THRESHOLD);
 
     document.getElementById('order-results').hidden = false;
     applyFilter();

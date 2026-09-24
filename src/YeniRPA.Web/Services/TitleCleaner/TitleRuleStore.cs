@@ -134,7 +134,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
             // on one line they cannot be.
             EncodeUnitLines(rule.UnitList),
             EncodeAliasLines(rule.AliasGroups),
-            rule.ReferenceList ?? "")).ToList(),
+            rule.ReferenceList ?? "",
+            rule.AdoptLargest)).ToList(),
         set.DecimalSeparator == "," ? "," : ".",
         set.CollapseRepeats);
 
@@ -157,7 +158,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
                     a.AllowPartial,
                     ParseUnits(a.Units),
                     ParseAliases(a.Aliases),
-                    string.IsNullOrWhiteSpace(a.ReferenceList) ? null : a.ReferenceList.Trim()))
+                    string.IsNullOrWhiteSpace(a.ReferenceList) ? null : a.ReferenceList.Trim(),
+                    a.AdoptLargest))
                 .ToList(),
             form.DecimalSeparator == "," ? "," : ".",
             form.CollapseRepeats);
@@ -259,11 +261,16 @@ public sealed class TitleRuleStore : ITitleRuleStore
     /// same shape as "Ondalık Ayracı", which the sheet has always repeated the same way.</summary>
     const int RepeatColumn = 14;
 
+    /// <summary>Per-rule, like <see cref="SuffixColumn"/>/<see cref="PartialColumn"/> — appended after
+    /// <see cref="RepeatColumn"/> rather than beside them, for the same reason: a new column earlier
+    /// in the row would shift every constant above it.</summary>
+    const int AdoptLargestColumn = 15;
+
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
         "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek", "Kısmi",
-        "Referans Listesi", "Tekrarı Sil",
+        "Referans Listesi", "Tekrarı Sil", "Büyüğü Seç",
     ];
 
     /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
@@ -290,7 +297,7 @@ public sealed class TitleRuleStore : ITitleRuleStore
 
         // Text throughout: a unit spelling of "11" or a set named "2024" must not come back as a
         // number, and the encoded unit/alias cells must survive verbatim.
-        sheet.Columns(SetColumn, RepeatColumn).Style.NumberFormat.Format = "@";
+        sheet.Columns(SetColumn, AdoptLargestColumn).Style.NumberFormat.Format = "@";
 
         var row = 2;
         foreach (var set in sets)
@@ -311,11 +318,12 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 sheet.Cell(row, PartialColumn).SetValue(Yes(rule.AllowPartial));
                 sheet.Cell(row, ReferenceColumn).SetValue(rule.ReferenceList ?? "");
                 sheet.Cell(row, RepeatColumn).SetValue(Yes(set.CollapseRepeats));
+                sheet.Cell(row, AdoptLargestColumn).SetValue(Yes(rule.AdoptLargest));
                 row++;
             }
         }
 
-        sheet.Columns(SetColumn, RepeatColumn).AdjustToContents();
+        sheet.Columns(SetColumn, AdoptLargestColumn).AdjustToContents();
         foreach (var column in sheet.ColumnsUsed())
             column.Width = Math.Clamp(column.Width, 10, 52);
 
@@ -354,6 +362,7 @@ public sealed class TitleRuleStore : ITitleRuleStore
         // column, and it has to keep importing rather than being refused for a column it predates.
         var cReference = Optional(header, Headers[ReferenceColumn - 1]);
         var cRepeat = Optional(header, Headers[RepeatColumn - 1]);
+        var cAdoptLargest = Optional(header, Headers[AdoptLargestColumn - 1]);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
@@ -391,7 +400,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 ParseBool(TabularFile.GetCell(row, cPartial), fallback: false),
                 ParseUnits(TabularFile.GetCell(row, cUnits)),
                 ParseAliases(TabularFile.GetCell(row, cAlias)),
-                Blank(TabularFile.GetCell(row, cReference))));
+                Blank(TabularFile.GetCell(row, cReference)),
+                ParseBool(TabularFile.GetCell(row, cAdoptLargest), fallback: false)));
         }
 
         if (sets.Count == 0)

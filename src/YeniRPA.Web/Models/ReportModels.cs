@@ -99,6 +99,67 @@ public sealed record CancellationReasonLabel(
     [property: JsonPropertyName("label")] string Label,
     [property: JsonPropertyName("action")] string Action);
 
+/// <summary>
+/// One order inside a fraud-suspect address group: its shipping address is highly similar (over
+/// <see cref="OrderReportBuilder.FraudSimilarityThreshold"/>) to every other member of the same
+/// group, but it belongs to a different customer than each of them. Nested under
+/// <see cref="FraudAddressGroup"/> rather than sent as a flat list, since the dashboard renders one
+/// summary row per group and only needs a member's order number/seller/customer/amount/address once
+/// that group is expanded — keeping the full raw address and amount out of the wire format except
+/// for the orders that actually need operator review.
+/// </summary>
+public sealed record FraudGroupMember(
+    [property: JsonPropertyName("ord")] string OrderNumber,
+    [property: JsonPropertyName("s")] string Seller,
+    [property: JsonPropertyName("cust")] string Customer,
+
+    /// <summary>Shipping recipient's first + last name, e.g. "Mehmet Seçil" — separate from
+    /// <see cref="ShippingAddress"/> so it can be its own column/filter rather than only appearing
+    /// baked into the address text.</summary>
+    [property: JsonPropertyName("name")] string Name,
+
+    [property: JsonPropertyName("amt")] double Amount,
+    [property: JsonPropertyName("cur")] string Currency,
+    [property: JsonPropertyName("addr")] string ShippingAddress,
+
+    /// <summary>This order's own best (highest) similarity against any other member of its group —
+    /// not the group's weakest-link minimum. A group can range from an 81% "loose" pair up to a 99%
+    /// near-duplicate pair; showing the group-wide minimum on every row made every member look as
+    /// weak as the worst pair in the group, even when a given row's actual closest match was much
+    /// tighter. See <see cref="FraudAddressGroup.MinSimilarityPercent"/>/<see
+    /// cref="FraudAddressGroup.MaxSimilarityPercent"/> for the group-level range.</summary>
+    [property: JsonPropertyName("sim")] double SimilarityPercent);
+
+/// <summary>
+/// A cluster of orders whose shipping addresses are all mutually similar (complete-linkage: every
+/// member is directly similar to every other member, not just chained through an intermediate — see
+/// <see cref="OrderReportBuilder.DetectFraudSuspects"/>) but which belong to different customers — an
+/// early fraud signal ahead of the bank's own flags. See <see cref="Services.AddressSimilarity"/>.
+/// </summary>
+public sealed record FraudAddressGroup(
+    /// <summary>1-based id, ordered by group size (largest first) then by
+    /// <see cref="MinSimilarityPercent"/>.</summary>
+    [property: JsonPropertyName("grp")] int GroupId,
+
+    /// <summary>How many orders are in this group — shown on the collapsed summary row so the
+    /// operator never has to count members themselves.</summary>
+    [property: JsonPropertyName("gsz")] int GroupSize,
+
+    /// <summary>The first member's formatted address, shown as the group's one-line summary before
+    /// it is expanded.</summary>
+    [property: JsonPropertyName("addr")] string RepresentativeAddress,
+
+    /// <summary>The tightness guarantee: every member of this group is at least this similar to
+    /// every other member (the minimum pairwise similarity across the whole group).</summary>
+    [property: JsonPropertyName("simMin")] double MinSimilarityPercent,
+
+    /// <summary>The closest pair in the group — the best pairwise similarity found anywhere in it.
+    /// Shown alongside <see cref="MinSimilarityPercent"/> as a range, since a 17-member group's
+    /// weakest pair (its minimum) can look nothing like most of the pairs in it.</summary>
+    [property: JsonPropertyName("simMax")] double MaxSimilarityPercent,
+
+    [property: JsonPropertyName("members")] IReadOnlyList<FraudGroupMember> Members);
+
 public sealed record OrderReportData(
     [property: JsonPropertyName("rows")] IReadOnlyList<OrderReportRow> Rows,
 
@@ -151,7 +212,15 @@ public sealed record OrderReportData(
     /// empty state of whichever section they feed, so a missing column reads as a data-source gap
     /// rather than as a broken report.
     /// </summary>
-    [property: JsonPropertyName("missingColumns")] IReadOnlyList<string> MissingColumns);
+    [property: JsonPropertyName("missingColumns")] IReadOnlyList<string> MissingColumns,
+
+    /// <summary>Address-similarity groups found in this same upload — an early fraud signal ahead of
+    /// the bank's own flags. See <see cref="FraudAddressGroup"/>.</summary>
+    [property: JsonPropertyName("fraudGroups")] IReadOnlyList<FraudAddressGroup> FraudGroups,
+
+    /// <summary>The similarity ratio that triggers a fraud-suspect flag, so the dashboard's copy
+    /// never hard-codes a number that could drift from what the server actually applies.</summary>
+    [property: JsonPropertyName("fraudThreshold")] double FraudThreshold);
 
 // ---------------------------------------------------------------------------
 // Return SLA report

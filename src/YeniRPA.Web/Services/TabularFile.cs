@@ -31,13 +31,15 @@ internal static class TabularFile
     ///
     /// <para><paramref name="sheetName"/> is ignored for CSV, which has exactly one table.</para>
     /// </summary>
-    public static List<List<string>> Read(Stream stream, string fileName, string? sheetName)
-    {
-        var isXlsx = fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ||
-                     fileName.EndsWith(".xls", StringComparison.OrdinalIgnoreCase);
+    public static List<List<string>> Read(Stream stream, string fileName, string? sheetName) =>
+        IsXlsx(fileName) ? ReadXlsx(stream, sheetName) : ReadCsv(stream);
 
-        return isXlsx ? ReadXlsx(stream, sheetName) : ReadCsv(stream);
-    }
+    /// <summary>Whether a file name is read as an Excel workbook rather than CSV. Shared with callers
+    /// that need to decide, before reading, whether there is an actual workbook to reopen later —
+    /// see <c>TitleCleanerController.Excel</c>.</summary>
+    public static bool IsXlsx(string fileName) =>
+        fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".xls", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Maps header text to column index, first occurrence wins, case-insensitive.</summary>
     public static Dictionary<string, int> BuildHeaderIndex(List<string> header)

@@ -88,6 +88,17 @@ public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Unit
 /// <para>Removal stays a whitelist: an entry is only ever used where the row's own cell value is
 /// contained in it. See <c>AttributeMatcher.AddReference</c>.</para>
 /// </param>
+/// <param name="AdoptLargest">
+/// A <see cref="TitleAttributeKind.Measure"/> column only: where the title names this attribute
+/// under <b>two or more different sizes</b> — a storage column's "512GB" and "4TB" both present —
+/// take the largest as the cell's value and cut every one of the readings out of the title, rather
+/// than leaving the row as an unresolved conflict.
+///
+/// <para>Off by default and enabled per attribute, because it is a real decision about the data: it
+/// discards every reading but the largest on the strength of "bigger is right", which is true of a
+/// disk capacity and would not be true of, say, a price. Left off, the row is reported exactly as
+/// before — a conflict nothing is guessed about.</para>
+/// </param>
 public sealed record TitleAttributeRule(
     string Column,
     TitleAttributeKind Kind = TitleAttributeKind.Text,
@@ -98,7 +109,8 @@ public sealed record TitleAttributeRule(
     bool AllowPartial = false,
     IReadOnlyList<MeasureUnit>? Units = null,
     IReadOnlyList<IReadOnlyList<string>>? Aliases = null,
-    string? ReferenceList = null)
+    string? ReferenceList = null,
+    bool AdoptLargest = false)
 {
     public IReadOnlyList<MeasureUnit> UnitList => Units ?? [];
 
@@ -253,7 +265,8 @@ public sealed record TitleAttributeForm(
     bool AllowPartial = false,
     string Units = "",
     string Aliases = "",
-    string ReferenceList = "");
+    string ReferenceList = "",
+    bool AdoptLargest = false);
 
 /// <summary>One ready-made unit set the editor offers, on its way to the browser.</summary>
 /// <param name="Units">Already encoded into the cell format by <c>TitleRuleStore</c>. The browser
@@ -445,6 +458,18 @@ public enum TitleFixKind
     /// their answer becomes the value list entry that pairs the two.</para>
     /// </summary>
     MatchMeasure,
+
+    /// <summary>
+    /// A measured column where the title names <b>two or more</b> different sizes for it — "512GB"
+    /// and "4TB" both present — rather than one size disagreeing with the cell. Turns on
+    /// <see cref="TitleAttributeRule.AdoptLargest"/> for the column: the largest reading becomes the
+    /// cell's value and every reading is cut from the title.
+    ///
+    /// <para>Unlike <see cref="MatchMeasure"/> this does not ask — "the larger one is right" is a
+    /// rule about the column the operator states once, not a per-row judgement call, so turning it on
+    /// resolves every row like this one without a card each time.</para>
+    /// </summary>
+    AdoptLargest,
 }
 
 /// <summary>

@@ -112,14 +112,16 @@
     ['tc-remove', 'Ç', 'Çıkar'],
     ['tc-correct', 'D', 'Düzelt'],
     ['tc-suffix', 'E', 'Ek'],
-    ['tc-partial', 'K', 'Kısmi']
+    ['tc-partial', 'K', 'Kısmi'],
+    ['tc-adopt-largest', 'B', 'Büyüğü Seç']
   ];
 
   const FLAG_HINT = {
     'tc-remove': 'Bulunca başlıktan silinsin mi. Kapalıysa metin korunur.',
     'tc-correct': 'Hücredeki yazım standarda çevrilsin mi (16 → 16 GB). Tip = Metin olan satırlarda kullanılmaz.',
     'tc-suffix': 'Başlıktaki "Ocaklar" kelimesi "Ocak" değerini karşılasın mı — Türkçe çekim ekli yazımlar. Model kodu taşıyan kolonlarda kapalı bırakın.',
-    'tc-partial': 'Değerin bir parçası tamamının yerine geçsin mi — hücrede "CETINTAS EVII" yazarken başlıkta yalnızca "Çetintaş" geçmesi. Yalnızca marka, malzeme gibi kolonlarda açın; ürün tipinde açmayın.'
+    'tc-partial': 'Değerin bir parçası tamamının yerine geçsin mi — hücrede "CETINTAS EVII" yazarken başlıkta yalnızca "Çetintaş" geçmesi. Yalnızca marka, malzeme gibi kolonlarda açın; ürün tipinde açmayın.',
+    'tc-adopt-largest': 'Ölçüde: başlık bu özelliği iki farklı boyutla anıyorsa (ör. 512GB ve 4TB) büyük olanı hücreye yazıp ikisini de başlıktan siler. Değer Listesi\'nde: değer başlıkta iki farklı boyutla (ör. "1TBSSD" ve "2TBSSD") tekrar ediyorsa, büyük boyutlu olanı işaretleyip her iki geçişi de başlıktan siler. Yalnızca Ölçü ve Değer Listesi tiplerinde kullanılır.'
   };
 
   const STATUS_LABEL = {
@@ -199,6 +201,12 @@
     // Same reason for the reference list: a catalogue of spellings has nowhere to attach to a rule
     // matched by number and unit, and AttributeMatcher.Compile drops one handed to a Measure rule.
     lock(row.querySelector('.tc-reference'), kind !== 'Measure');
+
+    // Unlike Ek/Kısmi this isn't Measure-only: it also resolves a Değer Listesi value (say a disk
+    // type) that repeats because two different sibling measurements ("1TB" and "2TB") are each
+    // glued to one of the occurrences — so it stays open on both Measure and Alias, closed only
+    // where neither reading applies.
+    lock(row.querySelector('.tc-adopt-largest'), kind === 'Measure' || kind === 'Alias');
 
     syncRuleHead(row);
   }
@@ -321,7 +329,8 @@
       RPA.escapeHtml(label) + '</option>').join('');
 
     const on = { 'tc-remove': r.remove !== false, 'tc-correct': r.correct !== false,
-                 'tc-suffix': r.allowSuffix === true, 'tc-partial': r.allowPartial === true };
+                 'tc-suffix': r.allowSuffix === true, 'tc-partial': r.allowPartial === true,
+                 'tc-adopt-largest': r.adoptLargest === true };
 
     const dots = FLAGS.map(([cls]) =>
       '<span class="tc-rule-flag" data-flag="' + cls + '"></span>').join('');
@@ -454,6 +463,7 @@
       correct: row.querySelector('.tc-correct').checked,
       allowSuffix: row.querySelector('.tc-suffix').checked,
       allowPartial: row.querySelector('.tc-partial').checked,
+      adoptLargest: row.querySelector('.tc-adopt-largest').checked,
       fillFromTitle: row.querySelector('.tc-fill').value === 'true',
       units: row.querySelector('.tc-units').value.trim(),
       aliases: row.querySelector('.tc-aliases').value.trim(),

@@ -110,8 +110,10 @@ public sealed class OutlookMailSender : IDisposable
     public Task SendAsync(
         string to,
         string? cc,
+        string? bcc,
         string subject,
         string body,
+        bool isHtmlBody,
         string attachmentPath,
         bool dryRun,
         bool withSignature = false) =>
@@ -119,7 +121,7 @@ public sealed class OutlookMailSender : IDisposable
         {
             try
             {
-                Compose(to, cc, subject, body, attachmentPath, dryRun, withSignature);
+                Compose(to, cc, bcc, subject, body, isHtmlBody, attachmentPath, dryRun, withSignature);
             }
             catch (Exception ex) when (IsComFailure(ex))
             {
@@ -127,7 +129,7 @@ public sealed class OutlookMailSender : IDisposable
                 // dead proxy. Drop it and try once more on a fresh one before giving up on this row.
                 _logger.LogWarning(ex, "The Outlook call failed; reconnecting and retrying once.");
                 ReleaseApplication();
-                Compose(to, cc, subject, body, attachmentPath, dryRun, withSignature);
+                Compose(to, cc, bcc, subject, body, isHtmlBody, attachmentPath, dryRun, withSignature);
             }
 
             return null;
@@ -140,8 +142,10 @@ public sealed class OutlookMailSender : IDisposable
     void Compose(
         string to,
         string? cc,
+        string? bcc,
         string subject,
         string body,
+        bool isHtmlBody,
         string attachmentPath,
         bool dryRun,
         bool withSignature)
@@ -161,9 +165,23 @@ public sealed class OutlookMailSender : IDisposable
             if (!string.IsNullOrWhiteSpace(cc))
                 Step("setting the CC", () => Set(mail, "CC", cc));
 
+            // Same rule as CC: a blind copy is invisible to every other recipient by definition, which
+            // is exactly why an empty one must not be written either — Outlook does not distinguish
+            // "never set" from "set empty" on this header any more than it does on CC.
+            if (!string.IsNullOrWhiteSpace(bcc))
+                Step("setting the BCC", () => Set(mail, "BCC", bcc));
+
             Step("setting the subject", () => Set(mail, "Subject", subject));
 
-            if (!withSignature || !TryWriteSignedBody(mail, body))
+            if (isHtmlBody)
+            {
+                // Custom Mail's body box is a rich-text editor, not a plain-text template — the
+                // operator's own bold/italic/underline has to survive, which plain BodyFormat/Body
+                // would flatten to literal tag text.
+                if (!withSignature || !TryWriteSignedBody(mail, body, isHtmlBody: true))
+                    Step("writing the body", () => Set(mail, "HTMLBody", body));
+            }
+            else if (!withSignature || !TryWriteSignedBody(mail, body, isHtmlBody: false))
             {
                 // Plain text. The template is a plain-text box, and letting Outlook decide the format
                 // would render the operator's line breaks differently from the preview they approved.
@@ -207,8 +225,13 @@ public sealed class OutlookMailSender : IDisposable
     /// version of this caught only <see cref="COMException"/>, and Outlook answers a bad call with
     /// <c>E_INVALIDARG</c>, which .NET surfaces as an <see cref="ArgumentException"/>. That slipped
     /// straight past the filter and failed whole mails over a signature.</para>
+    ///
+    /// <para><paramref name="isHtmlBody"/> is false for every plain-text template (Offer/VAT Warnings),
+    /// where <paramref name="body"/> still needs <see cref="MailHtml.FromPlainText"/> to become HTML at
+    /// all; true for Custom Mail's rich-text body, which already <b>is</b> HTML and would show its own
+    /// tags as literal text if run through that conversion a second time.</para>
     /// </summary>
-    bool TryWriteSignedBody(object mail, string body)
+    bool TryWriteSignedBody(object mail, string body, bool isHtmlBody)
     {
         object? inspector = null;
         try
@@ -218,10 +241,11 @@ public sealed class OutlookMailSender : IDisposable
             inspector = Get(mail, "GetInspector");
 
             var signature = Get(mail, "HTMLBody") as string ?? "";
+            var bodyHtml = isHtmlBody ? body : MailHtml.FromPlainText(body);
 
             // BodyFormat is deliberately not set: writing HTMLBody switches the item to HTML on its
             // own, and setting it to plain text would flatten the signature that was just inserted.
-            Set(mail, "HTMLBody", MailHtml.InsertBeforeSignature(MailHtml.FromPlainText(body), signature));
+            Set(mail, "HTMLBody", MailHtml.InsertBeforeSignature(bodyHtml, signature));
             return true;
         }
         catch (Exception ex)

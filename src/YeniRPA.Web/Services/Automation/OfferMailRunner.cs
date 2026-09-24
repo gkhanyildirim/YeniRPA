@@ -20,9 +20,19 @@ public sealed record OutgoingMail(
     /// copies no one — Seller Offer Warnings — carries on constructing this record unchanged.</summary>
     string? Cc = null,
 
+    /// <summary>Who is copied, invisibly to every other recipient, or <c>null</c> for nobody. Optional
+    /// for the same reason <paramref name="Cc"/> is — only Custom Mail sets this today.</summary>
+    string? Bcc = null,
+
     /// <summary>Whether to put the operator's own Outlook signature under the body, which also makes
     /// the mail HTML rather than plain text. Optional and off by default for the same reason.</summary>
-    bool IncludeSignature = false);
+    bool IncludeSignature = false,
+
+    /// <summary>Whether <see cref="Body"/> is already HTML markup rather than a plain-text template —
+    /// true for Custom Mail's rich-text body, false (the default) for every plain-text template, which
+    /// still needs converting before it can carry a signature. Optional for the same reason as
+    /// <paramref name="Cc"/>.</summary>
+    bool IsHtmlBody = false);
 
 /// <summary>
 /// Sends the approved batch of seller warnings through <see cref="OutlookMailSender"/>, reporting on
@@ -231,14 +241,18 @@ public sealed class OfferMailRunner
                         throw new FileNotFoundException($"The attachment is no longer at {mail.AttachmentPath}.");
 
                     await _sender.SendAsync(
-                        mail.To, mail.Cc, mail.Subject, mail.Body, mail.AttachmentPath, dryRun, mail.IncludeSignature);
+                        mail.To, mail.Cc, mail.Bcc, mail.Subject, mail.Body, mail.IsHtmlBody,
+                        mail.AttachmentPath, dryRun, mail.IncludeSignature);
 
                     processed++;
 
-                    // The CC is named in the log, not counted: the run record has to say who else received
-                    // a copy of a seller's list, the same way it names the seller and the file.
+                    // The CC/BCC are named in the log, not counted: the run record has to say who else
+                    // received a copy of a seller's list, the same way it names the seller and the file.
+                    // Naming the BCC here is not a leak — this is the operator's own audit trail, never
+                    // seen by any recipient, which is the whole point of a blind copy.
                     var copiedTo = string.IsNullOrWhiteSpace(mail.Cc) ? "" : $" · cc {mail.Cc}";
-                    _bus.Log($"{(dryRun ? "Drafted" : "Sent")} → {mail.SellerName} · {mail.To}{copiedTo} · {mail.AttachmentName}");
+                    var blindCopiedTo = string.IsNullOrWhiteSpace(mail.Bcc) ? "" : $" · bcc {mail.Bcc}";
+                    _bus.Log($"{(dryRun ? "Drafted" : "Sent")} → {mail.SellerName} · {mail.To}{copiedTo}{blindCopiedTo} · {mail.AttachmentName}");
                 }
                 catch (Exception ex)
                 {

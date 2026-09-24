@@ -60,6 +60,30 @@ public static partial class OrderReportBuilder
     /// <summary>Minimum shipped lines before a lead-time change is suggested for a seller.</summary>
     public const int MinLeadTimeSample = 2;
 
+    /// <summary>
+    /// Similarity ratio above which two different customers' shipping addresses in the same upload
+    /// are flagged as fraud-suspect (see <see cref="AddressSimilarity.Ratio"/>). Sent to the
+    /// dashboard payload so the number shown on screen can never drift from the one actually applied.
+    /// </summary>
+    public const double FraudSimilarityThreshold = 0.80;
+
+    /// <summary>
+    /// Minimum length of a normalized shipping address before it is even considered for the
+    /// fraud-suspect comparison. Guards against near-empty addresses (e.g. only a zip, or a file with
+    /// almost no shipping-address data) trivially scoring as a match against each other.
+    /// </summary>
+    const int MinNormalizedAddressLength = 8;
+
+    /// <summary>
+    /// A zip bucket larger than this is treated as too generic to be a useful fraud signal and is
+    /// skipped entirely, rather than paying the O(bucket^2) cost of matching every candidate against
+    /// every group already formed in it. A real postal code shared by this many different orders in
+    /// one upload is far more likely a placeholder/default value (or a very coarse, city-wide code)
+    /// than a genuine address cluster — real clusters found in this app's own testing topped out
+    /// around two dozen members, well under this cap.
+    /// </summary>
+    const int MaxZipBucketSize = 500;
+
     /// <summary>Carrier name fragments (case-insensitive) that have an automatic "Received" integration.</summary>
     public static readonly string[] IntegratedCarrierKeywords = ["Aras", "Yurtici", "Yurtiçi", "DHL", "Hepsijet", "MNG"];
 
@@ -122,7 +146,18 @@ public static partial class OrderReportBuilder
         string Category,
         string Brand,
         string City,
-        string TrackingUrl);
+        string TrackingUrl,
+        // --- fraud-suspect fields: shipping address block plus the two customer-identity columns,
+        // read the same optional-column way as everything else above.
+        string ShippingStreet1,
+        string ShippingStreet2,
+        string ShippingState,
+        string ShippingZip,
+        string ShippingCountry,
+        string ShippingFirstName,
+        string ShippingLastName,
+        string CustomerId,
+        string CustomerEmail);
 
     /// <summary>
     /// Optional columns, i.e. the ones the extended dashboard sections read. A file missing any of
@@ -144,6 +179,9 @@ public static partial class OrderReportBuilder
         "Lead time to ship", "Amount transferred to seller (including taxes)",
         "Total canceled amount (including taxes)", "Total refunded amount (including taxes)",
         "Order with invoice", "Category label", "Brand", "Shipping address city", "Tracking URL",
+        "Shipping address street 1", "Shipping address street 2", "Shipping address state",
+        "Shipping address zip", "Shipping address country", "Shipping address first name",
+        "Shipping address last name", "Customer ID", "Customer email address",
     ];
 
     public static byte[] Build(Stream inputStream)
@@ -288,6 +326,9 @@ public static partial class OrderReportBuilder
                 yi: cities.IndexOf(r.City)))
             .ToList();
 
+        var hasCustomerIdentity = !(missingColumns.Contains("Customer ID") && missingColumns.Contains("Customer email address"));
+        var fraudGroups = DetectFraudSuspects(rows, hasCustomerIdentity);
+
         return new OrderReportData(
             payload,
             carriers.ToGroups(),
@@ -303,7 +344,9 @@ public static partial class OrderReportBuilder
             ReasonLabels,
             MinSampleSize,
             MinLeadTimeSample,
-            missingColumns);
+            missingColumns,
+            fraudGroups,
+            FraudSimilarityThreshold);
     }
 
     static string? NullIfEmpty(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
@@ -404,8 +447,177 @@ public static partial class OrderReportBuilder
         })];
     }
 
+    sealed record FraudCandidate(
+        string OrderNumber, string Seller, string Zip, string NormalizedAddress, string CustomerKey,
+        string DisplayAddress, string Name, double Amount, string Currency);
+
+    /// <summary>
+    /// Groups orders in this same upload whose shipping address is highly similar
+    /// (&gt; <see cref="FraudSimilarityThreshold"/>) but which belong to different customers — an
+    /// early, advisory signal ahead of the bank's own fraud flags. See <see cref="AddressSimilarity"/>
+    /// for why fuzzy matching is allowed here specifically.
+    ///
+    /// <para>Runs once per distinct order number, not per line item, since the shipping address and
+    /// customer are order-level facts that repeat identically across an order's lines. Comparisons
+    /// are bucketed by normalized zip so the cost stays near-linear on a large export instead of a
+    /// full O(n^2) scan — an address pair that matches on everything except a mistyped zip digit
+    /// lands in different buckets and is never compared. Accepted deliberately for both performance
+    /// and precision.</para>
+    ///
+    /// <para>An order with no zip, no order number, or too short a normalized address is skipped
+    /// rather than compared against everything else — an empty/near-empty zip bucket would be huge
+    /// and would mostly connect addresses in different parts of the country.</para>
+    ///
+    /// <para><b>Grouping is complete-linkage (clique), not single-linkage.</b> A candidate only joins
+    /// a group when it is directly similar to <em>every</em> existing member of that group, not just
+    /// one of them. An earlier union-find version merged groups on any single matching edge, so A~B
+    /// and B~C above threshold pulled A and C together even when A and C were not alike at all — on a
+    /// real export this chained unrelated addresses into 80-100-member "groups" that no longer meant
+    /// anything. Complete-linkage trades some recall (a real ring can fragment into two tight groups
+    /// instead of one loose one) for groups a reviewer can actually trust: every member is guaranteed
+    /// similar to every other member. A side effect of this rule, not a special case: a group can
+    /// never contain two same-customer orders, even transitively, since any same-customer pair fails
+    /// the "different customer" check regardless of how the group was assembled.</para>
+    /// </summary>
+    static List<FraudAddressGroup> DetectFraudSuspects(List<OrderRow> rows, bool hasCustomerIdentity)
+    {
+        if (!hasCustomerIdentity) return [];
+
+        var candidates = rows
+            .Where(r => !string.IsNullOrWhiteSpace(r.OrderNumber))
+            .GroupBy(r => r.OrderNumber, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Select(o => new FraudCandidate(
+                OrderNumber: o.OrderNumber,
+                Seller: o.Seller,
+                Zip: NormalizeZip(o.ShippingZip),
+                NormalizedAddress: AddressSimilarity.Normalize(o.ShippingStreet1, o.ShippingStreet2, o.ShippingZip, o.City, o.ShippingCountry),
+                CustomerKey: CustomerKey(o),
+                DisplayAddress: FormatAddress(o),
+                Name: FormatName(o),
+                Amount: o.Amount,
+                Currency: o.Currency))
+            .Where(c => c.Zip.Length > 0 && c.NormalizedAddress.Length >= MinNormalizedAddressLength)
+            .ToList();
+
+        bool Compatible(FraudCandidate a, FraudCandidate b) =>
+            !(a.CustomerKey.Length > 0 && string.Equals(a.CustomerKey, b.CustomerKey, StringComparison.OrdinalIgnoreCase)) &&
+            AddressSimilarity.Ratio(a.NormalizedAddress, b.NormalizedAddress) > FraudSimilarityThreshold;
+
+        var groups = new List<List<FraudCandidate>>();
+
+        foreach (var bucket in candidates.GroupBy(c => c.Zip, StringComparer.Ordinal))
+        {
+            // A zip this generic (see MaxZipBucketSize) is skipped outright rather than matched — the
+            // matching loop below is O(bucket^2) in the worst case, and a bucket this large is almost
+            // certainly a placeholder/default zip, not a real address signal.
+            if (bucket.Count() > MaxZipBucketSize) continue;
+
+            // Groups local to this bucket only — candidates in different zip buckets never compare,
+            // so they can never share a group.
+            var bucketGroups = new List<List<FraudCandidate>>();
+
+            foreach (var candidate in bucket)
+            {
+                var joined = bucketGroups.FirstOrDefault(g => g.All(member => Compatible(candidate, member)));
+                if (joined is not null) joined.Add(candidate);
+                else bucketGroups.Add([candidate]);
+            }
+
+            groups.AddRange(bucketGroups.Where(g => g.Count >= 2));
+        }
+
+        var ordered = groups
+            .Select(g => (Members: g, Stats: SimilarityStats(g)))
+            .OrderByDescending(g => g.Members.Count)
+            .ThenByDescending(g => g.Stats.Min)
+            .ToList();
+
+        var result = new List<FraudAddressGroup>();
+        for (var groupId = 0; groupId < ordered.Count; groupId++)
+        {
+            var (members, stats) = ordered[groupId];
+            result.Add(new FraudAddressGroup(
+                GroupId: groupId + 1,
+                GroupSize: members.Count,
+                RepresentativeAddress: members[0].DisplayAddress,
+                MinSimilarityPercent: Math.Round(stats.Min * 100, 1),
+                MaxSimilarityPercent: Math.Round(stats.Max * 100, 1),
+                Members: members.Select((c, i) => new FraudGroupMember(
+                    c.OrderNumber, c.Seller, c.CustomerKey, c.Name, Math.Round(c.Amount, 2), c.Currency,
+                    c.DisplayAddress, Math.Round(stats.PerMemberMax[i] * 100, 1)))
+                    .ToList()));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The tightness guarantee behind a group's range badge — <c>Min</c>/<c>Max</c> are the weakest
+    /// and closest pairs anywhere in the group (guaranteed by construction, see
+    /// <see cref="DetectFraudSuspects"/>) — plus, per member, that order's own best match against any
+    /// other member. Showing the group's bare minimum on every row made a tightly-matched order look
+    /// as weak as the group's single worst pair; <c>PerMemberMax</c> is what each row displays instead.
+    /// </summary>
+    static (double Min, double Max, double[] PerMemberMax) SimilarityStats(List<FraudCandidate> members)
+    {
+        var min = 1.0;
+        var max = 0.0;
+        var perMemberMax = new double[members.Count];
+
+        for (var i = 0; i < members.Count; i++)
+        {
+            for (var j = i + 1; j < members.Count; j++)
+            {
+                var score = AddressSimilarity.Ratio(members[i].NormalizedAddress, members[j].NormalizedAddress);
+                if (score < min) min = score;
+                if (score > max) max = score;
+                if (score > perMemberMax[i]) perMemberMax[i] = score;
+                if (score > perMemberMax[j]) perMemberMax[j] = score;
+            }
+        }
+
+        return (min, max, perMemberMax);
+    }
+
+    /// <summary>Same-customer identity key: <c>Customer ID</c>, falling back to <c>Customer email
+    /// address</c> when it's blank — the confirmed identity rule for "different customer".</summary>
+    static string CustomerKey(OrderRow r) =>
+        !string.IsNullOrWhiteSpace(r.CustomerId) ? r.CustomerId.Trim() : r.CustomerEmail.Trim();
+
+    static string NormalizeZip(string zip) =>
+        new string(zip.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+
+    /// <summary>Human-readable address block for the fraud-review table, built only for flagged
+    /// orders so full addresses are never sent to the browser for the rest of the upload.</summary>
+    static string FormatAddress(OrderRow o)
+    {
+        string Join(params string[] parts) => string.Join(' ', parts.Where(s => !string.IsNullOrWhiteSpace(s)));
+        return string.Join(", ", new[]
+        {
+            Join(o.ShippingFirstName, o.ShippingLastName),
+            Join(o.ShippingStreet1, o.ShippingStreet2),
+            Join(o.ShippingZip, o.City),
+            o.ShippingCountry,
+        }.Where(s => !string.IsNullOrWhiteSpace(s)));
+    }
+
+    /// <summary>Shipping recipient's first + last name — the same value <see cref="FormatAddress"/>
+    /// folds into its first line, surfaced here as its own field for the fraud-review table's Name
+    /// column.</summary>
+    static string FormatName(OrderRow o) =>
+        string.Join(' ', new[] { o.ShippingFirstName, o.ShippingLastName }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
     static List<OrderRow> ReadOrders(Stream inputStream) => ReadOrders(inputStream, out _);
 
+    /// <summary>
+    /// Reads the uploaded workbook through ClosedXML's DOM (<see cref="XLWorkbook"/>), which loads the
+    /// whole file into memory before a single row can be read. That's fine at the size this report was
+    /// originally built for, but does not scale the way <see cref="OfferExportReader"/>'s streaming
+    /// <c>OpenXmlReader</c> does for a much larger file — if a large upload (tens of thousands of rows,
+    /// tens of MB) is slow or hangs and <see cref="MaxZipBucketSize"/> isn't the cause, this DOM read is
+    /// the next place to look, following <see cref="OfferExportReader"/>'s pattern.
+    /// </summary>
     static List<OrderRow> ReadOrders(Stream inputStream, out List<string> missingColumns)
     {
         using var workbook = new XLWorkbook(inputStream);
@@ -463,6 +675,16 @@ public static partial class OrderReportBuilder
         var cCity = Opt("Shipping address city");
         var cTrackingUrl = Opt("Tracking URL");
 
+        var cShipStreet1 = Opt("Shipping address street 1");
+        var cShipStreet2 = Opt("Shipping address street 2");
+        var cShipState = Opt("Shipping address state");
+        var cShipZip = Opt("Shipping address zip");
+        var cShipCountry = Opt("Shipping address country");
+        var cShipFirstName = Opt("Shipping address first name");
+        var cShipLastName = Opt("Shipping address last name");
+        var cCustomerId = Opt("Customer ID");
+        var cCustomerEmail = Opt("Customer email address");
+
         missingColumns = OptionalColumns.Where(name => !columnIndex.ContainsKey(name)).ToList();
 
         string Text(IXLRow row, int col) => col == 0 ? "" : row.Cell(col).GetString().Trim();
@@ -507,7 +729,16 @@ public static partial class OrderReportBuilder
                 Category: Text(row, cCategory),
                 Brand: Text(row, cBrand),
                 City: Text(row, cCity),
-                TrackingUrl: Text(row, cTrackingUrl)));
+                TrackingUrl: Text(row, cTrackingUrl),
+                ShippingStreet1: Text(row, cShipStreet1),
+                ShippingStreet2: Text(row, cShipStreet2),
+                ShippingState: Text(row, cShipState),
+                ShippingZip: Text(row, cShipZip),
+                ShippingCountry: Text(row, cShipCountry),
+                ShippingFirstName: Text(row, cShipFirstName),
+                ShippingLastName: Text(row, cShipLastName),
+                CustomerId: Text(row, cCustomerId),
+                CustomerEmail: Text(row, cCustomerEmail)));
         }
 
         return rows;

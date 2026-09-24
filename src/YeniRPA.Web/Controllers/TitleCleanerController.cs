@@ -10,10 +10,12 @@ namespace YeniRPA.Web.Controllers;
 /// Title Cleaner. Strips the values an attribute column names out of the product title, and reports
 /// where the title and the column disagree.
 ///
-/// <para><b>Nothing here writes to the uploaded file.</b> The preview computes a result and hands it
-/// back for review; the download recomputes it and returns a new workbook that keeps an untouched
-/// copy of the input on its second sheet. Same shape as the mapping imports elsewhere in this app,
-/// and for the same reason: a cleaner rewrites data that is not recoverable afterwards.</para>
+/// <para><b>The Excel download edits the uploaded workbook itself.</b> For an <c>.xlsx</c>/<c>.xls</c>
+/// upload it reopens the operator's own bytes and rewrites only the title and attribute cells a rule
+/// actually changed — every other cell, every other sheet, every dropdown the marketplace's export
+/// carries stays exactly as uploaded (see <see cref="TitleCleanWorkbook.BuildFromOriginal"/>). A
+/// <c>.csv</c> upload has no such workbook to reopen, so it still gets a freshly built single sheet
+/// (<see cref="TitleCleanWorkbook.Build"/>).</para>
 ///
 /// <para>The Excel download <b>re-derives the result server-side from the uploaded file</b> rather
 /// than taking rows back from the browser — the same rule as Seller Offer Warnings. The engine is
@@ -376,8 +378,22 @@ public sealed class TitleCleanerController(
         var table = ReadTable(file);
         var rows = TitleCleanBuilder.Clean(rules, table);
 
+        // An .xlsx/.xls upload is a real workbook worth reopening — its dropdowns and other sheets
+        // survive only if this edits those bytes rather than building a new file. A .csv upload has
+        // no such workbook, so it keeps the old from-scratch sheet.
+        byte[] bytes;
+        if (TabularFile.IsXlsx(file.FileName))
+        {
+            using var original = file.OpenReadStream();
+            bytes = TitleCleanWorkbook.BuildFromOriginal(original, table, rules, rows);
+        }
+        else
+        {
+            bytes = TitleCleanWorkbook.Build(table, rules, rows);
+        }
+
         return File(
-            TitleCleanWorkbook.Build(table, rules, rows),
+            bytes,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             TitleCleanWorkbook.FileName(rules.Source.Name));
     }

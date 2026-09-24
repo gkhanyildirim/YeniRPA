@@ -23,13 +23,19 @@ public sealed class SellerMailDirectory
     /// name.</summary>
     public const string DefaultSheetName = "Data";
 
-    static readonly string[] SellerNameHeaders =
+    // Internal rather than private: CustomMailSellerListReader reads the seller export Custom Mail
+    // joins against this directory, and needs the same name/id aliases to pull the values it looks
+    // this directory up by — a header alias added here is not something that also has to be
+    // remembered there.
+    internal static readonly string[] SellerNameHeaders =
         ["Satıcı", "Satici", "Seller", "Seller name", "Satıcı Adı", "Shopname MIRAKL"];
 
     static readonly string[] EmailHeaders = ["Mail", "E-mail", "Email", "E-posta", "Eposta"];
 
-    static readonly string[] SellerIdHeaders =
-        ["Seller id", "Seller ID", "SellerId", "Satıcı Id", "MIRAKL ID"];
+    // "Kimlik" included for the same reason: the "shops" seller export names its id column "Kimlik",
+    // not any of the names an offer/VAT export uses.
+    internal static readonly string[] SellerIdHeaders =
+        ["Seller id", "Seller ID", "SellerId", "Satıcı Id", "MIRAKL ID", "Kimlik"];
 
     readonly Dictionary<string, string> _byId;
     readonly Dictionary<string, string> _byName;

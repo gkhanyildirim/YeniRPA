@@ -1068,6 +1068,9 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
 .filter-bar--collapsible.is-collapsed .filter-fields { display: none; }
 
 .field { display: flex; flex-direction: column; gap: 4px; }
+/* `display: flex` above outranks the browser's own [hidden] rule, same as .panel/.results/.btn
+   elsewhere in this file — a field hidden by script would otherwise stay on the page. */
+.field[hidden] { display: none; }
 
 .field > label {
   font-size: .72rem;
@@ -1112,6 +1115,39 @@ input[type="text"]:focus,
 input[type="number"]:focus,
 input[type="search"]:focus,
 textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* Custom Mail's body needs simple rich text (bold/italic/underline) so an operator can paste a
+   formatted announcement and keep its emphasis — a plain textarea cannot render that. Same visual
+   shape as the input/textarea rule above, on a contenteditable div instead: browsers already keep
+   formatting from a paste out of Word/Outlook into a contenteditable, so no editor library is needed
+   for this app's one no-external-dependencies exception to hold. */
+.rich-toolbar { display: flex; gap: 6px; margin-bottom: 6px; }
+
+/* Calibri/Aptos/Segoe UI, not this app's usual monospace field font: this box edits prose that
+   becomes an Outlook mail body, and CustomMailController.Send wraps the same stack around what gets
+   sent — so the box looks like what the seller receives, not like a code field. */
+.rich-body {
+  min-height: 220px;
+  max-height: 420px;
+  overflow-y: auto;
+  font-family: Calibri, Aptos, 'Segoe UI', Arial, sans-serif;
+  font-size: .95rem;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+.rich-body:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* The recipient card preview mirrors .rich-body's font for the same reason — msg-body's own default
+   (shared with Offer/VAT Warnings' plain-text previews) is deliberately monospace, which is wrong for
+   text that will arrive in a normal font. */
+.msg-body.is-rich { font-family: Calibri, Aptos, 'Segoe UI', Arial, sans-serif; font-size: .85rem; }
+
+/* The To/Subject header custom-mail.js prepends to a recipient card's rich-text preview — dimmed so
+   the seller's own mail body, right below it, is what actually draws the eye. */
+.msg-preview-head { color: var(--ink-2); font-size: .7rem; font-family: var(--font-mono); }
 
 /* An example inside a box has to be legible as an example. Left at the browser default it renders
    in the same weight and colour as a real value, and in a table of forty rows that reads as forty
@@ -1264,6 +1300,79 @@ select:disabled {
   border-top: 1px solid var(--line);
   background: var(--surface-2);
 }
+
+/* Fraud-suspect address groups: same collapsed-summary/expand-on-click convention as .tc-rule
+   above, one card per address cluster instead of one per title rule. A real export can produce
+   thousands of groups, so the list sits in the same scroll-capped box as every other table
+   (.table-scroll) rather than pushing the rest of the page down; the extra class only adds the
+   inner padding a bare .table-scroll doesn't need for a <table> but this card list does. */
+.fraud-group-scroll { padding: 10px; }
+
+.fraud-group {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e-1);
+  overflow: hidden;
+}
+.fraud-group + .fraud-group { margin-top: 10px; }
+
+/* Holds the selection checkbox and the expand button side by side. The checkbox has to live outside
+   .fraud-group-head: an <input> nested inside a <button> is invalid content and browsers silently
+   move it out to fix the markup, breaking the layout. */
+.fraud-group-bar { display: flex; align-items: center; }
+.fraud-group-check { flex: none; margin: 0 0 0 16px; }
+
+.fraud-group-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 12px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fraud-group-head:hover { background: var(--surface-2); }
+.fraud-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.fraud-group-caret {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--ink-3);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform .12s ease;
+}
+.fraud-group-head[aria-expanded="true"] .fraud-group-caret {
+  transform: rotate(90deg) translateX(1px);
+  border-left-color: var(--accent);
+}
+
+.fraud-group-size { flex: none; font-size: .78rem; color: var(--ink-2); }
+
+.fraud-group-addr {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .81rem;
+  color: var(--ink-2);
+}
+
+.fraud-group-body {
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  overflow-x: auto;
+}
+.fraud-group-table { min-width: 0; }
+.fraud-group-table thead th { position: static; }
 
 .tc-fields {
   display: grid;
@@ -1970,6 +2079,10 @@ td.num { white-space: nowrap; }
 
 /* Two boxes in one cell (≥ and ≤) share the column rather than each claiming its width. */
 .table-filters .range { display: flex; gap: 4px; }
+
+/* Same ≥/≤ pairing, outside a table's filter row — a .filter-bar field for a value that isn't its
+   own table column (e.g. the fraud-suspect group list's similarity/order-count range). */
+.filter-bar .range { display: flex; gap: 4px; }
 
 /* A header that sorts is a button, but it has to read as the header it replaced. */
 .th-sort {

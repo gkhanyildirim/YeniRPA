@@ -163,7 +163,7 @@ public class TitleCleanerRealFileTests
     // Ryzen5 220 · 512SSD, both halves of the glued token
     [InlineData(4, "ThinkPad E16 21ST0058TX003 WUXGA")]
     // Core5 120U · nothing at all survives but the model
-    [InlineData(5, "Vivobook 15 X1504VA-BQ5383W001")]
+    [InlineData(5, "VivoBook 15 X1504VA-BQ5383W001")]
     // Ultra7 255U
     [InlineData(9, "ThinkPad T16 21QFS2BHTX WUXGA")]
     // Ryzen5 7520U, and a title carrying the double space a real export writes
@@ -188,7 +188,7 @@ public class TitleCleanerRealFileTests
     [InlineData(20, "IdeaPad 3 81W1005QTX Ryzen7 3700U FullHD")]
     // "Ryzen3-30" is not a processor anybody makes. Ryzen3 goes, the typo stays and is reported —
     // and the series the seller typed twice goes, because this rule set asks for that.
-    [InlineData(11, "Ideapad Slim3 82XQ0129TX002 -30 FHD")]
+    [InlineData(11, "IdeaPad Slim3 82XQ0129TX002 -30 FHD")]
     public void RowsWhoseCellAndTitleDisagreeKeepTheirTitle(int rowNumber, string expected)
     {
         Assert.Equal(expected, Title(Clean(LaptopRules(), "teknoraks0109.xlsx"), rowNumber));
@@ -691,8 +691,8 @@ public class TitleCleanerRealFileTests
     /// front. Removing only "120U" left "Core 5" stranded on 46 rows.</para>
     /// </summary>
     [Theory]
-    [InlineData(3, "Vivobook 15 X1504VA-NJ3664W F25")]
-    [InlineData(8, "Vivobook 15 X1504VA-NJ3663W F27")]
+    [InlineData(3, "VivoBook 15 X1504VA-NJ3664W F25")]
+    [InlineData(8, "VivoBook 15 X1504VA-NJ3663W F27")]
     [InlineData(10, "IdeaPad Slim 3 83K10016TR i5-13420H F9")]
     public void TheFourthSellersProcessorIsCompletedFromTheCatalogue(int rowNumber, string expected)
     {

@@ -81,6 +81,18 @@ builder.Services.AddSingleton<Track17Store>();
 builder.Services.AddSingleton<Track17Browser>();
 builder.Services.AddSingleton<Track17Runner>();
 
+// Cargo Seller Report: matches a cargo-invoice export against the Marketplace return/exchange and MM
+// Pazaryeri cargo data exports by tracking code. Read-only, no browser or login involved, so it sits
+// next to Track17 rather than the Outlook modules below. CargoSellerReportStore holds the last
+// generated report the same way Track17BatchStore/OfferBatchStore do — in memory only, deliberately
+// left out of JsonToLiteDbMigrator, because the report is worthless after a restart anyway.
+builder.Services.AddSingleton<CargoSellerReportStore>();
+
+// POS Reconciliation: backfills Bulut Tahsilat's blank order numbers from Craftgate by Provizyon
+// No / authCode, then pivots by POS Banka x Taksit. Same in-memory, single-batch shape as
+// CargoSellerReportStore, for the same reason.
+builder.Services.AddSingleton<PosReconciliationStore>();
+
 // The two WhatsApp warning modules — Late Order Warnings and Incident Warnings. The store owns the
 // seller → WhatsApp group mapping (shared by both) and each module's message templates; group names
 // are not credentials, so unlike the Mirakl session it is not encrypted. WhatsAppBrowser keeps its
@@ -119,6 +131,14 @@ if (OperatingSystem.IsWindows())
 
     builder.Services.AddSingleton<IVatMailStore, VatMailStore>();
     builder.Services.AddSingleton<VatBatchStore>();
+
+    // Custom Mail: a free-form mail to whichever sellers the operator ticks after resolving them
+    // against an uploaded address directory. No per-seller template or attachment to remember — the
+    // subject/body/CC/BCC are typed fresh each campaign — but the hand-entered addresses for sellers
+    // the directory does not cover are real operator input worth keeping, hence its own settings store
+    // alongside the batch store that holds the prepare→send recipient pairing.
+    builder.Services.AddSingleton<ICustomMailStore, CustomMailStore>();
+    builder.Services.AddSingleton<CustomMailBatchStore>();
 
     // Bundles all six LiteDB-backed stores' data into one backup file. Registered here, not above
     // the guard, because it depends on IOfferMailStore/IVatMailStore, which only exist on Windows.

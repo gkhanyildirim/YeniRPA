@@ -124,12 +124,21 @@ public static class TitleFixSuggester
         return attribute.Reason switch
         {
             // A measured column disagrees about a number, not about a spelling, so merging two
-            // spellings has nothing to work with. It gets its own card, and that one asks a question.
+            // spellings has nothing to work with. It gets its own card, and that one asks a question —
+            // unless the title actually names two or more different sizes, which ProposeMatchMeasure
+            // refuses outright (it is built to ask about one disagreement, not to rank several), and
+            // ProposeAdoptLargest offers a policy instead of a question for exactly that case.
             TitleAttributeReason.Disagreement when rule.Kind == TitleAttributeKind.Measure =>
-                ProposeMatchMeasure(rules, scenario, rule),
+                ProposeMatchMeasure(rules, scenario, rule) ?? ProposeAdoptLargest(rules, scenario, rule),
 
             TitleAttributeReason.Disagreement => ProposeMerge(rules, scenario, rule),
-            TitleAttributeReason.ValueRepeated => ProposeProtect(rules, scenario, rule),
+
+            // Repeated because the title genuinely lists two of it, each a different size glued on —
+            // "1TBSSD+2TBSSD" — gets the same largest-wins policy as a measured column's own two
+            // readings; ProposeProtect is for the other shape, where the second occurrence belongs to
+            // some other attribute entirely.
+            TitleAttributeReason.ValueRepeated =>
+                ProposeAdoptLargestSibling(rules, scenario, rule) ?? ProposeProtect(rules, scenario, rule),
             TitleAttributeReason.BareNumber => ProposeAdopt(rules, scenario, rule),
             TitleAttributeReason.SpellingUnknown => ProposeAdoptSpelling(rules, scenario, rule),
             _ => null,
@@ -282,6 +291,158 @@ public static class TitleFixSuggester
             // card that arrives pre-answered would collect the operator's agreement without asking.
             preselected: false,
             choices: choices);
+    }
+
+    /// <summary>
+    /// The title names this attribute under two or more different sizes rather than one disagreeing
+    /// with the cell — "512GB" and "4TB" both present. <see cref="ProposeMatchMeasure"/> is built to
+    /// ask about a single disagreement and refuses this case outright (<c>said.Contains(", ")</c>);
+    /// this one offers a column-wide policy instead of a per-row question, because "the larger one is
+    /// right" is the same answer on every row shaped like this one, not a judgement call that needs
+    /// the operator's eyes on each row individually.
+    ///
+    /// <para>Re-scans the sample title itself rather than trusting <see
+    /// cref="TitleAttributeResult.TitleSaid"/>, the same way <see cref="ProposeMatchMeasure"/> does —
+    /// that field only carries the distinct <em>text</em> spellings, and picking a winner needs every
+    /// reading's quantity.</para>
+    /// </summary>
+    static TitleFix? ProposeAdoptLargest(CompiledRuleSet rules, Scenario scenario, TitleAttributeRule rule)
+    {
+        var attribute = scenario.Attribute;
+
+        var attr = rules.Attributes.FirstOrDefault(a =>
+            string.Equals(a.Rule.Column, attribute.Column, StringComparison.Ordinal));
+
+        if (attr is null)
+            return null;
+
+        var cell = AttributeMatcher.ReadValue(attr, attribute.OriginalValue, rules.DecimalSeparator);
+
+        // Only readings the family can convert to a common base are comparable — an inch mark and a
+        // centimetre reading do not rank against each other, so a mix with even one that does not
+        // convert is left as the unresolved conflict it already is.
+        var readings = AttributeMatcher
+            .Scan(attr, FoldedTitle.Of(scenario.Sample.OriginalTitle), cell, rules.DecimalSeparator)
+            .Where(m => m.BaseQuantity.HasValue)
+            .ToList();
+
+        var distinct = readings.Select(m => m.Key).Distinct(StringComparer.Ordinal).ToList();
+        if (distinct.Count < 2)
+            return null;
+
+        var sizes = string.Join(", ", readings
+            .OrderByDescending(m => m.BaseQuantity!.Value)
+            .Select(m => m.Canonical)
+            .Distinct(StringComparer.Ordinal));
+
+        return Build(
+            rules, scenario, rule.Column,
+            TitleFixKind.AdoptLargest,
+            $"{rule.Column}: başlıkta birden fazla boyut var ({sizes}), özellikte " +
+            $"\"{attribute.OriginalValue.Trim()}\"",
+            "Böyle durumlarda büyük olanı seç: hücreye yaz, hepsini başlıktan sil",
+            // Nothing to type: the card turns a switch on, the same as EnableMatching.
+            "",
+            ApplyAdoptLargest,
+            warning: rule.Correct
+                ? null
+                : "Bu kolonda Düzelt kapalı: büyük olan başlıktan silinir ama hücreye yazılmaz.");
+    }
+
+    /// <summary>
+    /// A Değer Listesi column's own value repeated because the title genuinely lists two of it, each
+    /// glued to a different size from a sibling Measure column — "1TBSSD+2TBSSD": the disk type is
+    /// not in question, only which drive's capacity the row's single capacity cell should carry.
+    /// Turns on <see cref="TitleAttributeRule.AdoptLargest"/> for this column, the same switch and
+    /// the same policy <see cref="ProposeAdoptLargest"/> offers a measured column's own two readings
+    /// — see <see cref="TitleCleanBuilder"/>'s <c>ResolveRepeatedAliasSiblings</c> for what the switch
+    /// then does with it.
+    ///
+    /// <para>Re-derives the glued sizes by re-scanning the sample title, the same way every other
+    /// proposer here does rather than trusting a field on the result — occurrence positions are not
+    /// carried on <see cref="TitleAttributeResult"/> at all, only the reason and the texts found.</para>
+    ///
+    /// <para>Only where <em>every</em> occurrence is glued to a comparable size from the <b>same</b>
+    /// sibling column. A repeat with an unglued occurrence, or two occurrences glued to two different
+    /// sibling columns, is not this shape — <see cref="ProposeProtect"/> is offered instead.</para>
+    /// </summary>
+    static TitleFix? ProposeAdoptLargestSibling(CompiledRuleSet rules, Scenario scenario, TitleAttributeRule rule)
+    {
+        if (rule.Kind != TitleAttributeKind.Alias)
+            return null;
+
+        var attribute = scenario.Attribute;
+
+        var attr = rules.Attributes.FirstOrDefault(a =>
+            string.Equals(a.Rule.Column, attribute.Column, StringComparison.Ordinal));
+
+        if (attr is null)
+            return null;
+
+        var title = FoldedTitle.Of(scenario.Sample.OriginalTitle);
+        var cell = AttributeMatcher.ReadValue(attr, attribute.OriginalValue, rules.DecimalSeparator);
+
+        if (cell is null)
+            return null;
+
+        var occurrences = AttributeMatcher.Scan(attr, title, cell, rules.DecimalSeparator)
+            .Where(m => string.Equals(m.Key, cell.Key, StringComparison.Ordinal))
+            .ToList();
+
+        if (occurrences.Count < 2)
+            return null;
+
+        CompiledAttribute? sibling = null;
+        var glued = new List<(TitleMatch Occurrence, TitleMatch Quantity)>();
+
+        foreach (var occurrence in occurrences)
+        {
+            TitleMatch? found = null;
+
+            foreach (var candidate in rules.Attributes)
+            {
+                if (candidate.Rule.Kind != TitleAttributeKind.Measure)
+                    continue;
+
+                if (sibling is not null && !ReferenceEquals(candidate, sibling))
+                    continue;
+
+                var quantity = AttributeMatcher.Scan(candidate, title, null, rules.DecimalSeparator)
+                    .FirstOrDefault(m => m.BaseQuantity is not null &&
+                        (m.Start == occurrence.End || m.End == occurrence.Start));
+
+                if (quantity is null)
+                    continue;
+
+                sibling = candidate;
+                found = quantity;
+                break;
+            }
+
+            if (found is null)
+                return null;
+
+            glued.Add((occurrence, found));
+        }
+
+        var distinct = glued.Select(g => g.Quantity.Key).Distinct(StringComparer.Ordinal).ToList();
+        if (distinct.Count < 2)
+            return null;
+
+        var sizes = string.Join(", ", glued
+            .OrderByDescending(g => g.Quantity.BaseQuantity!.Value)
+            .Select(g => g.Quantity.Canonical)
+            .Distinct(StringComparer.Ordinal));
+
+        return Build(
+            rules, scenario, rule.Column,
+            TitleFixKind.AdoptLargest,
+            $"{rule.Column}: \"{attribute.OriginalValue.Trim()}\" başlıkta {occurrences.Count} kez " +
+            $"geçiyor, her biri farklı bir boyutla ({sizes})",
+            "Büyük boyutlu olanı seç: o boyutu ilgili kolona yaz, hepsini başlıktan sil",
+            // Nothing to type: the card turns a switch on, the same as EnableMatching.
+            "",
+            ApplyAdoptLargest);
     }
 
     /// <summary>
@@ -1258,6 +1419,7 @@ public static class TitleFixSuggester
                 TitleFixKind.AdoptCategoryType => ApplyCategoryType(result, candidate),
                 TitleFixKind.EnableMatching => ApplyEnable(result, candidate),
                 TitleFixKind.MatchMeasure => ApplyMatchMeasure(result, candidate),
+                TitleFixKind.AdoptLargest => ApplyAdoptLargest(result, candidate),
                 _ => result,
             };
         }
@@ -1288,6 +1450,11 @@ public static class TitleFixSuggester
 
             return rule with { Aliases = groups };
         });
+
+    /// <summary>Turns on <see cref="TitleAttributeRule.AdoptLargest"/> for the column and nothing
+    /// else — the column-wide policy the card proposed.</summary>
+    static TitleRuleSet ApplyAdoptLargest(TitleRuleSet set, TitleFix fix) =>
+        WithRule(set, fix.TargetColumn, rule => rule with { AdoptLargest = true });
 
     static TitleRuleSet ApplyMerge(TitleRuleSet set, TitleFix fix) =>
         WithRule(set, fix.TargetColumn, rule => rule with

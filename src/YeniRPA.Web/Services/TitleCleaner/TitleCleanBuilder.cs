@@ -274,11 +274,13 @@ public static class TitleCleanBuilder
         var results = new List<TitleAttributeResult>(rules.Attributes.Count);
         var errors = new List<string>();
         var removals = new List<(int Start, int End)>();
+        var errorRangeByIndex = new (int Start, int End)[rules.Attributes.Count];
 
         for (var i = 0; i < rules.Attributes.Count; i++)
         {
             var attr = rules.Attributes[i];
             var original = (cell(attr.Rule.Column) ?? "").Trim();
+            var errorsBefore = errors.Count;
 
             results.Add(Judge(
                 attr,
@@ -289,7 +291,11 @@ public static class TitleCleanBuilder
                 title,
                 removals,
                 errors));
+
+            errorRangeByIndex[i] = (errorsBefore, errors.Count);
         }
+
+        ResolveRepeatedAliasSiblings(rules, pool, accepted, results, removals, errors, errorRangeByIndex);
 
         if (rules.Source.CollapseRepeats)
             AddRepeats(title, removals);
@@ -308,10 +314,136 @@ public static class TitleCleanBuilder
         return new TitleCleanRow(
             rowNumber,
             title.Original,
-            Apply(title.Original, removals),
+            ModelCasing.Apply(Apply(title.Original, removals)),
             results,
             errors,
             suspect);
+    }
+
+    /// <summary>
+    /// <see cref="TitleAttributeRule.AdoptLargest"/> on a Değer Listesi column: a value like "SSD"
+    /// that is <see cref="TitleAttributeReason.ValueRepeated"/> because the title actually lists a
+    /// machine with two of it, at two different sizes glued to each occurrence —
+    /// "1TBSSD+2TBSSD". The capacity column can only say one of the two, so this column reports the
+    /// repeat as ambiguous even though nothing is really wrong: the largest of the glued sizes is
+    /// what belongs in the capacity cell, and every occurrence — both the type word and the size
+    /// glued to it — leaves the title.
+    ///
+    /// <para>Only where every repeated occurrence is glued to a measurement from the <b>same</b>
+    /// sibling column, and those measurements are at least two genuinely different, comparable
+    /// sizes. A mix that does not fit this shape — a third occurrence with nothing glued to it, two
+    /// sibling columns competing for the same word — is left exactly as <see cref="Judge"/> reported
+    /// it, the same as <see cref="ResolveLargest"/> does for its own, single-column case.</para>
+    ///
+    /// <para>Reads <paramref name="pool"/> rather than <paramref name="accepted"/> for the glued
+    /// measurement on purpose: a disk column can say "SSD" only once, so the smaller of two glued
+    /// sizes is never confirmed as this row's own capacity — it would not be in <c>accepted</c> as a
+    /// value match, only ever a candidate <see cref="AttributeMatcher.Scan"/> already found.</para>
+    /// </summary>
+    static void ResolveRepeatedAliasSiblings(
+        CompiledRuleSet rules,
+        List<Candidate> pool,
+        List<Candidate> accepted,
+        List<TitleAttributeResult> results,
+        List<(int Start, int End)> removals,
+        List<string> errors,
+        (int Start, int End)[] errorRangeByIndex)
+    {
+        var errorRangesToClear = new List<(int Start, int End)>();
+
+        for (var i = 0; i < rules.Attributes.Count; i++)
+        {
+            var attr = rules.Attributes[i];
+            var rule = attr.Rule;
+
+            if (rule.Kind != TitleAttributeKind.Alias || !rule.AdoptLargest ||
+                results[i].Reason != TitleAttributeReason.ValueRepeated)
+            {
+                continue;
+            }
+
+            var occurrences = accepted
+                .Where(c => ReferenceEquals(c.Attr, attr) && c.IsValueMatch)
+                .ToList();
+
+            if (occurrences.Count < 2)
+                continue;
+
+            CompiledAttribute? sibling = null;
+            var glued = new List<(Candidate Occurrence, Candidate Quantity)>();
+            var every = true;
+
+            foreach (var occurrence in occurrences)
+            {
+                var quantity = pool.FirstOrDefault(c =>
+                    c.Attr.Rule.Kind == TitleAttributeKind.Measure &&
+                    (sibling is null || ReferenceEquals(c.Attr, sibling)) &&
+                    c.Match.BaseQuantity is not null &&
+                    c.Match.Spans.Any(s => occurrence.Match.Spans.Any(
+                        o => s.End == o.Start || s.Start == o.End)));
+
+                if (quantity is null)
+                {
+                    every = false;
+                    break;
+                }
+
+                sibling ??= quantity.Attr;
+                glued.Add((occurrence, quantity));
+            }
+
+            if (!every || sibling is null)
+                continue;
+
+            var distinctKeys = glued.Select(g => g.Quantity.Match.Key)
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+
+            if (distinctKeys < 2)
+                continue;
+
+            var winner = glued.OrderByDescending(g => g.Quantity.Match.BaseQuantity!.Value).First();
+
+            if (rule.Remove)
+                removals.AddRange(occurrences.SelectMany(c => c.Match.Spans));
+
+            var siblingRule = sibling.Rule;
+            if (siblingRule.Remove)
+                removals.AddRange(glued.SelectMany(g => g.Quantity.Match.Spans));
+
+            var correct = siblingRule.Correct;
+            var siblingResult = results[sibling.Index];
+
+            results[sibling.Index] = siblingResult with
+            {
+                Status = correct ? TitleAttributeStatus.Corrected : TitleAttributeStatus.Ok,
+                Value = correct ? winner.Quantity.Match.Canonical : siblingResult.OriginalValue,
+                TitleSaid = winner.Quantity.Match.Canonical,
+                Reason = TitleAttributeReason.None,
+            };
+
+            // The alias's own value was never in question — every occurrence already spelled the
+            // cell's own value correctly — so once the ambiguity is resolved this column simply
+            // found what it was looking for.
+            results[i] = results[i] with
+            {
+                Status = TitleAttributeStatus.Ok,
+                Value = results[i].OriginalValue,
+                TitleSaid = null,
+                Message = null,
+                Reason = TitleAttributeReason.None,
+            };
+
+            errorRangesToClear.Add(errorRangeByIndex[i]);
+        }
+
+        // Removed largest offset first, so clearing an earlier attribute's message does not shift the
+        // indices a later one already recorded.
+        foreach (var (start, end) in errorRangesToClear.OrderByDescending(r => r.Start))
+        {
+            if (end > start)
+                errors.RemoveRange(start, end - start);
+        }
     }
 
     /// <summary>How many filled cells a row needs before the count below means anything. Under it a
@@ -476,6 +608,17 @@ public static class TitleCleanBuilder
 
         if (hits.Count == 0)
         {
+            // The title names this attribute under two or more different sizes rather than one
+            // disagreeing with the cell — "512GB" and "4TB" both present. Ordinarily that is reported
+            // below as an unresolved conflict; a column that has opted into AdoptLargest gets it
+            // resolved instead, largest reading wins.
+            if (rule.Kind == TitleAttributeKind.Measure && rule.AdoptLargest)
+            {
+                var resolved = ResolveLargest(rule, original, evidence, removals);
+                if (resolved is not null)
+                    return resolved;
+            }
+
             // The title's own words. A conflict is reported so a person can read the two sides
             // against each other, and quoting the rule's canonical spelling for the title's half
             // shows them a phrase the title may not contain — it also feeds the "merge these two
@@ -615,6 +758,49 @@ public static class TitleCleanBuilder
             original,
             status == TitleAttributeStatus.Corrected ? canonical : original,
             canonical);
+    }
+
+    /// <summary>
+    /// <see cref="TitleAttributeRule.AdoptLargest"/>: where the title's evidence names this attribute
+    /// under two or more different, comparable sizes, the largest wins — its span and every other
+    /// reading's span are cut from the title, and (when the rule allows correcting) its canonical form
+    /// becomes the cell's value.
+    ///
+    /// <para>Comparable means every reading has a <see cref="TitleMatch.BaseQuantity"/> — the family's
+    /// units convert to one common base. Without that there is no "larger" to pick: an inch mark and a
+    /// centimetre reading do not compare, so a mix with even one non-convertible reading is left for
+    /// the ordinary conflict path below, exactly as it would be with the setting off.</para>
+    ///
+    /// <para>Returns <c>null</c> where there is nothing to resolve — fewer than two distinct sizes, or
+    /// a reading the family cannot convert — so the caller falls through to the unresolved conflict it
+    /// would have reported anyway.</para>
+    /// </summary>
+    static TitleAttributeResult? ResolveLargest(
+        TitleAttributeRule rule,
+        string original,
+        List<Candidate> evidence,
+        List<(int Start, int End)> removals)
+    {
+        if (evidence.Count == 0 || evidence.Any(c => c.Match.BaseQuantity is null))
+            return null;
+
+        var distinctKeys = evidence.Select(c => c.Match.Key).Distinct(StringComparer.Ordinal).Count();
+        if (distinctKeys < 2)
+            return null;
+
+        var winner = evidence.OrderByDescending(c => c.Match.BaseQuantity!.Value).First();
+
+        if (rule.Remove)
+            removals.AddRange(evidence.SelectMany(c => c.Match.Spans));
+
+        var correct = rule.Correct;
+
+        return new TitleAttributeResult(
+            rule.Column,
+            correct ? TitleAttributeStatus.Corrected : TitleAttributeStatus.Ok,
+            original,
+            correct ? winner.Match.Canonical : original,
+            winner.Match.Canonical);
     }
 
     static TitleAttributeResult JudgeEmpty(

@@ -574,7 +574,7 @@ public class TitleCleanerTests
     /// </summary>
     [Theory]
     [InlineData("Lenovo ThinkPad E16 Ryzen5 220 Notebook", "Ryzen™ 5", "ThinkPad E16 220 Notebook")]
-    [InlineData("Asus Vivobook 15 Core5 120U Notebook", "Core™ 5", "Vivobook 15 120U Notebook")]
+    [InlineData("Asus Vivobook 15 Core5 120U Notebook", "Core™ 5", "VivoBook 15 120U Notebook")]
     [InlineData("Lenovo ThinkPad T16 Ultra7 255U Notebook", "Ultra 7", "ThinkPad T16 255U Notebook")]
     public void AGluedSpellingMatchesAtALetterDigitBoundary(string title, string cell, string expected)
     {
@@ -638,11 +638,11 @@ public class TitleCleanerTests
         const string title = "Lenovo Ideapad Ideapad Slim3 82XQ0129TX002";
 
         Assert.Equal(
-            "Ideapad Ideapad Slim3 82XQ0129TX002",
+            "IdeaPad IdeaPad Slim3 82XQ0129TX002",
             Run(Repeats(false), title, ("Marka", "Lenovo")).CleanTitle);
 
         Assert.Equal(
-            "Ideapad Slim3 82XQ0129TX002",
+            "IdeaPad Slim3 82XQ0129TX002",
             Run(Repeats(true), title, ("Marka", "Lenovo")).CleanTitle);
     }
 
@@ -1641,6 +1641,386 @@ public class TitleCleanerTests
         Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Derinlik").Status);
         Assert.Equal(TitleAttributeStatus.NotInTitle, Attr(row, "Yükseklik").Status);
         Assert.False(row.HasConflict);
+    }
+
+    // -----------------------------------------------------------------
+    // Model-name casing
+    // -----------------------------------------------------------------
+
+    [Theory]
+    [InlineData("LENOVO THINKPAD P16 G3 16\" Taşınabilir", "ThinkPad")]
+    [InlineData("lenovo thinkbook 16 g6", "ThinkBook")]
+    [InlineData("Lenovo IDEAPAD Slim 3", "IdeaPad")]
+    [InlineData("ASUS ZENBOOK 14 OLED", "ZenBook")]
+    [InlineData("Asus VIVOBOOK Go 15", "VivoBook")]
+    [InlineData("HP ELITEBOOK 840 G10", "EliteBook")]
+    [InlineData("hp zbook firefly 14", "ZBook")]
+    [InlineData("Apple MACBOOK PRO 14", "MacBook Pro")]
+    [InlineData("Dell XPS 13 Plus", "XPS")]
+    [InlineData("Asus rog strix g16", "ROG")]
+    public void ModelCasingFixesKnownCompoundNames(string title, string expectedTerm)
+    {
+        Assert.Contains(expectedTerm, ModelCasing.Apply(title), StringComparison.Ordinal);
+    }
+
+    /// <summary>Turkish keyboards and autocorrect produce İ/ı variants of "i" — plain
+    /// <c>RegexOptions.IgnoreCase</c> alone does not fold those, so this has to be tested explicitly
+    /// rather than trusted to the ordinary case-insensitive path.</summary>
+    [Theory]
+    [InlineData("Lenovo İDEAPAD Slim 3")]
+    [InlineData("Lenovo ıdeapad Slim 3")]
+    [InlineData("Lenovo IdEaPaD Slim 3")]
+    public void ModelCasingFoldsTheTurkishIFamily(string title)
+    {
+        Assert.Contains("IdeaPad", ModelCasing.Apply(title), StringComparison.Ordinal);
+    }
+
+    /// <summary>"ROGUE" must not be read as "ROG" plus "UE" — a known term only matches whole, never
+    /// as a prefix of some longer, unrelated word.</summary>
+    [Fact]
+    public void ModelCasingNeverMatchesInsideALongerWord()
+    {
+        Assert.Equal("Acme Rogue Explorer", ModelCasing.Apply("Acme Rogue Explorer"));
+    }
+
+    /// <summary>A trailing decorative mark must survive a replacement untouched — the one hazard a
+    /// naive span-translated fold-and-replace would have introduced, which is why this is a plain
+    /// string replace rather than built on <see cref="FoldedTitle"/>'s index mapping.</summary>
+    [Fact]
+    public void ModelCasingLeavesATrademarkMarkInPlace()
+    {
+        Assert.Equal("ThinkPad™ X1 Carbon", ModelCasing.Apply("THINKPAD™ X1 Carbon"));
+    }
+
+    /// <summary>Runs end to end through the cleaning engine, not just the helper — this is what the
+    /// operator actually sees in the cleaned title column.</summary>
+    [Fact]
+    public void TheCleanedTitleCarriesTheCorrectedModelCasing()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık", [new TitleAttributeRule("Marka")]);
+
+        var row = Run(rules, "LENOVO THINKPAD E16 Ryzen5 220 Notebook", ("Marka", "Lenovo"));
+
+        Assert.Contains("ThinkPad", row.CleanTitle, StringComparison.Ordinal);
+        Assert.DoesNotContain("THINKPAD", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
+    // AdoptLargest — a measured column named under two different sizes
+    // -----------------------------------------------------------------
+
+    static readonly MeasureUnit AdoptGb = new("GB", ["gb"], 1);
+    static readonly MeasureUnit AdoptTb = new("TB", ["tb"], 1024);
+
+    static TitleRuleSet StorageRules(bool adoptLargest, bool correct = true) => new(
+        "Test", "Başlık",
+        [
+            new TitleAttributeRule(
+                "Depolama", TitleAttributeKind.Measure, Correct: correct,
+                Units: [AdoptGb, AdoptTb], AdoptLargest: adoptLargest),
+        ]);
+
+    /// <summary>Off by default: the title naming two different sizes is reported exactly as it always
+    /// was, nothing guessed at.</summary>
+    [Fact]
+    public void TwoDifferentSizesStayAnUnresolvedConflictWhenAdoptLargestIsOff()
+    {
+        var row = Run(StorageRules(adoptLargest: false),
+            "Acer Nitro 5 512GB 4TB SSD Notebook", ("Depolama", "2TB"));
+
+        Assert.Equal(TitleAttributeStatus.Conflict, Attr(row, "Depolama").Status);
+        Assert.Equal("Acer Nitro 5 512GB 4TB SSD Notebook", row.CleanTitle);
+    }
+
+    /// <summary>On: the larger reading wins, is written into the cell, and every reading — not just
+    /// the winner — is cut from the title.</summary>
+    [Fact]
+    public void TheLargerOfTwoSizesIsAdoptedAndBothAreRemovedFromTheTitle()
+    {
+        var row = Run(StorageRules(adoptLargest: true),
+            "Acer Nitro 5 512GB 4TB SSD Notebook", ("Depolama", "2TB"));
+
+        var attr = Attr(row, "Depolama");
+        Assert.Equal(TitleAttributeStatus.Corrected, attr.Status);
+        Assert.Equal("4 TB", attr.Value);
+        Assert.Equal("Acer Nitro 5 SSD Notebook", row.CleanTitle);
+        Assert.False(row.HasConflict);
+    }
+
+    /// <summary>"Düzelt" kapalı: the readings still leave the title, but the cell is left exactly as
+    /// it was — the same rule <c>ApplyMatchMeasure</c> already follows for the single-disagreement
+    /// card.</summary>
+    [Fact]
+    public void WithCorrectOffTheCellIsUntouchedButTheTitleIsStillCleaned()
+    {
+        var row = Run(StorageRules(adoptLargest: true, correct: false),
+            "Acer Nitro 5 512GB 4TB SSD Notebook", ("Depolama", "2TB"));
+
+        var attr = Attr(row, "Depolama");
+        Assert.Equal(TitleAttributeStatus.Ok, attr.Status);
+        Assert.Equal("2TB", attr.Value);
+        Assert.Equal("Acer Nitro 5 SSD Notebook", row.CleanTitle);
+    }
+
+    /// <summary>A family with no conversion factor — an inch mark — has no common base to rank
+    /// readings on, so AdoptLargest must not fire even when it is turned on; this stays the ordinary
+    /// "ask the operator" conflict.</summary>
+    [Fact]
+    public void AdoptLargestDoesNothingForAFamilyThatDoesNotConvert()
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("Ekran", TitleAttributeKind.Measure,
+                Units: [new MeasureUnit("\"", ["\"", "inç"])], AdoptLargest: true)]);
+
+        var row = Run(rules, "Acme Notebook 15.6\" 17.3\" Siyah", ("Ekran", "16 inç"));
+
+        Assert.Equal(TitleAttributeStatus.Conflict, Attr(row, "Ekran").Status);
+    }
+
+    /// <summary>The whole operator-facing loop: the card is offered only while the switch is off,
+    /// applying it turns the switch on, and a second pass then resolves the row silently.</summary>
+    [Fact]
+    public void TheAdoptLargestCardIsOfferedAndApplyingItResolvesFutureRuns()
+    {
+        var rules = CompiledRuleSet.Compile(StorageRules(adoptLargest: false));
+        var rows = new[] { Run(StorageRules(adoptLargest: false),
+            "Acer Nitro 5 512GB 4TB SSD Notebook", ("Depolama", "2TB")) };
+
+        var fixes = TitleFixSuggester.Suggest(rules, rows);
+        var card = Assert.Single(fixes, f => f.Kind == TitleFixKind.AdoptLargest);
+
+        var updated = TitleFixSuggester.Apply(rules.Source, fixes, [card.Id]);
+        var target = updated.AttributeList.First(a => a.Column == "Depolama");
+        Assert.True(target.AdoptLargest);
+
+        var resolved = Run(updated, "Acer Nitro 5 512GB 4TB SSD Notebook", ("Depolama", "2TB"));
+        Assert.Equal(TitleAttributeStatus.Corrected, Attr(resolved, "Depolama").Status);
+        Assert.Equal("4 TB", Attr(resolved, "Depolama").Value);
+    }
+
+    // -----------------------------------------------------------------
+    // Why MatchMeasure sometimes offers no card at all — diagnosed against
+    // a real Acer Nitro row the operator reported as "no suggestion given"
+    // -----------------------------------------------------------------
+
+    const string AcerScreenTitle =
+        "Acer Nitro 5 NH.QZKEY.001A007 Ryzen7 260 32GB 1TBSSD+1TBSSD RTX5070 17.3\" QHD " +
+        "FreeDOS Taşınabilir Bilgisayar";
+
+    static TitleCleanRow AcerScreenRow(CompiledRuleSet rules) => TitleCleanBuilder.CleanRow(
+        rules, 2, AcerScreenTitle, name => name switch
+        {
+            "Marka" => "Acer",
+            "Ekran Boyutu (inç)" => "16 inç",
+            _ => "",
+        });
+
+    /// <summary>With "inç" registered as one of the unit's accepted spellings — the normal case,
+    /// and the one <see cref="TitleRuleSuggester"/> itself would set up — the card fires exactly as
+    /// designed.</summary>
+    [Fact]
+    public void AnInchDisagreementOffersAMatchMeasureCardWhenIncIsARegisteredSpelling()
+    {
+        var rules = CompiledRuleSet.Compile(new TitleRuleSet(
+            "Test", "Başlık",
+            [
+                new TitleAttributeRule("Marka"),
+                new TitleAttributeRule("Ekran Boyutu (inç)", TitleAttributeKind.Measure, Units: [Inch]),
+            ]));
+
+        var row = AcerScreenRow(rules);
+
+        var screen = Attr(row, "Ekran Boyutu (inç)");
+        Assert.Equal(TitleAttributeStatus.Conflict, screen.Status);
+        Assert.Equal(TitleAttributeReason.Disagreement, screen.Reason);
+        Assert.Equal("17.3\"", screen.TitleSaid);
+
+        var fixes = TitleFixSuggester.Suggest(rules, [row]);
+        var card = Assert.Single(fixes, f => f.Kind == TitleFixKind.MatchMeasure);
+        Assert.Equal("Ekran Boyutu (inç)", card.TargetColumn);
+    }
+
+    /// <summary>
+    /// The actual cause of the operator's report: their "Ekran Boyutu (inç)" column's Birimler box
+    /// only ever had the quote mark typed into it, never "inç" as an accepted spelling of the same
+    /// unit — even though the column is named as if it accepted it.
+    ///
+    /// <para>The cell's raw text ("16 inç") still reads as evidence and the row still reports the
+    /// conflict correctly, because that only needs the <em>title's</em> reading to parse. But
+    /// building the card means writing the cell's own text into the column's value list as a
+    /// spelling — <see cref="TitleFixSuggester.ApplyMatchMeasure"/> via <c>AddSpelling</c> — and
+    /// <c>AttributeMatcher.Compile</c>'s <c>MeasureGroups</c> refuses any value-list entry the
+    /// column's own regex cannot read as a measurement. "16 inç" against a regex that only knows the
+    /// quote mark is exactly that: unparseable under <b>either</b> of the card's two choices (the
+    /// cell's own text has to be added no matter which one the operator would pick), so
+    /// <c>TitleFixSuggester.Build</c>'s catch discards the card before the operator ever sees it —
+    /// silently, on purpose, per its own doc comment ("offered with a preview nobody can trust").</para>
+    ///
+    /// <para>Not an engine bug: the fix is the rule set, not the code — add "inç" (and "inch") to
+    /// that column's Birimler box, the same way <see cref="TitleRuleSuggester"/>'s own suggested
+    /// inch family already does. Kept here as a regression test precisely because it looks like a
+    /// missing feature from the outside and is not one.</para>
+    /// </summary>
+    [Fact]
+    public void AMatchMeasureCardCannotBeBuiltWhenIncIsNotARegisteredSpelling()
+    {
+        var quoteOnly = new MeasureUnit("\"", ["\""]);
+        var rules = CompiledRuleSet.Compile(new TitleRuleSet(
+            "Test", "Başlık",
+            [
+                new TitleAttributeRule("Marka"),
+                new TitleAttributeRule("Ekran Boyutu (inç)", TitleAttributeKind.Measure, Units: [quoteOnly]),
+            ]));
+
+        var row = AcerScreenRow(rules);
+
+        // The row is still reported correctly — this half of the feature was never broken.
+        var screen = Attr(row, "Ekran Boyutu (inç)");
+        Assert.Equal(TitleAttributeStatus.Conflict, screen.Status);
+        Assert.Equal("17.3\"", screen.TitleSaid);
+
+        // But no card comes of it, which is what "İnç değiştirme özelliği... öneri olarak sunmadı"
+        // actually was.
+        var fixes = TitleFixSuggester.Suggest(rules, [row]);
+        Assert.DoesNotContain(fixes, f => f.Kind == TitleFixKind.MatchMeasure);
+    }
+
+    /// <summary>
+    /// The operator's actual column, reproduced verbatim from a screenshot of their rule editor:
+    /// "inç" <em>is</em> a registered spelling — the previous guess was wrong — but the column
+    /// already carries three declared pairs, and "16 inç" is already spoken for by the first one
+    /// ("15.6 inç" ↔ "16 inç"). <see cref="TitleFixSuggester.ApplyMatchMeasure"/>'s <c>AddSpelling</c>
+    /// walks the groups in order and, on reaching a group that already contains the spelling it was
+    /// asked to add, returns the set completely unchanged rather than moving "16 inç" to a second
+    /// group — the same refusal <see cref="TitleFixSuggester.Build"/>'s own comment describes for
+    /// "FreeDOS is not another way of writing Windows 11 Pro". <c>Unchanged</c> then sees no edit was
+    /// made and discards the card before it is ever offered.
+    ///
+    /// <para>Not a bug to fix in the matching engine — it is the same intentional safety this file
+    /// already documents. What it actually means for the operator: on these rows, "16 inç" has
+    /// already been told to mean 15.6", and a 17.3" title disagreeing with it needs a person, not a
+    /// value-list merge — either the cell is genuinely wrong on these specific rows (a marketplace
+    /// data error to fix at the source), or "16" cannot be treated as always meaning one screen size,
+    /// which is a decision the tool correctly leaves to a person rather than guessing at.</para>
+    /// </summary>
+    [Fact]
+    public void NoCardIsOfferedWhenTheCellsSpellingAlreadyBelongsToADifferentSize()
+    {
+        var inch = new MeasureUnit("inç", ["inc", "\"", "''", "inch", "inches"]);
+        var rules = CompiledRuleSet.Compile(new TitleRuleSet(
+            "Test", "Başlık",
+            [
+                new TitleAttributeRule("Marka"),
+                new TitleAttributeRule(
+                    "Ekran Boyutu (inç)", TitleAttributeKind.Measure, Units: [inch],
+                    Aliases:
+                    [
+                        ["15.6 inç", "16 inç"],
+                        ["15.3 inç", "15 inç"],
+                        ["17.3 inç", "17 inç"],
+                    ]),
+            ]));
+
+        var row = AcerScreenRow(rules);
+
+        var screen = Attr(row, "Ekran Boyutu (inç)");
+        Assert.Equal(TitleAttributeStatus.Conflict, screen.Status);
+        Assert.Equal("17.3\"", screen.TitleSaid);
+
+        var fixes = TitleFixSuggester.Suggest(rules, [row]);
+        Assert.DoesNotContain(fixes, f => f.Kind == TitleFixKind.MatchMeasure);
+    }
+
+    // -----------------------------------------------------------------
+    // AdoptLargest on a Değer Listesi column — a disk type repeated because
+    // the title lists two drives, each a different size glued to it
+    // -----------------------------------------------------------------
+
+    static TitleRuleSet DiskTypeRules(bool adoptLargest) => new(
+        "Test", "Başlık",
+        [
+            new TitleAttributeRule("Marka"),
+            new TitleAttributeRule("Kapasite", TitleAttributeKind.Measure, Units: [AdoptGb, AdoptTb]),
+            new TitleAttributeRule("Disk Tipi", TitleAttributeKind.Alias,
+                Aliases: [["SSD"], ["HDD"]], AdoptLargest: adoptLargest),
+        ]);
+
+    const string DualDriveTitle =
+        "Lenovo ThinkPad P16 G3 21RQ000CTX012 1TBSSD+2TBSSD RTXPRO3000 WUXGA";
+
+    /// <summary>Off by default: reported exactly as it always was — a real seller row from this
+    /// catalogue, unresolved until the operator opts in.</summary>
+    [Fact]
+    public void ADiskTypeRepeatedByTwoDrivesStaysUnresolvedWhenAdoptLargestIsOff()
+    {
+        var row = Run(DiskTypeRules(adoptLargest: false), DualDriveTitle,
+            ("Marka", "Lenovo"), ("Kapasite", "1TB"), ("Disk Tipi", "SSD"));
+
+        var diskType = Attr(row, "Disk Tipi");
+        Assert.Equal(TitleAttributeStatus.Ambiguous, diskType.Status);
+        Assert.Equal(TitleAttributeReason.ValueRepeated, diskType.Reason);
+        Assert.Contains(row.Errors, e => e.Contains("2 kez", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// On: every occurrence of "SSD" is glued to a different capacity — 1TB and 2TB — so the larger
+    /// is adopted into the capacity cell even though the cell originally held the smaller one, and
+    /// both drives' worth of text leave the title. The disk type itself was never in question, so it
+    /// simply reads as found.
+    /// </summary>
+    [Fact]
+    public void TheLargerDriveWinsAndBothDrivesAreRemovedFromTheTitle()
+    {
+        var row = Run(DiskTypeRules(adoptLargest: true), DualDriveTitle,
+            ("Marka", "Lenovo"), ("Kapasite", "1TB"), ("Disk Tipi", "SSD"));
+
+        var diskType = Attr(row, "Disk Tipi");
+        Assert.Equal(TitleAttributeStatus.Ok, diskType.Status);
+        Assert.Equal(TitleAttributeReason.None, diskType.Reason);
+        Assert.Empty(row.Errors);
+
+        var capacity = Attr(row, "Kapasite");
+        Assert.Equal(TitleAttributeStatus.Corrected, capacity.Status);
+        Assert.Equal("2 TB", capacity.Value);
+
+        Assert.Equal("ThinkPad P16 G3 21RQ000CTX012 RTXPRO3000 WUXGA", row.CleanTitle);
+        Assert.False(row.HasConflict);
+    }
+
+    /// <summary>Only where <em>every</em> occurrence is glued to the sibling column — a third,
+    /// unglued "SSD" (a bare mention with no capacity next to it) leaves the row exactly as the
+    /// ordinary engine reported it, rather than guessing at the odd one out.</summary>
+    [Fact]
+    public void AnUngluedOccurrenceLeavesTheRowUnresolved()
+    {
+        var row = Run(DiskTypeRules(adoptLargest: true),
+            "Lenovo ThinkPad P16 1TBSSD+2TBSSD Ek SSD Notebook",
+            ("Marka", "Lenovo"), ("Kapasite", "1TB"), ("Disk Tipi", "SSD"));
+
+        Assert.Equal(TitleAttributeStatus.Ambiguous, Attr(row, "Disk Tipi").Status);
+    }
+
+    /// <summary>The real row this was built from: a "İki kez SSD geçiyor" warning that, before this,
+    /// offered no fix at all. The card now offered turns on the same switch the operator could
+    /// otherwise only reach by hand-editing the rule.</summary>
+    [Fact]
+    public void TheAdoptLargestSiblingCardIsOfferedForARepeatedDiskType()
+    {
+        var rules = CompiledRuleSet.Compile(DiskTypeRules(adoptLargest: false));
+        var rows = new[] { Run(DiskTypeRules(adoptLargest: false), DualDriveTitle,
+            ("Marka", "Lenovo"), ("Kapasite", "1TB"), ("Disk Tipi", "SSD")) };
+
+        var fixes = TitleFixSuggester.Suggest(rules, rows);
+        var card = Assert.Single(fixes, f => f.Kind == TitleFixKind.AdoptLargest);
+        Assert.Equal("Disk Tipi", card.TargetColumn);
+
+        var updated = TitleFixSuggester.Apply(rules.Source, fixes, [card.Id]);
+        Assert.True(updated.AttributeList.First(a => a.Column == "Disk Tipi").AdoptLargest);
+
+        var resolved = Run(updated, DualDriveTitle,
+            ("Marka", "Lenovo"), ("Kapasite", "1TB"), ("Disk Tipi", "SSD"));
+        Assert.Equal(TitleAttributeStatus.Ok, Attr(resolved, "Disk Tipi").Status);
+        Assert.Equal("2 TB", Attr(resolved, "Kapasite").Value);
     }
 
     static TitleCleanRow Run(TitleRuleSet set, string title, params (string Column, string Value)[] cells)

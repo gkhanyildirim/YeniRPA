@@ -16,14 +16,18 @@
         ["incidents"]      = "<path d='M10.3 3.7 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z'/><path d='M12 9.5v4'/><path d='M12 17h.01'/>",
         ["ticket-seller"]  = "<path d='M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-6z'/><path d='M14 8v8'/>",
         ["title-cleaner"]  = "<path d='m5 19 9-9'/><path d='m14.5 4.5 5 5-3 3-5-5z'/><path d='M6 4v3M4.5 5.5h3M18 15v2.5M16.8 16.2h2.4'/>",
+        ["cargo-seller-report"] = "<path d='M12 3 3 7.5v9L12 21l9-4.5v-9z'/><path d='M3 7.5 12 12l9-4.5'/><path d='M12 12v9'/>",
+        ["pos-reconciliation"] = "<rect x='2.5' y='5.5' width='19' height='13' rx='2'/><path d='M2.5 10h19'/><path d='M6.5 14.5h4'/>",
         ["create-return"]  = "<path d='M3 12a9 9 0 1 0 2.6-6.4'/><path d='M3 4v5h5'/>",
         ["mark-received"]  = "<circle cx='12' cy='12' r='9'/><path d='m8.5 12.2 2.4 2.4 4.6-4.9'/>",
         ["seller-notification"] = "<path d='M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8A2.5 2.5 0 0 1 17.5 16H10l-4.5 4v-4h-1A2.5 2.5 0 0 1 2 13.5v-5'/><path d='M8 8h8M8 11.5h5'/>",
         ["product-status"] = "<path d='M21 8 12 3 3 8v8l9 5 9-5z'/><path d='m3 8 9 5 9-5M12 13v8'/>",
         ["track17"]        = "<rect x='3' y='7' width='13' height='11' rx='1.5'/><path d='M16 10h3.2l2.3 3v5h-5.5'/><circle cx='7.5' cy='18.5' r='1.6'/><circle cx='17' cy='18.5' r='1.6'/>",
         ["late-orders"]    = "<path d='M3 7h10v9H3z'/><path d='M13 10h4l4 3.5V16h-8z'/><circle cx='7' cy='18' r='1.8'/><circle cx='17' cy='18' r='1.8'/>",
+        ["stockout-warnings"] = "<path d='M3 7h18v13H3z'/><path d='M3 7 6 3h12l3 4'/><path d='M12 11v4M12 18h.01'/>",
         ["offer-warnings"] = "<path d='M20.6 13.4 13 21a1.9 1.9 0 0 1-2.7 0l-7-7a1.9 1.9 0 0 1-.5-1.3V4.8c0-1 .8-1.8 1.8-1.8h7.9c.5 0 1 .2 1.3.5l6.8 6.8a1.9 1.9 0 0 1 0 2.7z'/><circle cx='7.8' cy='7.8' r='1.3'/>",
         ["vat-warnings"]   = "<path d='M6 2h12v20l-3-2-3 2-3-2-3 2z'/><path d='m9.5 14.5 5-5'/><circle cx='9.6' cy='9.6' r='1'/><circle cx='14.4' cy='14.4' r='1'/>",
+        ["custom-mail"]    = "<rect x='3' y='5' width='18' height='14' rx='2'/><path d='m4 6.5 8 6.5 8-6.5'/>",
         ["methodology"]    = "<path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z'/><path d='M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5'/>",
         ["settings"]       = "<circle cx='12' cy='12' r='3'/><path d='M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1'/>",
         ["health"]         = "<path d='M21 8 12 3 3 8v8l9 5 9-5z'/><path d='m3 8 9 5 9-5M12 13v8'/>"
@@ -85,6 +89,18 @@
                 <span class="nav-text">Title Cleaner</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-cargo-seller-report"
+                    aria-controls="panel-cargo-seller-report" aria-selected="false" data-module="cargo-seller-report" tabindex="-1">
+                @NavIcon("cargo-seller-report")
+                <span class="nav-text">Cargo Seller Report</span>
+            </button>
+
+            <button type="button" class="nav-item" role="tab" id="tab-pos-reconciliation"
+                    aria-controls="panel-pos-reconciliation" aria-selected="false" data-module="pos-reconciliation" tabindex="-1">
+                @NavIcon("pos-reconciliation")
+                <span class="nav-text">POS Reconciliation</span>
+            </button>
+
             <div class="nav-label">Automation</div>
 
             <button type="button" class="nav-item" role="tab" id="tab-create-return"
@@ -123,6 +139,12 @@
                 <span class="nav-text">Late Order Warnings</span>
             </button>
 
+            <button type="button" class="nav-item" role="tab" id="tab-stockout-warnings"
+                    aria-controls="panel-stockout-warnings" aria-selected="false" data-module="stockout-warnings" tabindex="-1">
+                @NavIcon("stockout-warnings")
+                <span class="nav-text">Stockout Warnings</span>
+            </button>
+
             <button type="button" class="nav-item" role="tab" id="tab-offer-warnings"
                     aria-controls="panel-offer-warnings" aria-selected="false" data-module="offer-warnings" tabindex="-1">
                 @NavIcon("offer-warnings")
@@ -133,6 +155,12 @@
                     aria-controls="panel-vat-warnings" aria-selected="false" data-module="vat-warnings" tabindex="-1">
                 @NavIcon("vat-warnings")
                 <span class="nav-text">Seller VAT Warnings</span>
+            </button>
+
+            <button type="button" class="nav-item" role="tab" id="tab-custom-mail"
+                    aria-controls="panel-custom-mail" aria-selected="false" data-module="custom-mail" tabindex="-1">
+                @NavIcon("custom-mail")
+                <span class="nav-text">Custom Mail</span>
             </button>
 
             <div class="nav-label">Reference</div>
@@ -413,6 +441,44 @@
                     <h3>Every line that did not complete cleanly</h3>
                     <p class="sub">Ranked by the value lost on the line, worst first &mdash; up to 200 rows</p>
                     <div class="table-scroll" id="cancel-detail-wrap"></div>
+                </div>
+
+                <div class="section-title" id="sec-fraud" data-section="Fraud detection">Fraud-suspect shipping addresses</div>
+                <div class="card accent-red">
+                    <partial name="_ExportButton" model='new ExportButton("fraud-suspect-wrap", "Fraud-suspect shipping addresses")' />
+                    <h3>Highly similar shipping addresses across different customers</h3>
+                    <p class="sub">Same upload only &middot; every order in a group is over 80% similar to every other order in it, across different customers &mdash; an early signal ahead of the bank's own fraud flags, for manual review. Click a group to see its order numbers and amounts; tick one or more groups to export only those.</p>
+
+                    <div class="filter-bar">
+                        <div class="field">
+                            <label for="fraud-address-filter">Shipping address</label>
+                            <input type="search" id="fraud-address-filter" placeholder="Filter" />
+                        </div>
+                        <div class="field">
+                            <label>Similarity %</label>
+                            <span class="range">
+                                <input type="number" id="fraud-sim-min" step="any" placeholder="&ge;" aria-label="Similarity minimum" />
+                                <input type="number" id="fraud-sim-max" step="any" placeholder="&le;" aria-label="Similarity maximum" />
+                            </span>
+                        </div>
+                        <div class="field">
+                            <label>Similar orders</label>
+                            <span class="range">
+                                <input type="number" id="fraud-size-min" step="1" placeholder="&ge;" aria-label="Similar orders minimum" />
+                                <input type="number" id="fraud-size-max" step="1" placeholder="&le;" aria-label="Similar orders maximum" />
+                            </span>
+                        </div>
+                        <div class="field">
+                            <label>Amount</label>
+                            <span class="range">
+                                <input type="number" id="fraud-amt-min" step="any" placeholder="&ge;" aria-label="Amount minimum" />
+                                <input type="number" id="fraud-amt-max" step="any" placeholder="&le;" aria-label="Amount maximum" />
+                            </span>
+                        </div>
+                        <span class="filter-summary" id="fraud-selection-note"></span>
+                    </div>
+
+                    <div class="table-scroll fraud-group-scroll" id="fraud-suspect-wrap"></div>
                 </div>
 
                 <div class="section-title" id="sec-lead-time" data-section="Lead time">Lead time (SLA) analysis</div>
@@ -803,7 +869,7 @@
                     <partial name="_ExportButton" model='new ExportButton("inc-seller-wrap", "Seller scorecard", "Incidents Report")' />
                     <h3>One row per seller</h3>
                     <p class="sub">Backlog, close rate and speed side by side &mdash; &ldquo;on us&rdquo; is what that seller has resolved and we have not closed</p>
-                    <div class="table-scroll is-full" id="inc-seller-wrap"></div>
+                    <div class="table-scroll" id="inc-seller-wrap"></div>
                 </div>
 
                 <div class="section-title" id="inc-sec-reason" data-section="Reasons">Reason breakdown</div>
@@ -1385,6 +1451,184 @@
 
                 <footer class="page-foot">Marketplace Reporting &middot; Title Cleaner</footer>
             </div>
+        </section>
+
+        @* ================= CARGO SELLER REPORT ================= *@
+        <section class="panel" id="panel-cargo-seller-report" role="tabpanel" aria-labelledby="tab-cargo-seller-report" hidden>
+
+            <header class="page-head">
+                @PageIcon("cargo-seller-report")
+                <h1>Cargo Seller Report</h1>
+                <span class="badge green">Read-only</span>
+            </header>
+
+            <div class="section-title">1. Cargo fee / invoice detail export</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="csr-kargo-drop">
+                            <span class="drop-title">Cargo fee / invoice detail export</span>
+                            <span class="drop-hint">.xlsx &mdash; analyzed as soon as it is chosen</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="csr-kargo-file" accept=".xlsx,.xls"
+                                   aria-label="Cargo fee / invoice detail export (.xlsx)" />
+                        </label>
+                    </div>
+
+                    <p class="note" id="csr-analyze-status" hidden>Reading the cargo invoice file&hellip;</p>
+
+                    <div class="field" id="csr-seller-column-field" hidden>
+                        <label for="csr-seller-column-select">Which column holds the seller?</label>
+                        @* Shown only when the seller could not be told apart from the header names this
+                           module already looks for. *@
+                        <select id="csr-seller-column-select"></select>
+                    </div>
+
+                    @* Every seller in the file is processed at once (this runs once a month over the
+                       whole file), so there is nothing to pick here — just confirmation of what was
+                       found. *@
+                    <p class="note" id="csr-seller-note" hidden></p>
+
+                    <div class="alert" id="csr-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">2. Marketplace &amp; MM Pazaryeri cargo data</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="csr-marketplace-drop">
+                            <span class="drop-title">Marketplace return/exchange requests</span>
+                            <span class="drop-hint">.xlsx &mdash; "Kargo Takip Kodu" / "SiparişNo"</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="csr-marketplace-file" accept=".xlsx,.xls"
+                                   aria-label="Marketplace return/exchange requests (.xlsx)" />
+                        </label>
+
+                        <label class="drop" id="csr-mm-drop">
+                            <span class="drop-title">MM Pazaryeri cargo data</span>
+                            <span class="drop-hint">.xlsx &mdash; "YK Takip Kodu" / "CustomerOrderNumber"</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="csr-mm-file" accept=".xlsx,.xls"
+                                   aria-label="MM Pazaryeri cargo data (.xlsx)" />
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button type="button" class="btn btn-primary" id="csr-generate" disabled>
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span class="btn-text">Generate Report</span>
+                </button>
+            </div>
+
+            <div class="results" id="csr-summary" hidden>
+                <div class="section-title">Match summary &mdash; every seller</div>
+                <div class="card">
+                    <div class="kpi-grid" id="csr-kpis"></div>
+
+                    <div class="actions" style="margin-top: 10px">
+                        <button type="button" class="btn btn-primary" id="csr-download">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Download .zip</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="section-title">Per seller</div>
+                <div class="card">
+                    <div class="table-scroll" id="csr-seller-table"></div>
+                </div>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Cargo Seller Report</footer>
+        </section>
+
+        @* ================= POS RECONCILIATION ================= *@
+        <section class="panel" id="panel-pos-reconciliation" role="tabpanel" aria-labelledby="tab-pos-reconciliation" hidden>
+
+            <header class="page-head">
+                @PageIcon("pos-reconciliation")
+                <h1>POS Reconciliation</h1>
+                <span class="badge green">Read-only</span>
+            </header>
+
+            <div class="section-title">1. Bulut Tahsilat &amp; Craftgate</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="pr-bulut-drop">
+                            <span class="drop-title">Bulut Tahsilat export</span>
+                            <span class="drop-hint">.xlsx &mdash; "Provizyon No" / "Sipariş Numarası"</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="pr-bulut-file" accept=".xlsx,.xls"
+                                   aria-label="Bulut Tahsilat export (.xlsx)" />
+                        </label>
+
+                        <label class="drop" id="pr-craftgate-drop">
+                            <span class="drop-title">Craftgate export</span>
+                            <span class="drop-hint">.xlsx &mdash; "authCode" / "externalId"</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="pr-craftgate-file" accept=".xlsx,.xls"
+                                   aria-label="Craftgate export (.xlsx)" />
+                        </label>
+                    </div>
+
+                    <div class="alert" id="pr-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">2. Mirakl</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="pr-mirakl-drop">
+                            <span class="drop-title">Mirakl export</span>
+                            <span class="drop-hint">.xlsx &mdash; optional, not used in this step yet</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="pr-mirakl-file" accept=".xlsx,.xls"
+                                   aria-label="Mirakl export (.xlsx)" />
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button type="button" class="btn btn-primary" id="pr-generate" disabled>
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span class="btn-text">Generate</span>
+                </button>
+            </div>
+
+            <div class="results" id="pr-results" hidden>
+                <div class="section-title">POS Banka &times; Taksit pivot</div>
+                <div class="card">
+                    <div class="kpi-grid" id="pr-kpis"></div>
+
+                    <div class="actions" style="margin-top: 10px">
+                        <button type="button" class="btn btn-primary" id="pr-download">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Download .xlsx</span>
+                        </button>
+                    </div>
+
+                    <div class="table-scroll" id="pr-pivot-table"></div>
+                </div>
+
+                <div class="section-title">Unmatched / conflicted (<span id="pr-unmatched-count">0</span>)</div>
+                <div class="card">
+                    <div class="table-scroll" id="pr-unmatched-table"></div>
+                </div>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; POS Reconciliation</footer>
         </section>
 
         @* ================= CREATE RETURN ================= *@
@@ -2251,6 +2495,280 @@
             <footer class="page-foot">Marketplace Reporting &middot; Late Order Warnings</footer>
         </section>
 
+        @* ================= STOCKOUT WARNINGS ================= *@
+        <section class="panel" id="panel-stockout-warnings" role="tabpanel" aria-labelledby="tab-stockout-warnings" hidden>
+
+            <header class="page-head">
+                @PageIcon("stockout-warnings")
+                <h1>Stockout Warnings</h1>
+                <span class="badge red"
+                      title="Sends WhatsApp messages to sellers. A sent message cannot be recalled.">Sends WhatsApp</span>
+                <span class="stamp" id="so-stamp"></span>
+            </header>
+
+            @*
+                Its own session controls and its own mapping table, even though both drive the exact
+                same shared Chrome profile and the exact same sellerGroups document that Late Order
+                Warnings and Incident Warnings use. The operator should not have to switch tabs to
+                sign in or add a seller while working this panel. See
+                ISellerGroupStore.SaveEntries: it writes only the Entries field, so saving the
+                mapping table from here can never wipe out another module's message templates.
+            *@
+            <div class="section-title">WhatsApp session</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="so-session-badge">Checking&hellip;</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="so-login">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Open WhatsApp</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="so-check-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Check session</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="so-clear-session">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Clear session</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="alert" id="so-session-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note"><code id="so-profile-path"></code></p>
+            </div>
+
+            <div class="section-title">Seller &rarr; WhatsApp group</div>
+            <div class="card">
+                <h3>Which group each seller gets messaged in</h3>
+
+                <div id="so-mapping-warnings" hidden></div>
+
+                <div class="filter-bar">
+                    <div class="field" style="flex: 1 1 320px">
+                        <label for="so-map-search">Search</label>
+                        <input type="search" id="so-map-search" spellcheck="false"
+                               placeholder="Seller ID, name or group" />
+                    </div>
+                    <label class="check" for="so-map-pending">
+                        <input type="checkbox" id="so-map-pending" />
+                        <span>Only sellers with no group</span>
+                    </label>
+                </div>
+
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 16%">Seller ID</th>
+                                <th style="width: 32%">Seller</th>
+                                <th style="width: 42%">WhatsApp group</th>
+                                <th style="width: 10%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="so-mapping-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="so-map-add">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Add row</span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="so-map-save">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Save mapping</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="so-map-import">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Import from Excel</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost" id="so-map-export">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Export to Excel</span>
+                    </button>
+                    <input type="file" id="so-map-file" accept=".xlsx,.xls,.csv" hidden
+                           aria-label="Seller/group mapping file" />
+                    <span class="filter-summary" id="so-mapping-count"></span>
+                </div>
+
+                <div class="alert" id="so-mapping-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note"><code id="so-mapping-path"></code> &mdash; <span id="so-mapping-updated"></span></p>
+            </div>
+
+            <div class="section-title">Find stockout products</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="so-drop">
+                            <span class="drop-title">Stockout export</span>
+                            <span class="drop-hint">Partner Manager "Products Unavailable" export (.csv or .xlsx)</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="so-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Partner Manager stockout export" />
+                        </label>
+                    </div>
+
+                    <div class="filter-bar">
+                        <div class="field">
+                            <label for="so-gmv-threshold">Minimum GMV</label>
+                            <input type="number" id="so-gmv-threshold" min="0" step="1000" value="50000" style="width: 12ch" />
+                        </div>
+                        <button type="button" class="btn btn-primary" id="so-prepare">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Find stockout products</span>
+                        </button>
+                        <span class="filter-summary">Only products at or above this GMV are messaged</span>
+                    </div>
+
+                    <div class="alert" id="so-prepare-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="skeleton" id="so-prepare-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Automation()" />
+            </div>
+
+            <div class="results" id="so-prepared" hidden>
+
+                <div class="card accent-amber" id="so-warnings" hidden>
+                    <h3>Worth knowing about this file</h3>
+                    <ul class="note-list" id="so-warnings-list"></ul>
+                </div>
+
+                @*
+                    Prominent because it is the expected outcome rather than an edge case: the export
+                    carries no Seller ID column, so the mapping can only be matched on the seller name
+                    — a mapping row entered by id alone can never match here.
+                *@
+                <div id="so-unmapped" hidden>
+                    <div class="section-title">
+                        Sellers with no WhatsApp group
+                        <partial name="_ExportButton" model='new ExportButton("so-unmapped-wrap", "Unmapped sellers", "Stockout Warnings")' />
+                    </div>
+                    <div class="card accent-amber">
+                        <h3>These sellers have eligible stockout products but cannot be messaged</h3>
+                        <div class="table-scroll" id="so-unmapped-wrap"></div>
+                        <p class="note" id="so-unmapped-summary"></p>
+                    </div>
+                </div>
+
+                <div class="section-title">
+                    Eligible stockout products
+                    <partial name="_ExportButton" model='new ExportButton("so-products-wrap", "Stockout products", "Stockout Warnings")' />
+                </div>
+                <div class="card accent-red">
+                    <h3>Every product at or above the GMV threshold</h3>
+                    <div class="table-scroll" id="so-products-wrap"></div>
+                </div>
+
+                <div class="section-title">
+                    Where the rows went
+                    <partial name="_ExportButton" model='new ExportButton("so-funnel-wrap", "Funnel", "Stockout Warnings")' />
+                </div>
+                <div class="card">
+                    <h3>Every row in the file, accounted for</h3>
+                    <div class="table-scroll is-full" id="so-funnel-wrap"></div>
+                </div>
+
+                <div class="section-title">Message wording</div>
+                <div class="card">
+                    <h3>What each seller is sent</h3>
+
+                    <div class="field">
+                        <label for="so-template">Message</label>
+                        <textarea id="so-template" rows="10" spellcheck="false"></textarea>
+                    </div>
+                    <div class="field" style="margin-top: 14px">
+                        <label for="so-line-template">Product line</label>
+                        <textarea id="so-line-template" rows="2" spellcheck="false"></textarea>
+                    </div>
+
+                    <p class="note">Placeholders: <span id="so-placeholders"></span></p>
+                    <p class="note">The product line must always keep <code>{gtin}</code> and <code>{soldItemsAccepted}</code>.</p>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="so-render">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Re-render messages</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="so-save-settings">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Save wording &amp; GMV threshold</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="so-template-reset">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Reset to default</span>
+                        </button>
+                        <span class="filter-summary" id="so-settings-note"></span>
+                    </div>
+
+                    <div class="alert" id="so-settings-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+
+                <div class="section-title">Messages</div>
+                <div class="card accent-green">
+                    <h3>One message per WhatsApp group, exactly as it will be sent</h3>
+
+                    <div id="so-messages" class="msg-list"></div>
+
+                    <div class="actions">
+                        <label class="check" for="so-dry-run">
+                            <input type="checkbox" id="so-dry-run" checked />
+                            <span>Dry run (compose and verify, but do not send)</span>
+                        </label>
+                        <button type="button" class="btn btn-primary" id="so-send" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Send messages</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="so-messages-export" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Download messages (Excel)</span>
+                        </button>
+                        <span class="filter-summary" id="so-messages-summary"></span>
+                    </div>
+
+                    <div class="alert" id="so-messages-alert" role="alert">
+                        <strong>Check this</strong>
+                        <span class="msg"></span>
+                    </div>
+
+                </div>
+            </div>
+
+            <div class="results" id="so-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span>Groups processed</span>
+                        <span class="mono" id="so-progress-text">0 / 0</span>
+                    </div>
+                    <div class="progress" id="so-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Stockout Warnings progress">
+                        <span class="progress-fill" id="so-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="so-console"></pre>
+                </div>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Stockout Warnings</footer>
+        </section>
+
         @* ================= SELLER OFFER WARNINGS ================= *@
         <section class="panel" id="panel-offer-warnings" role="tabpanel" aria-labelledby="tab-offer-warnings" hidden>
 
@@ -2888,6 +3406,310 @@
             </div>
 
             <footer class="page-foot">Marketplace Reporting &middot; Seller VAT Warnings</footer>
+        </section>
+
+        @* ================= CUSTOM MAIL ================= *@
+        <section class="panel" id="panel-custom-mail" role="tabpanel" aria-labelledby="tab-custom-mail" hidden>
+
+            <header class="page-head">
+                @PageIcon("custom-mail")
+                <h1>Custom Mail</h1>
+                <span class="badge red"
+                      title="Sends mail to sellers through Outlook. A sent mail cannot be recalled.">Sends mail</span>
+                <span class="stamp" id="cm-stamp"></span>
+            </header>
+
+            <div class="section-title">Outlook</div>
+            <div class="card">
+                <div class="session">
+                    <span class="badge amber" id="cm-outlook-badge">Not checked yet</span>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="cm-check-outlook">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Check Outlook</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="alert" id="cm-outlook-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+            </div>
+
+            <div class="section-title">Seller list &amp; address directory</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="cm-sellers-drop">
+                            <span class="drop-step">Input 1</span>
+                            <span class="drop-title">Seller list</span>
+                            <span class="drop-hint">Who to reach — needs a Seller ID or Seller name column (.xlsx or .csv)</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cm-sellers-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Seller list" />
+                        </label>
+
+                        <label class="drop" id="cm-directory-drop">
+                            <span class="drop-step">Input 2</span>
+                            <span class="drop-title">Seller address directory</span>
+                            <span class="drop-hint">Seller names/IDs and e-mails — every address comes from here (.xlsx or .csv)</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cm-directory-file" accept=".xlsx,.xls,.csv"
+                                   aria-label="Seller address directory" />
+                        </label>
+                    </div>
+
+                    <p class="note">
+                        The seller list's own e-mail column, if it has one, is not used — every address is
+                        looked up in the directory instead, by Seller ID first and by name otherwise.
+                    </p>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="cm-prepare">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Read the lists</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="cm-prepare-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">Hand-entered addresses</div>
+            <div class="card">
+                <h3>Sellers the address directory does not cover</h3>
+
+                <div id="cm-overrides-warnings" hidden></div>
+
+                <div class="filter-bar">
+                    <div class="field" style="flex: 1 1 320px">
+                        <label for="cm-override-search">Search</label>
+                        <input type="search" id="cm-override-search" spellcheck="false"
+                               placeholder="Seller ID, name or e-mail" />
+                    </div>
+                    <label class="check" for="cm-override-pending">
+                        <input type="checkbox" id="cm-override-pending" />
+                        <span>Only sellers with no e-mail</span>
+                    </label>
+                </div>
+
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 14%">Seller ID</th>
+                                <th style="width: 34%">Seller</th>
+                                <th style="width: 46%">E-mail</th>
+                                <th style="width: 6%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="cm-overrides-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-ghost" id="cm-override-add">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Add row</span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="cm-overrides-save">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Save addresses</span>
+                    </button>
+                    <span class="filter-summary" id="cm-overrides-count"></span>
+                </div>
+
+                <div class="alert" id="cm-overrides-alert" role="alert">
+                    <strong>Error</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note">
+                    Saved at <code id="cm-overrides-path"></code> &mdash; <span id="cm-overrides-updated"></span>.
+                    Preferred over the directory the next time the lists are read.
+                </p>
+            </div>
+
+            <div class="skeleton" id="cm-prepare-skeleton">
+                <partial name="_TowerLoader" model="TowerLoader.Automation()" />
+            </div>
+
+            <div class="results" id="cm-prepared" hidden>
+
+                <div class="card accent-amber" id="cm-warnings" hidden>
+                    <h3>Worth knowing before you send</h3>
+                    <ul class="note-list" id="cm-warnings-list"></ul>
+                </div>
+
+                <div id="cm-unmatched" hidden>
+                    <div class="section-title">Sellers with no address</div>
+                    <div class="card accent-amber">
+                        <h3>Not in the recipient list below &mdash; enter an address and save it, or add it to the directory</h3>
+
+                        <div class="table-scroll">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th style="width: 14%">Seller ID</th>
+                                        <th style="width: 30%">Seller</th>
+                                        <th style="width: 30%">E-mail</th>
+                                        <th style="width: 26%">Why</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="cm-unmatched-body"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="actions">
+                            <button type="button" class="btn btn-primary" id="cm-unmatched-save">
+                                <span class="spinner" aria-hidden="true"></span>
+                                <span class="btn-text">Save these addresses</span>
+                            </button>
+                            <span class="filter-summary" id="cm-unmatched-summary"></span>
+                        </div>
+
+                        <div class="alert" id="cm-unmatched-alert" role="alert">
+                            <strong>Error</strong>
+                            <span class="msg"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-title">Recipients</div>
+                <div class="card">
+                    <h3>Every seller resolved to an address in the directory</h3>
+                    <p class="note" id="cm-merge-summary"></p>
+
+                    <div class="filter-bar">
+                        <div class="field">
+                            <label for="cm-search">Find a recipient</label>
+                            <input type="search" id="cm-search" placeholder="Seller ID, name or e-mail"
+                                   spellcheck="false" autocomplete="off" />
+                        </div>
+                        <button type="button" class="btn btn-ghost btn-sm" id="cm-expand-all">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Expand all</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="cm-collapse-all">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Collapse all</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="cm-select-all">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Select all</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="cm-select-none">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Select none</span>
+                        </button>
+                        <span class="filter-summary" id="cm-shown-summary"></span>
+                    </div>
+
+                    <div id="cm-recipients" class="msg-list"></div>
+                    <div class="empty-state" id="cm-recipients-empty">No seller resolved to an address.</div>
+
+                    <div class="actions">
+                        <span class="filter-summary" id="cm-recipients-summary"></span>
+                    </div>
+                </div>
+
+                <div class="section-title">Mail wording &amp; attachment</div>
+                <div class="card accent-green">
+                    <h3>Sent identically to every ticked recipient</h3>
+
+                    <div class="field">
+                        <label for="cm-cc">CC (copy to)</label>
+                        <input type="text" id="cm-cc" spellcheck="false"
+                               placeholder="Optional. Empty copies nobody. Several addresses: a@x.com; b@x.com" />
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="cm-bcc">BCC (blind copy to)</label>
+                        <input type="text" id="cm-bcc" spellcheck="false"
+                               placeholder="Optional and not visible to recipients. Several addresses: a@x.com; b@x.com" />
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="cm-subject">Subject</label>
+                        <input type="text" id="cm-subject" spellcheck="false" />
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                        <label for="cm-body">Body</label>
+                        <div class="rich-toolbar" role="toolbar" aria-label="Body formatting">
+                            <button type="button" class="btn btn-ghost btn-sm" id="cm-bold" title="Bold (Ctrl+B)"><b>B</b></button>
+                            <button type="button" class="btn btn-ghost btn-sm" id="cm-italic" title="Italic (Ctrl+I)"><i>I</i></button>
+                            <button type="button" class="btn btn-ghost btn-sm" id="cm-underline" title="Underline (Ctrl+U)"><u>U</u></button>
+                        </div>
+                        <div id="cm-body" class="rich-body" contenteditable="true" spellcheck="false"
+                             role="textbox" aria-multiline="true" aria-label="Body"></div>
+                        <p class="note">
+                            Paste a formatted message straight from Outlook or Word — bold, italic and
+                            underline are kept. Select text and use the buttons above, or Ctrl+B / Ctrl+I /
+                            Ctrl+U, to format it here.
+                        </p>
+                    </div>
+
+                    <div class="actions" style="margin-top: 14px">
+                        <label class="check" for="cm-signature">
+                            <input type="checkbox" id="cm-signature" />
+                            <span>Append my Outlook signature</span>
+                        </label>
+                    </div>
+
+                    <div class="uploader" style="margin-top: 14px">
+                        <label class="drop" id="cm-attachment-drop">
+                            <span class="drop-step">Attachment</span>
+                            <span class="drop-title">One shared file</span>
+                            <span class="drop-hint">Sent to every ticked recipient, unchanged</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="cm-attachment-file" aria-label="Attachment" />
+                        </label>
+                    </div>
+
+                    <div class="actions" style="margin-top: 14px">
+                        <label class="check" for="cm-dry-run">
+                            <input type="checkbox" id="cm-dry-run" checked />
+                            <span>Dry run (save to Drafts instead of sending)</span>
+                        </label>
+                        <button type="button" class="btn btn-primary" id="cm-send" disabled>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Send mails</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="cm-send-alert" role="alert">
+                        <strong>Check this</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="results" id="cm-run" hidden>
+                <div class="section-title">Run log</div>
+                <div class="card">
+                    <div class="run-head">
+                        <span id="cm-progress-label">Mails processed</span>
+                        <span class="mono" id="cm-progress-text">0 / 0</span>
+                        <button type="button" class="btn btn-ghost btn-sm" id="cm-stop" hidden>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Stop</span>
+                        </button>
+                    </div>
+                    <div class="progress" id="cm-progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                         aria-label="Custom Mail progress">
+                        <span class="progress-fill" id="cm-progress-fill"></span>
+                    </div>
+                    <pre class="console" id="cm-console"></pre>
+                </div>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; Custom Mail</footer>
         </section>
 
         @* ================= DATA & METHODOLOGY ================= *@
@@ -3533,13 +4355,17 @@
     <script src="~/js/incidents-report.js" asp-append-version="true"></script>
     <script src="~/js/ticket-seller.js" asp-append-version="true"></script>
     <script src="~/js/title-cleaner.js" asp-append-version="true"></script>
+    <script src="~/js/cargo-seller-report.js" asp-append-version="true"></script>
+    <script src="~/js/pos-reconciliation.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>
     <script src="~/js/mark-received.js" asp-append-version="true"></script>
     <script src="~/js/seller-notification.js" asp-append-version="true"></script>
     <script src="~/js/product-status.js" asp-append-version="true"></script>
     <script src="~/js/track17.js" asp-append-version="true"></script>
     <script src="~/js/late-orders.js" asp-append-version="true"></script>
+    <script src="~/js/stockout-warnings.js" asp-append-version="true"></script>
     <script src="~/js/offer-warnings.js" asp-append-version="true"></script>
     <script src="~/js/vat-warnings.js" asp-append-version="true"></script>
+    <script src="~/js/custom-mail.js" asp-append-version="true"></script>
     <script src="~/js/settings.js" asp-append-version="true"></script>
 }

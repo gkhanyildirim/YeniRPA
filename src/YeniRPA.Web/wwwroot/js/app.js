@@ -475,6 +475,8 @@ window.RPA = window.RPA || {};
     const count = wrap.querySelector('.table-count');
     if (count) count.textContent = countText(data, matched, capped);
 
+    if (data.options.onSync) data.options.onSync(matched, capped);
+
     wrap.querySelectorAll('thead tr:first-child th').forEach((th, i) => {
       if (data.columns[i] && data.columns[i].sortable === false) return;
       th.setAttribute('aria-sort',
@@ -562,6 +564,9 @@ window.RPA = window.RPA || {};
    *                                            own distinct values
    *   sortable: false                        — header stays plain text
    * Options: { maxRows } caps the rendered rows *after* filtering and sorting.
+   *           { onSync(matched, capped) } fires after every render/filter/sort, for a panel that
+   *           needs to reflect the currently-visible rows outside the table itself (e.g. a distinct
+   *           group count above it) — most panels don't need this and can omit it.
    */
   /**
    * Forgets every table's sort and column filters. Called when a new file is uploaded: the state is
@@ -1112,15 +1117,28 @@ window.RPA = window.RPA || {};
     'track17': { tab: 'tab-track17', panel: 'panel-track17' },
     // Reads an export like the reports do, but its output is messages to external parties.
     'late-orders': { tab: 'tab-late-orders', panel: 'panel-late-orders' },
+    // Same shape as late-orders, but the export is a stockout list filtered by GMV rather than an
+    // orders export filtered by deadline.
+    'stockout-warnings': { tab: 'tab-stockout-warnings', panel: 'panel-stockout-warnings' },
     // Also messages external parties, but its input is the mapping table itself rather than an
     // export, and every mail carries that seller's own offer list as an attachment.
     'offer-warnings': { tab: 'tab-offer-warnings', panel: 'panel-offer-warnings' },
     // The only module that both reads an export and produces the attachments it mails: it splits the
     // upload into one workbook per seller, so the seller/file pairing is computed rather than typed.
     'vat-warnings': { tab: 'tab-vat-warnings', panel: 'panel-vat-warnings' },
+    // Same Outlook pipeline as offer/vat-warnings, but no per-seller template or attachment: the
+    // operator writes one subject/body and one shared file, and picks recipients from two uploaded
+    // lists merged and deduplicated by e-mail.
+    'custom-mail': { tab: 'tab-custom-mail', panel: 'panel-custom-mail' },
     // Rewrites a column of the uploaded file rather than reporting on it. Which column, and what
     // comes out of it, is decided by a per-category rule set rather than by anything in here.
     'title-cleaner': { tab: 'tab-title-cleaner', panel: 'panel-title-cleaner' },
+    // Reads three exports and joins them by tracking code instead of order number; the seller is
+    // picked from the cargo-invoice file itself rather than from a saved mapping.
+    'cargo-seller-report': { tab: 'tab-cargo-seller-report', panel: 'panel-cargo-seller-report' },
+    // Backfills Bulut Tahsilat's blank order numbers from Craftgate (Provizyon No / authCode), then
+    // pivots by POS Banka x Taksit. Mirakl is uploaded here too but not read yet.
+    'pos-reconciliation': { tab: 'tab-pos-reconciliation', panel: 'panel-pos-reconciliation' },
     // Reference page: static content, no upload and no dashboard of its own.
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' },
     // Moves this install's LiteDB-backed settings to and from a backup file. No upload feeds a
