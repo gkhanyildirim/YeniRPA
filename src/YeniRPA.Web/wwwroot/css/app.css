@@ -2755,6 +2755,48 @@ th[aria-sort="descending"] .th-sort { color: var(--ink); }
   text-overflow: ellipsis;
 }
 
+/* ---------- seller notification: kind tabs + editable template cards ---------- */
+
+.sn-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.sn-tab {
+  padding: 8px 16px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: .82rem;
+  cursor: pointer;
+}
+.sn-tab[aria-selected="true"] {
+  border-bottom-color: var(--accent, currentColor);
+  color: var(--ink);
+  font-weight: 600;
+}
+.sn-hint {
+  margin: 0 0 12px;
+  color: var(--ink-2);
+  font-size: .76rem;
+}
+.sn-empty {
+  padding: 14px;
+  color: var(--ink-2);
+  font-size: .78rem;
+}
+.msg-body.sn-fields {
+  display: grid;
+  gap: 10px;
+  font-family: inherit;
+  white-space: normal;
+}
+.sn-fields textarea { min-height: 140px; }
+.msg-head .sn-title { font-weight: 600; font-size: .82rem; }
+
 .note-list {
   margin: 8px 0 0;
   padding-left: 18px;

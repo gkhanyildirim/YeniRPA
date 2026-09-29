@@ -7,7 +7,7 @@ with tab navigation between them and results rendered in place.
 |---|---|---|
 | **Order Report** (Late Shipment & Cancellation) | `orders.xlsx` | In-page dashboard (20 KPIs, 8 charts, 5 tables, 2 ranked lists), filterable by date range and seller + 4-sheet Excel workbook |
 | **Return SLA Report** | `orders` export + 1–2 return tracking templates (`.xlsx` or `.csv`) | In-page dashboard (6 KPIs, 4 tables) |
-| **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log |
+| **Create Return** | The two return templates + the returns and orders exports — or a ready `.xlsx` with the order ID in column A and the tracking number in column B | Reviewable list (funnel, ready rows, what was dropped), then files a return on Mirakl per row with a live run log; optionally sends the seller a Return notification right after each one |
 | **Product Status** | A seller list (`.xlsx` or `.csv`, names in the first column) or pasted seller names | Reads each seller's catalogue breakdown off the Mirakl Catalog Manager — four sellers at a time — and returns one seller × status table, sortable in place and exportable to Excel. Read-only: nothing is written to the marketplace |
 | **Late Order Warnings** | `orders` export (`.xlsx` or `.csv`) + the seller → WhatsApp group mapping | Overdue orders by seller, a funnel, the rows set aside for review, and one composed warning message per WhatsApp group (copy to clipboard or export to Excel) |
 | **Seller Offer Warnings** | The Mirakl `offers` export + the seller address list (`Onboarding Check List.xlsx`, sheet `Data`) | One `.xlsx` per seller listing their offers with one of the warned lead times to ship (0–1 days by default, a settings box), then one warning mail per seller carrying their own file, previewed in full and sent through Outlook with a live run log |
@@ -911,6 +911,8 @@ src/YeniRPA.Web/
 │       ├── AutomationJobBus.cs      Single-run lock + SSE progress fan-out
 │       ├── MiraklBrowser.cs         Playwright browser + encrypted saved login
 │       ├── CreateReturnRunner.cs    The Create Return flow, one order at a time
+│       ├── SellerNotificationSender.cs  One Mirakl message on a page the caller owns —
+│       │                            shared by Seller Notification and Create Return
 │       ├── OutlookMailSender.cs     Outlook COM on one dedicated STA thread
 │       ├── OfferMailRunner.cs       The seller warning batch, one mail at a time —
 │       │                            shared by both warning modules, module name a parameter
@@ -960,7 +962,7 @@ empty set — deliberate: silent coverage loss is the worse outcome.
 | `POST` | `/api/incidents-report/data` | `openIncidents`, `closedIncidents` | Dashboard JSON: flat incident rows plus thresholds and file counts |
 | `POST` | `/api/create-return/prepare` | `templateA`, `templateB`, `returns`, `orders`, `from`, `to`, `returnsOnly` | Prepared list JSON: ready rows, dropped rows, funnel |
 | `POST` | `/api/create-return/list/excel` | JSON `{ rows }` | Two-column `.xlsx` |
-| `POST` | `/api/create-return/start-list` | JSON `{ rows }` | `{ count }`; the run continues in the background |
+| `POST` | `/api/create-return/start-list` | JSON `{ rows, notifyTemplateId? }` | `{ count }`; the run continues in the background |
 | `GET` | `/api/automation/status` | — | `{ hasSession, browserReady, isRunning, runningModule }` |
 | `POST` | `/api/automation/login` \| `save-session` \| `clear-session` | — | `200` |
 | `GET` | `/api/automation/events` | — | `text/event-stream` of run progress |
@@ -1093,6 +1095,18 @@ Things worth knowing before changing it:
   browser nobody asked for. `browserReady` on the status endpoint reports whether it is already up.
 - **There is no way to stop a running batch.** That was true of the original too, but it matters
   more now that a prepare can hand the runner 177 orders in one click. Worth adding.
+
+**Optional return notification.** Ticking *Send return notification after each return* (off by
+default, it is a second write to Mirakl per order) and picking a template saved under
+**Seller Notification → Return** makes the same run send that message to the seller right after each
+return is created. `start-list` takes `notifyTemplateId`; the controller resolves the template and
+rejects a missing or empty one with `400` before anything is written. The send happens inside the
+Create Return run, on the same page, through `SellerNotificationSender` — a second run could not be
+started, because the run slot is already held. It uses Mirakl's *Return / Cancel the order* topic,
+like the Seller Notification return tab. A failed message does **not** turn the row into a failed
+return (the return exists; re-running the list would file a duplicate): it is logged as
+`Notification failed`, screenshotted, and listed at the end of the log so it can be sent from Seller
+Notification.
 
 ## Return SLA report
 

@@ -1763,6 +1763,17 @@
                     <div class="table-scroll" id="cr-ready-wrap"></div>
                 </div>
 
+                @* Off by default: the notification is a second write to Mirakl per order. It runs inside the
+                   same run, right after each return is created, using a Return template from Seller Notification. *@
+                <div class="actions">
+                    <label class="check" for="cr-notify">
+                        <input type="checkbox" id="cr-notify" />
+                        <span>Send return notification after each return</span>
+                    </label>
+                    <select id="cr-notify-template" aria-label="Return notification template" disabled></select>
+                    <span class="filter-summary" id="cr-notify-hint"></span>
+                </div>
+
                 <div class="actions">
                     <button type="button" class="btn btn-ghost" id="cr-download">
                         <span class="spinner" aria-hidden="true"></span>
@@ -1950,28 +1961,24 @@
                still type a one-off topic/message below without ever saving it. *@
             <div class="section-title">Message templates</div>
             <div class="card">
-                <h3>Saved topic/message pairs, for reuse across runs</h3>
-
-                <div class="table-scroll">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width: 20%">Name</th>
-                                <th style="width: 24%">Topic</th>
-                                <th style="width: 46%">Message</th>
-                                <th style="width: 10%"></th>
-                            </tr>
-                        </thead>
-                        <tbody id="sn-template-body"></tbody>
-                    </table>
+                <div class="sn-tabs" role="tablist" aria-label="Notification type">
+                    <button type="button" class="sn-tab" role="tab" id="sn-tab-return" data-kind="return" aria-selected="true">Return</button>
+                    <button type="button" class="sn-tab" role="tab" id="sn-tab-undelivered" data-kind="undelivered" aria-selected="false">Undelivered</button>
+                    <button type="button" class="sn-tab" role="tab" id="sn-tab-custom" data-kind="custom" aria-selected="false">Custom</button>
                 </div>
 
+                <p class="sn-hint" id="sn-kind-hint"></p>
+
+                <div class="msg-list" id="sn-template-list" role="tabpanel"></div>
+
                 <div class="actions">
-                    <button type="button" class="btn btn-ghost" id="sn-template-add">
+                    <button type="button" class="btn btn-ghost btn-sm" id="sn-template-add">
                         <span class="spinner" aria-hidden="true"></span>
                         <span class="btn-text">Add template</span>
                     </button>
-                    <button type="button" class="btn btn-primary" id="sn-template-save">
+                    <button type="button" class="btn btn-ghost btn-sm" id="sn-expand-all">Expand all</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="sn-collapse-all">Collapse all</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="sn-template-save">
                         <span class="spinner" aria-hidden="true"></span>
                         <span class="btn-text">Save templates</span>
                     </button>
@@ -1987,24 +1994,7 @@
             <div class="section-title">Send notification</div>
             <div class="card">
                 <div class="uploader">
-                    <div class="field">
-                        <label for="sn-template-select">Load a saved template</label>
-                        <select id="sn-template-select">
-                            <option value="">Custom (not saved)</option>
-                        </select>
-                    </div>
-
-                    <div class="field" style="margin-top: 14px">
-                        <label for="sn-topic">Topic</label>
-                        <input type="text" id="sn-topic" spellcheck="false"
-                               placeholder="What the seller will see as the conversation subject" />
-                    </div>
-
-                    <div class="field" style="margin-top: 14px">
-                        <label for="sn-message">Message</label>
-                        <textarea id="sn-message" rows="6" spellcheck="false"
-                                  placeholder="The message body sent to the seller"></textarea>
-                    </div>
+                    <div class="filter-summary" id="sn-selected">No template selected</div>
 
                     <div class="uploader-grid" style="margin-top: 14px">
                         <label class="drop" id="sn-drop">

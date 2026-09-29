@@ -71,6 +71,27 @@ public class PosReconciliationBuilderTests
     }
 
     [Fact]
+    public void MiraklSplitsAreSummedAndSubtractedFromTheTotalToGiveRetailGmv()
+    {
+        var bulut = BulutHeader + "\n1001;AKBANK;AKBANK;1000;5;500001;1;321778013\n1002;AKBANK;AKBANK;300;5;500002;1;999";
+        var craftgate = CraftgateHeader + "\n500001;900001";
+        var mirakl = "Order number;Amount\n01259_321778013-A;400\n01259_321778013-B;250,5\n01259_321778013-C;0";
+
+        using var bulutStream = new MemoryStream(Encoding.UTF8.GetBytes(bulut));
+        using var craftgateStream = new MemoryStream(Encoding.UTF8.GetBytes(craftgate));
+        using var miraklStream = new MemoryStream(Encoding.UTF8.GetBytes(mirakl));
+        var batch = PosReconciliationBuilder.Build(
+            bulutStream, "bulut.csv", craftgateStream, "craftgate.csv", miraklStream, "mirakl.csv");
+
+        Assert.Equal(650.5m, batch.Rows[0].MarketplaceGmv);
+        Assert.Equal(349.5m, batch.Rows[0].RetailGmv);
+        Assert.Equal(0m, batch.Rows[1].MarketplaceGmv);
+        Assert.Equal(300m, batch.Rows[1].RetailGmv);
+        Assert.Equal(650.5m, batch.Summary.TotalMarketplaceGmv);
+        Assert.Equal(649.5m, batch.Summary.TotalRetailGmv);
+    }
+
+    [Fact]
     public void BlankProvizyonNoIsReportedAsUnmatchedWithoutAttemptingALookup()
     {
         var bulut = BulutHeader + "\n1001;AKBANK;AKBANK;100;5;;1;";

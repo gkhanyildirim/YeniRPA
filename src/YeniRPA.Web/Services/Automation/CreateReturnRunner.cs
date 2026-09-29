@@ -34,12 +34,15 @@ public sealed class CreateReturnRunner
 
     readonly AutomationJobBus _bus;
     readonly MiraklBrowser _browser;
+    readonly SellerNotificationSender _sender;
     readonly ILogger<CreateReturnRunner> _logger;
 
-    public CreateReturnRunner(AutomationJobBus bus, MiraklBrowser browser, ILogger<CreateReturnRunner> logger)
+    public CreateReturnRunner(
+        AutomationJobBus bus, MiraklBrowser browser, SellerNotificationSender sender, ILogger<CreateReturnRunner> logger)
     {
         _bus = bus;
         _browser = browser;
+        _sender = sender;
         _logger = logger;
     }
 
@@ -47,7 +50,9 @@ public sealed class CreateReturnRunner
     /// Claims the run slot and starts the batch in the background. False when another automation run
     /// already holds the slot — the caller turns that into the operator-facing error.
     /// </summary>
-    public bool TryStart(IReadOnlyList<ReturnRow> rows)
+    /// <param name="notifyMessage">When set, the Seller Notification "return" message sent for every
+    /// order right after its return was created, inside this same run.</param>
+    public bool TryStart(IReadOnlyList<ReturnRow> rows, string? notifyMessage = null)
     {
         ArgumentNullException.ThrowIfNull(rows);
 
@@ -60,7 +65,7 @@ public sealed class CreateReturnRunner
         {
             try
             {
-                await RunAsync(rows);
+                await RunAsync(rows, notifyMessage);
             }
             catch (Exception ex)
             {
@@ -79,10 +84,10 @@ public sealed class CreateReturnRunner
         return true;
     }
 
-    async Task RunAsync(IReadOnlyList<ReturnRow> rows)
+    async Task RunAsync(IReadOnlyList<ReturnRow> rows, string? notifyMessage)
     {
         _bus.Started(ModuleName, rows.Count);
-        _bus.Log($"Starting {rows.Count} return(s).");
+        _bus.Log($"Starting {rows.Count} return(s)" + (notifyMessage is null ? "." : " with a return notification for each."));
 
         var browser = await _browser.EnsureBrowserAsync();
         await using var context = await _browser.CreateAuthContextAsync(browser);
@@ -90,12 +95,15 @@ public sealed class CreateReturnRunner
         var page = await context.NewPageAsync();
         var processed = 0;
         var failed = new List<string>();
+        var notifyFailed = new List<string>();
 
         foreach (var row in rows)
         {
+            var created = false;
             try
             {
-                await CreateReturnAsync(page, row);
+                await CreateReturnAsync(page, row, waitForClose: notifyMessage is not null);
+                created = true;
                 processed++;
                 _bus.Log($"Done: {row.OrderId}");
             }
@@ -110,13 +118,42 @@ public sealed class CreateReturnRunner
                 _bus.Log($"Failed: {row.OrderId} - {ex.Message}{suffix}");
             }
 
+            // Only after a return that actually went through, and in its own try: the return already
+            // exists on Mirakl, so a message failure must not make the row look failed (re-running
+            // the list would then file a second return for the same order).
+            if (created && notifyMessage is not null)
+            {
+                try
+                {
+                    await _sender.SendAsync(page, row.OrderId, freeTopic: null, notifyMessage);
+                    _bus.Log($"Notified: {row.OrderId}");
+                }
+                catch (Exception ex)
+                {
+                    notifyFailed.Add(row.OrderId);
+                    _logger.LogWarning(ex, "Return notification failed for order {OrderId}.", row.OrderId);
+
+                    var screenshotPath = await AutomationArtifacts.TryCaptureFailureScreenshotAsync(
+                        _bus, page, ModuleName, $"{row.OrderId}-notification");
+                    var suffix = screenshotPath is null ? string.Empty : $" | screenshot: {screenshotPath}";
+                    _bus.Log($"Notification failed: {row.OrderId} - {ex.Message}{suffix}");
+                }
+            }
+
             _bus.Progress(processed + failed.Count, rows.Count);
+        }
+
+        if (notifyFailed.Count > 0)
+        {
+            _bus.Log("");
+            _bus.Log($"Return created but notification NOT sent for {notifyFailed.Count} order(s) — send these from Seller Notification:");
+            _bus.Log("  " + string.Join("\n  ", notifyFailed));
         }
 
         _bus.Done(processed, failed);
     }
 
-    async Task CreateReturnAsync(IPage page, ReturnRow row)
+    async Task CreateReturnAsync(IPage page, ReturnRow row, bool waitForClose)
     {
         _bus.Log($"  [{row.OrderId}] Open create return page");
         await page.GotoAsync(
@@ -155,6 +192,21 @@ public sealed class CreateReturnRunner
         _bus.Log($"  [{row.OrderId}] Confirm Create in dialog");
         await confirmCreateButton.ScrollIntoViewIfNeededAsync();
         await confirmCreateButton.ClickAsync(new LocatorClickOptions { Force = true });
+
+        // Only needed when a message follows: navigating to the message page while the confirmation
+        // is still being submitted could abort the request. Not waited for otherwise, so a run without
+        // notifications behaves exactly as before; a timeout here is not treated as a failure.
+        if (waitForClose)
+        {
+            try
+            {
+                await confirmDialog.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 10_000 });
+            }
+            catch (TimeoutException)
+            {
+                _bus.Log($"  [{row.OrderId}] Confirmation dialog did not close within 10 s; continuing.");
+            }
+        }
 
         await page.WaitForTimeoutAsync(1000);
     }

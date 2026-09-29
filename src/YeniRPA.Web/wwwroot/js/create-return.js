@@ -246,6 +246,48 @@
     };
   }
 
+  /** The run payload: the list, plus the chosen Return template when the notification box is ticked. */
+  function runPayload() {
+    const payload = listPayload();
+    if (el('cr-notify').checked) payload.notifyTemplateId = el('cr-notify-template').value;
+    return payload;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Return notification templates — the "return" kind saved on the Seller Notification panel. Reloaded
+  // every time this panel is opened, because they are edited over there.
+  // ---------------------------------------------------------------------------
+
+  async function loadNotifyTemplates() {
+    const select = el('cr-notify-template');
+    const box = el('cr-notify');
+    const previous = select.value;
+
+    let list = [];
+    try {
+      const response = await fetch('/api/seller-notification/templates');
+      if (!response.ok) throw new Error();
+      const result = await response.json();
+      list = (result.data || []).filter(t => t.kind === 'return' && t.message);
+    } catch (e) {
+      el('cr-notify-hint').textContent = 'Templates could not be loaded.';
+    }
+
+    select.innerHTML = list
+      .map(t => '<option value="' + RPA.escapeHtml(t.id) + '">' + RPA.escapeHtml(t.name || '(unnamed)') + '</option>')
+      .join('');
+    if (list.some(t => t.id === previous)) select.value = previous;
+
+    if (!list.length) {
+      box.checked = false;
+      el('cr-notify-hint').textContent = 'Add a template on the Seller Notification → Return tab first.';
+    } else {
+      el('cr-notify-hint').textContent = '';
+    }
+    box.disabled = !list.length;
+    select.disabled = !list.length || !box.checked;
+  }
+
   async function prepare() {
     const files = {
       templateA: el('cr-templateA-file').files[0],
@@ -329,7 +371,14 @@
 
     el('cr-run-list').addEventListener('click', async function () {
       if (!preparedRows.length) return;
-      if (!window.confirm('File ' + preparedRows.length + ' return(s) on Mirakl? This writes to the marketplace and cannot be undone from here.'))
+      const notify = el('cr-notify').checked;
+      if (notify && !el('cr-notify-template').value) {
+        RPA.showError('cr-prepare-alert', 'Pick a return notification template, or untick the notification box.');
+        return;
+      }
+      if (!window.confirm('File ' + preparedRows.length + ' return(s) on Mirakl' +
+        (notify ? ', and send the "' + el('cr-notify-template').selectedOptions[0].text + '" message to each seller' : '') +
+        '? This writes to the marketplace and cannot be undone from here.'))
         return;
 
       RPA.clearError('cr-prepare-alert');
@@ -340,7 +389,7 @@
       el('cr-run').hidden = false;
 
       try {
-        await RPA.sendJson('/api/create-return/start-list', listPayload());
+        await RPA.sendJson('/api/create-return/start-list', runPayload());
       } catch (err) {
         RPA.showError('cr-prepare-alert', err.message);
         setRunning(false);
@@ -367,11 +416,20 @@
     // app.js selects the initial module while running its own DOMContentLoaded handler, which is
     // registered before this one — so the first rpa:modulechange has already been dispatched by
     // the time the listener below exists. Check the tab directly instead of waiting for a repeat.
-    document.addEventListener('rpa:modulechange', function (event) {
-      if (event.detail.module === MODULE) activate();
+    el('cr-notify').addEventListener('change', function () {
+      el('cr-notify-template').disabled = !this.checked;
     });
 
-    if (el('tab-create-return').getAttribute('aria-selected') === 'true') activate();
+    document.addEventListener('rpa:modulechange', function (event) {
+      if (event.detail.module !== MODULE) return;
+      activate();
+      loadNotifyTemplates();
+    });
+
+    if (el('tab-create-return').getAttribute('aria-selected') === 'true') {
+      activate();
+      loadNotifyTemplates();
+    }
   });
 
 })(window.RPA);

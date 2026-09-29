@@ -4,8 +4,8 @@
    Opens every order's own Mirakl conversation dialog and sends a topic/message
    through it. Structurally identical to mark-received.js (no prepare/review
    step: paste or upload order IDs, confirm, run) plus one thing that module
-   does not have — a saved list of named topic/message templates the operator
-   can load into the send form, edit, and run without ever saving. Session and
+   does not have — named message templates, kept per tab (return / undelivered /
+   custom) as collapsible cards the operator edits and picks from. Session and
    the event stream work exactly like mark-received.js, because both drive the
    same Mirakl browser and share its login.
    ============================================================================= */
@@ -212,65 +212,116 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Message templates — a saved list the send form can load from, not the
-  // source of truth for a run: the operator can still type a one-off
-  // topic/message below without ever saving it.
+  // Message templates — saved per kind (return / undelivered / custom) and edited
+  // as collapsible cards. The template picked on the active tab is what a run
+  // sends; edits are only persisted by "Save templates".
   // ---------------------------------------------------------------------------
 
-  function templateRowHtml(t) {
-    return '<tr data-id="' + RPA.escapeHtml(t.id || '') + '">' +
-      '<td><input type="text" class="tpl-name" value="' + RPA.escapeHtml(t.name || '') + '" aria-label="Template name" /></td>' +
-      '<td><input type="text" class="tpl-topic" value="' + RPA.escapeHtml(t.topic || '') + '" aria-label="Topic" /></td>' +
-      '<td><textarea class="tpl-message" rows="2" aria-label="Message">' + RPA.escapeHtml(t.message || '') + '</textarea></td>' +
-      '<td class="num"><button type="button" class="btn btn-ghost btn-sm tpl-remove" aria-label="Remove template">Remove</button></td>' +
-      '</tr>';
+  const KIND_HINTS = {
+    'return': 'Sent with Mirakl\'s "Return / Cancel the order" topic. Only the message is editable.',
+    'undelivered': 'Sent with Mirakl\'s "Return / Cancel the order" topic for parcels that came back undelivered.',
+    'custom': 'Sent with Mirakl\'s "Other reason" topic and the free-text topic you enter on the template.'
+  };
+
+  let activeKind = 'return';
+  const selected = { 'return': '', 'undelivered': '', 'custom': '' }; // picked template id per kind
+  const expanded = new Set();                                          // ids of open cards
+
+  function kindOf(t) {
+    return t.kind === 'return' || t.kind === 'undelivered' ? t.kind : 'custom';
   }
 
-  function renderTemplates(list) {
-    templates = list || [];
-    el('sn-template-body').innerHTML = templates.map(templateRowHtml).join('');
-    updateTemplateCount();
-    renderTemplateOptions();
+  function newId() {
+    return window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
   }
 
-  function updateTemplateCount() {
-    const count = el('sn-template-body').querySelectorAll('tr').length;
-    el('sn-template-count').textContent = count ? count + ' template(s)' : 'No templates saved yet';
+  function templateCardHtml(t) {
+    const open = expanded.has(t.id);
+    const bodyId = 'sn-body-' + t.id;
+    const isCustom = kindOf(t) === 'custom';
+
+    return '<div class="msg-card' + (open ? '' : ' is-collapsed') + '" data-id="' + RPA.escapeHtml(t.id) + '">' +
+      '<div class="msg-head">' +
+        '<label><input type="radio" name="sn-pick" class="tpl-pick" value="' + RPA.escapeHtml(t.id) + '"' +
+          (selected[activeKind] === t.id ? ' checked' : '') + ' aria-label="Use this template" /></label>' +
+        '<span class="sn-title">' + RPA.escapeHtml(t.name || '(unnamed)') + '</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm tpl-toggle" aria-expanded="' + open + '" aria-controls="' + RPA.escapeHtml(bodyId) + '">' +
+          (open ? 'Hide' : 'Edit') + '</button>' +
+      '</div>' +
+      '<div class="msg-body sn-fields" id="' + RPA.escapeHtml(bodyId) + '">' +
+        '<div class="field"><label>Name</label><input type="text" class="tpl-name" value="' + RPA.escapeHtml(t.name || '') + '" /></div>' +
+        (isCustom
+          ? '<div class="field"><label>Topic</label><input type="text" class="tpl-topic" spellcheck="false" value="' + RPA.escapeHtml(t.topic || '') + '" placeholder="What the seller will see as the conversation subject" /></div>'
+          : '') +
+        '<div class="field"><label>Message</label><textarea class="tpl-message" spellcheck="false">' + RPA.escapeHtml(t.message || '') + '</textarea></div>' +
+        '<div><button type="button" class="btn btn-ghost btn-sm tpl-remove">Remove</button></div>' +
+      '</div>' +
+      '</div>';
   }
 
-  /** Reads the table back out. A row with neither a name nor a topic/message is dropped. */
-  function collectTemplates() {
-    return Array.from(el('sn-template-body').querySelectorAll('tr')).map(function (row) {
-      return {
-        id: row.dataset.id || (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
-        name: row.querySelector('.tpl-name').value.trim(),
-        topic: row.querySelector('.tpl-topic').value.trim(),
-        message: row.querySelector('.tpl-message').value.trim()
-      };
-    }).filter(t => t.name || t.topic || t.message);
+  /** Copies what the operator typed in the visible cards back into `templates`, so switching tabs loses nothing. */
+  function syncFromDom() {
+    el('sn-template-list').querySelectorAll('.msg-card').forEach(function (card) {
+      const t = templates.find(x => x.id === card.dataset.id);
+      if (!t) return;
+      t.name = card.querySelector('.tpl-name').value.trim();
+      t.message = card.querySelector('.tpl-message').value;
+      const topic = card.querySelector('.tpl-topic');
+      if (topic) t.topic = topic.value.trim();
+    });
   }
 
-  function addTemplateRow() {
-    el('sn-template-body').insertAdjacentHTML('beforeend', templateRowHtml({ id: '', name: '', topic: '', message: '' }));
-    updateTemplateCount();
-
-    const rows = el('sn-template-body').querySelectorAll('tr');
-    const added = rows[rows.length - 1];
-    added.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    added.querySelector('.tpl-name').focus();
+  function visibleTemplates() {
+    return templates.filter(t => kindOf(t) === activeKind);
   }
 
-  function renderTemplateOptions() {
-    const select = el('sn-template-select');
-    const current = select.value;
-    select.innerHTML = '<option value="">Custom (not saved)</option>' +
-      templates
-        .filter(t => t.name)
-        .map(t => '<option value="' + RPA.escapeHtml(t.id) + '">' + RPA.escapeHtml(t.name) + '</option>')
-        .join('');
-    // Keeps the current selection if that template still exists after a save; otherwise falls back
-    // to "Custom" rather than silently landing on whatever now occupies that position in the list.
-    select.value = templates.some(t => t.id === current) ? current : '';
+  function renderTemplates() {
+    const list = visibleTemplates();
+    if (!list.some(t => t.id === selected[activeKind])) selected[activeKind] = list.length ? list[0].id : '';
+
+    el('sn-template-list').innerHTML = list.length
+      ? list.map(templateCardHtml).join('')
+      : '<div class="sn-empty">No templates on this tab yet. Use "Add template".</div>';
+    el('sn-kind-hint').textContent = KIND_HINTS[activeKind];
+    el('sn-template-count').textContent = list.length ? list.length + ' template(s)' : '';
+
+    document.querySelectorAll('.sn-tab').forEach(function (tab) {
+      tab.setAttribute('aria-selected', String(tab.dataset.kind === activeKind));
+    });
+    updateSelected();
+  }
+
+  function updateSelected() {
+    const t = templates.find(x => x.id === selected[activeKind]);
+    el('sn-selected').textContent = t
+      ? 'Will send: ' + (t.name || '(unnamed)') + ' (' + activeKind + ')'
+      : 'No template selected on this tab';
+  }
+
+  function switchKind(kind) {
+    if (kind === activeKind) return;
+    syncFromDom();
+    activeKind = kind;
+    renderTemplates();
+  }
+
+  function addTemplate() {
+    syncFromDom();
+    const t = { id: newId(), name: 'New template', topic: '', message: '', kind: activeKind };
+    templates.push(t);
+    expanded.add(t.id);
+    selected[activeKind] = selected[activeKind] || t.id;
+    renderTemplates();
+
+    const card = el('sn-template-list').querySelector('[data-id="' + t.id + '"]');
+    card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    card.querySelector('.tpl-name').select();
+  }
+
+  function setAllExpanded(open) {
+    syncFromDom();
+    visibleTemplates().forEach(t => open ? expanded.add(t.id) : expanded.delete(t.id));
+    renderTemplates();
   }
 
   async function loadTemplates() {
@@ -284,18 +335,22 @@
       return;
     }
 
-    renderTemplates(result.data || []);
+    templates = result.data || [];
+    renderTemplates();
   }
 
   async function saveTemplates() {
     const button = el('sn-template-save');
+    syncFromDom();
     RPA.clearError('sn-template-alert');
     RPA.setBusy(button, true, 'Saving…');
     try {
-      const result = await sendJsonMethod('PUT', '/api/seller-notification/templates', {
-        templates: collectTemplates()
-      });
-      renderTemplates((result && result.data) || []);
+      const payload = templates
+        .filter(t => t.name || t.topic || t.message)
+        .map(t => ({ id: t.id, name: t.name, topic: t.topic || '', message: t.message || '', kind: kindOf(t) }));
+      const result = await sendJsonMethod('PUT', '/api/seller-notification/templates', { templates: payload });
+      templates = (result && result.data) || [];
+      renderTemplates();
     } catch (err) {
       RPA.showError('sn-template-alert', err.message);
     } finally {
@@ -363,33 +418,72 @@
       runSessionAction('sn-clear-session', 'Clearing…', '/api/automation/clear-session');
     });
 
-    el('sn-template-add').addEventListener('click', addTemplateRow);
+    el('sn-template-add').addEventListener('click', addTemplate);
     el('sn-template-save').addEventListener('click', saveTemplates);
-    el('sn-template-body').addEventListener('click', function (event) {
-      const button = event.target.closest('.tpl-remove');
-      if (!button) return;
-      button.closest('tr').remove();
-      updateTemplateCount();
+    el('sn-expand-all').addEventListener('click', function () { setAllExpanded(true); });
+    el('sn-collapse-all').addEventListener('click', function () { setAllExpanded(false); });
+
+    document.querySelectorAll('.sn-tab').forEach(function (tab) {
+      tab.addEventListener('click', function () { switchKind(tab.dataset.kind); });
     });
 
-    el('sn-template-select').addEventListener('change', function () {
-      const chosen = templates.find(t => t.id === this.value);
-      if (!chosen) return;
-      el('sn-topic').value = chosen.topic || '';
-      el('sn-message').value = chosen.message || '';
+    const list = el('sn-template-list');
+
+    list.addEventListener('click', function (event) {
+      const card = event.target.closest('.msg-card');
+      if (!card) return;
+      const id = card.dataset.id;
+
+      if (event.target.closest('.tpl-remove')) {
+        syncFromDom();
+        templates = templates.filter(t => t.id !== id);
+        expanded.delete(id);
+        renderTemplates();
+        return;
+      }
+
+      const toggle = event.target.closest('.tpl-toggle');
+      if (toggle) {
+        // Toggled in place rather than re-rendered, so what is being typed in other cards is untouched.
+        const open = card.classList.toggle('is-collapsed') === false;
+        if (open) expanded.add(id); else expanded.delete(id);
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.textContent = open ? 'Hide' : 'Edit';
+      }
+    });
+
+    list.addEventListener('change', function (event) {
+      const pick = event.target.closest('.tpl-pick');
+      if (!pick) return;
+      selected[activeKind] = pick.value;
+      syncFromDom();
+      updateSelected();
+    });
+
+    list.addEventListener('input', function (event) {
+      const name = event.target.closest('.tpl-name');
+      if (!name) return;
+      name.closest('.msg-card').querySelector('.sn-title').textContent = name.value.trim() || '(unnamed)';
     });
 
     el('sn-start').addEventListener('click', async function () {
       const file = el('sn-file').files[0];
       const ordersText = el('sn-orders-text').value.trim();
-      const topic = el('sn-topic').value.trim();
-      const message = el('sn-message').value.trim();
 
+      syncFromDom();
+      const template = templates.find(t => t.id === selected[activeKind]);
+      const topic = template && activeKind === 'custom' ? (template.topic || '').trim() : '';
+      const message = template ? (template.message || '').trim() : '';
+
+      if (!template) {
+        RPA.showError('sn-alert', 'Pick a template on the ' + activeKind + ' tab first.');
+        return;
+      }
       if (!file && !ordersText) {
         RPA.showError('sn-alert', 'Upload a .txt file or paste order IDs.');
         return;
       }
-      if (!topic) {
+      if (activeKind === 'custom' && !topic) {
         RPA.showError('sn-alert', 'Topic cannot be empty.');
         return;
       }
@@ -405,7 +499,7 @@
       }
 
       if (!window.confirm(
-        'Send this message to ' + count + ' order(s) on Mirakl? This writes to the marketplace and cannot be undone from here.'))
+        'Send "' + (template.name || 'unnamed') + '" to ' + count + ' order(s) on Mirakl? This writes to the marketplace and cannot be undone from here.'))
         return;
 
       RPA.clearError('sn-alert');
@@ -413,6 +507,7 @@
       const form = new FormData();
       if (file) form.append('file', file);
       if (ordersText) form.append('orders', ordersText);
+      form.append('kind', activeKind);
       form.append('topic', topic);
       form.append('message', message);
 

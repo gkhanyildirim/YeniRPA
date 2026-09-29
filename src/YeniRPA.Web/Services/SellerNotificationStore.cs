@@ -46,14 +46,45 @@ public sealed class SellerNotificationStore : ISellerNotificationStore
 
     public string FilePath { get; }
 
-    public SellerNotificationTemplateFile Load() =>
-        _collection.FindById(DocumentId)?.Data ?? new SellerNotificationTemplateFile([]);
+    /// <summary>
+    /// Until the first save the document does not exist and the two stock templates are returned; after
+    /// that the saved list is authoritative, so an operator who deletes a stock template keeps it gone.
+    /// </summary>
+    public SellerNotificationTemplateFile Load()
+    {
+        var data = _collection.FindById(DocumentId)?.Data;
+        if (data is null) return new SellerNotificationTemplateFile(Defaults);
+
+        return data with
+        {
+            Templates = [.. (data.Templates ?? []).Select(t => t with { Kind = SellerNotificationKinds.Normalize(t.Kind) })]
+        };
+    }
 
     public void Save(SellerNotificationTemplateFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        var stamped = file with { Templates = file.Templates ?? [] };
-        _collection.Upsert(new Document { Id = DocumentId, Data = stamped });
+        var normalized = (file.Templates ?? [])
+            .Select(t => t with { Kind = SellerNotificationKinds.Normalize(t.Kind) })
+            .ToList();
+        _collection.Upsert(new Document { Id = DocumentId, Data = new SellerNotificationTemplateFile(normalized) });
     }
+
+    static readonly SellerNotificationTemplate[] Defaults =
+    [
+        new("default-return", "Return notification", "",
+            "Değerli İş Ortağımız,\n" +
+            "Sipariş için müşteri tarafından iade talebi oluşturulmuştur. İadenin kargo takip linkini sipariş içerisinden görebilirsiniz.\n" +
+            "• İadeyi onaylamanız durumunda,   \"Geri Ödeme\" veya \"İptal\"   butonu kullanılarak iade işleminin tamamlanmasını,\n" +
+            "• İadeyi reddetmeniz durumunda ise, red gerekçesini destekleyen ürün görselleri ve açıklayıcı bilgi ile birlikte tarafımıza sistem üzerinden iletmenizi rica ederiz.\n" +
+            "İade ürün tarafınıza ulaştıktan sonra 48 saatlik süre içerisinde aksiyon alınmaması halinde, platform tarafından değerlendirme yapılarak aksiyon alınabileceğini hatırlatmak isteriz.\n" +
+            "İyi çalışmalar dileriz.",
+            SellerNotificationKinds.Return),
+        new("default-undelivered", "Undelivered return", "",
+            "Merhaba\n" +
+            "Sipariş müşteriye teslim edilmeden iade olarak geri dönmüştür. Ücret iadesini tamamlamanızı rica ederiz.\n" +
+            "MediaMarkt Pazaryeri Ekibi",
+            SellerNotificationKinds.Undelivered)
+    ];
 }

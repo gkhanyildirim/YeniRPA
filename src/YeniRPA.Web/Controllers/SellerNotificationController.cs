@@ -53,11 +53,15 @@ public sealed class SellerNotificationController : ControllerBase
         // [FromForm] is required: [ApiController] infers query-string binding for simple types, so
         // without it a pasted textarea silently arrives as null no matter what the operator typed.
         [FromForm] string? orders,
+        [FromForm] string? kind,
         [FromForm] string? topic,
         [FromForm] string? message,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(topic))
+        var normalizedKind = SellerNotificationKinds.Normalize(kind);
+
+        // Only the custom kind carries its own topic; return/undelivered use Mirakl's fixed one.
+        if (normalizedKind == SellerNotificationKinds.Custom && string.IsNullOrWhiteSpace(topic))
             return BadRequest(new { success = false, message = "Topic cannot be empty.", data = (object?)null });
 
         if (string.IsNullOrWhiteSpace(message))
@@ -101,7 +105,7 @@ public sealed class SellerNotificationController : ControllerBase
             });
         }
 
-        if (!_runner.TryStart(orderIds, topic.Trim(), message))
+        if (!_runner.TryStart(orderIds, normalizedKind, topic?.Trim(), message))
         {
             return BadRequest(new
             {

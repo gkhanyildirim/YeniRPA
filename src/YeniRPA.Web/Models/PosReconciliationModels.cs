@@ -12,8 +12,9 @@ namespace YeniRPA.Web.Models;
 // been, the enriched Bulut Tahsilat data is pivoted: rows = "POS Banka", columns = "Taksit",
 // values = sum("İşlem Tutarı") and sum("Toplam Komisyon Tutarı").
 //
-// Mirakl is a third platform the operator pulls from for this workflow, but its role here is not
-// defined yet — its upload is accepted for the screen's shape but not read. Consumed by
+// Mirakl only carries the marketplace share of an order, while Bulut Tahsilat / Craftgate carry the
+// whole (possibly mixed-basket) amount. Every Mirakl "Amount" for an order (its -A/-B/-C splits
+// summed) is that order's Marketplace GMV; İşlem Tutarı minus it is the Retail GMV. Consumed by
 // wwwroot/js/pos-reconciliation.js.
 // ---------------------------------------------------------------------------
 
@@ -27,7 +28,9 @@ public sealed record PosReconciliationRow(
     [property: JsonPropertyName("provizyonNo")] string ProvizyonNo,
     [property: JsonPropertyName("taksit")] int Taksit,
     [property: JsonPropertyName("siparisNumarasi")] string SiparisNumarasi,
-    [property: JsonPropertyName("siparisKaynagi")] string SiparisKaynagi);
+    [property: JsonPropertyName("siparisKaynagi")] string SiparisKaynagi,
+    [property: JsonPropertyName("marketplaceGmv")] decimal? MarketplaceGmv = null,
+    [property: JsonPropertyName("retailGmv")] decimal? RetailGmv = null);
 
 /// <summary>A row whose blank "Sipariş Numarası" could not be backfilled — either "Provizyon No" had
 /// no match at all in Craftgate's "authCode", or it matched more than one distinct "externalId".</summary>
@@ -66,7 +69,9 @@ public sealed record PosReconciliationSummary(
     [property: JsonPropertyName("unmatched")] int Unmatched,
     [property: JsonPropertyName("conflicted")] int Conflicted,
     [property: JsonPropertyName("totalIslemTutari")] decimal TotalIslemTutari,
-    [property: JsonPropertyName("totalKomisyonTutari")] decimal TotalKomisyonTutari);
+    [property: JsonPropertyName("totalKomisyonTutari")] decimal TotalKomisyonTutari,
+    [property: JsonPropertyName("totalMarketplaceGmv")] decimal? TotalMarketplaceGmv = null,
+    [property: JsonPropertyName("totalRetailGmv")] decimal? TotalRetailGmv = null);
 
 /// <summary>
 /// One finished run, held by <see cref="Services.PosReconciliationStore"/> between <c>generate</c>

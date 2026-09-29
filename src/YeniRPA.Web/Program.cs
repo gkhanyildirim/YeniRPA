@@ -64,6 +64,10 @@ builder.Services.AddSingleton<AutomationJobBus>();
 builder.Services.AddSingleton<MiraklBrowser>();
 builder.Services.AddSingleton<CreateReturnRunner>();
 builder.Services.AddSingleton<MarkAsReceivedRunner>();
+// Shared by SellerNotificationRunner and CreateReturnRunner, so the return notification can be sent
+// inside a Create Return run (which already holds the single automation run slot). Stateless apart
+// from the bus, hence a singleton like the runners.
+builder.Services.AddSingleton<SellerNotificationSender>();
 builder.Services.AddSingleton<SellerNotificationRunner>();
 
 // Product Status reads rather than writes, so its own singleton is the result table: the scrape takes

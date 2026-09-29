@@ -27,8 +27,13 @@ public sealed class CreateReturnController : ControllerBase
     const string XlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     readonly CreateReturnRunner _runner;
+    readonly ISellerNotificationStore _notificationStore;
 
-    public CreateReturnController(CreateReturnRunner runner) => _runner = runner;
+    public CreateReturnController(CreateReturnRunner runner, ISellerNotificationStore notificationStore)
+    {
+        _runner = runner;
+        _notificationStore = notificationStore;
+    }
 
     /// <summary>One prepared row on its way back from the browser.</summary>
     public sealed record ListRow(
@@ -37,7 +42,8 @@ public sealed class CreateReturnController : ControllerBase
         [property: JsonPropertyName("reason")] string? Reason);
 
     public sealed record ListRequest(
-        [property: JsonPropertyName("rows")] IReadOnlyList<ListRow>? Rows);
+        [property: JsonPropertyName("rows")] IReadOnlyList<ListRow>? Rows,
+        [property: JsonPropertyName("notifyTemplateId")] string? NotifyTemplateId = null);
 
     // -----------------------------------------------------------------
     // Prepare
@@ -102,7 +108,20 @@ public sealed class CreateReturnController : ControllerBase
         if (rows.Count == 0)
             return BadRequest(new { error = "There is nothing to run. Prepare the list first." });
 
-        if (!_runner.TryStart(rows))
+        // Resolved here so a deleted or wrong template is rejected before anything is written to Mirakl.
+        string? notifyMessage = null;
+        if (!string.IsNullOrWhiteSpace(request?.NotifyTemplateId))
+        {
+            var template = _notificationStore.Load().Templates.FirstOrDefault(t =>
+                t.Id == request.NotifyTemplateId && t.Kind == SellerNotificationKinds.Return);
+
+            if (template is null || string.IsNullOrWhiteSpace(template.Message))
+                return BadRequest(new { error = "The selected return notification template no longer exists or is empty. Pick another one." });
+
+            notifyMessage = template.Message;
+        }
+
+        if (!_runner.TryStart(rows, notifyMessage))
             return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });
 
         return Ok(new { count = rows.Count });

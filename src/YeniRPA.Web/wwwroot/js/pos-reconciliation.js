@@ -79,6 +79,10 @@
       ['Toplam İşlem Tutarı', RPA.fmtMoney(s.totalIslemTutari, 'TRY'), ''],
       ['Toplam Komisyon Tutarı', RPA.fmtMoney(s.totalKomisyonTutari, 'TRY'), '']
     ];
+    if (s.totalMarketplaceGmv != null) {
+      items.push(['Marketplace GMV', RPA.fmtMoney(s.totalMarketplaceGmv, 'TRY'), '']);
+      items.push(['Retail GMV', RPA.fmtMoney(s.totalRetailGmv, 'TRY'), '']);
+    }
 
     RPA.renderKpis('pr-kpis', items);
     RPA.resetDataTables();

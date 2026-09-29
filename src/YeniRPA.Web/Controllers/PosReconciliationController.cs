@@ -9,8 +9,8 @@ namespace YeniRPA.Web.Controllers;
 /// ("Provizyon No" → "authCode" → "externalId") and pivots the result by POS Banka × Taksit. See
 /// <see cref="PosReconciliationBuilder"/> for the merge and pivot rules.
 ///
-/// <para>Mirakl is uploaded here too — the operator pulls all 3 platform reports together — but its
-/// role in this merge is not defined yet, so <c>miraklFile</c> is accepted and otherwise ignored.</para>
+/// <para>Mirakl is optional: when uploaded, its per-order Amount becomes each row's Marketplace GMV
+/// and the remainder of İşlem Tutarı becomes Retail GMV.</para>
 ///
 /// <para>Every endpoint here is new, so it uses the <c>{ success, message, data }</c> envelope per
 /// CLAUDE.md, following <see cref="CargoSellerReportController"/>'s pattern.</para>
@@ -42,10 +42,12 @@ public sealed class PosReconciliationController : ControllerBase
         {
             using var bulutTahsilatStream = bulutTahsilatFile.OpenReadStream();
             using var craftgateStream = craftgateFile.OpenReadStream();
+            using var miraklStream = miraklFile is { Length: > 0 } ? miraklFile.OpenReadStream() : null;
 
             var batch = PosReconciliationBuilder.Build(
                 bulutTahsilatStream, bulutTahsilatFile.FileName,
-                craftgateStream, craftgateFile.FileName);
+                craftgateStream, craftgateFile.FileName,
+                miraklStream, miraklFile?.FileName);
 
             var batchId = _store.Put(batch);
 

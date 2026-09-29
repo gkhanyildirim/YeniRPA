@@ -20,6 +20,7 @@ namespace YeniRPA.Web.Services;
 internal static class PosReconciliationBuilder
 {
     public const string CraftgateSheetName = "Transactions";
+    public const string MiraklSheetName = "Mirakl";
 
     public const string SourceOriginal = "Orijinal";
     public const string SourceMatched = "Craftgate Eşleşmesi";
@@ -34,10 +35,12 @@ internal static class PosReconciliationBuilder
 
     public static PosReconciliationBatch Build(
         Stream bulutTahsilatStream, string bulutTahsilatFileName,
-        Stream craftgateStream, string craftgateFileName)
+        Stream craftgateStream, string craftgateFileName,
+        Stream? miraklStream = null, string? miraklFileName = null)
     {
         var craftgateLookup = ReadCraftgateLookup(craftgateStream, craftgateFileName);
-        var (rows, unmatched) = ReadAndMergeBulutTahsilat(bulutTahsilatStream, bulutTahsilatFileName, craftgateLookup);
+        var miraklTotals = miraklStream is null ? null : ReadMiraklTotals(miraklStream, miraklFileName ?? "mirakl.xlsx");
+        var (rows, unmatched) = ReadAndMergeBulutTahsilat(bulutTahsilatStream, bulutTahsilatFileName, craftgateLookup, miraklTotals);
 
         if (rows.Count == 0)
             throw new InvalidOperationException("No records were found in the uploaded Bulut Tahsilat file.");
@@ -83,11 +86,46 @@ internal static class PosReconciliationBuilder
     }
 
     // ---------------------------------------------------------------------
+    // Mirakl — order core -> summed Amount (every -A/-B/-C split of an order added together)
+    // ---------------------------------------------------------------------
+
+    static Dictionary<string, decimal> ReadMiraklTotals(Stream stream, string fileName)
+    {
+        var totals = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        Dictionary<string, int>? idx = null;
+        int cOrder = 0, cAmount = 0;
+
+        // Streamed: the Mirakl export is one row per order line and can run to a large workbook.
+        foreach (var row in OfferExportReader.Read(stream, fileName, MiraklSheetName))
+        {
+            if (idx is null)
+            {
+                idx = TabularFile.BuildHeaderIndex(row);
+                cOrder = RequireColumn(idx, "Mirakl", "Order number");
+                cAmount = RequireColumn(idx, "Mirakl", "Amount");
+                continue;
+            }
+
+            var key = TabularFile.OrderCore(TabularFile.GetCell(row, cOrder));
+            if (key.Length == 0)
+                continue;
+
+            totals[key] = totals.GetValueOrDefault(key) + ParseMoney(TabularFile.GetCell(row, cAmount));
+        }
+
+        if (idx is null)
+            throw new InvalidOperationException("The uploaded Mirakl file is empty.");
+
+        return totals;
+    }
+
+    // ---------------------------------------------------------------------
     // Bulut Tahsilat — read, backfill, keep the merged rows and the unmatched ones apart
     // ---------------------------------------------------------------------
 
     static (List<PosReconciliationRow> Rows, List<PosReconciliationUnmatchedRow> Unmatched) ReadAndMergeBulutTahsilat(
-        Stream stream, string fileName, Dictionary<string, HashSet<string>> craftgateLookup)
+        Stream stream, string fileName, Dictionary<string, HashSet<string>> craftgateLookup,
+        Dictionary<string, decimal>? miraklTotals)
     {
         var table = TabularFile.Read(stream, fileName);
         if (table.Count == 0)
@@ -105,6 +143,9 @@ internal static class PosReconciliationBuilder
 
         var rows = new List<PosReconciliationRow>(table.Count - 1);
         var unmatched = new List<PosReconciliationUnmatchedRow>();
+
+        // An order paid across several Bulut rows has its Mirakl total subtracted once, from the first sale row.
+        var miraklApplied = new HashSet<string>(StringComparer.Ordinal);
 
         for (var r = 1; r < table.Count; r++)
         {
@@ -155,8 +196,22 @@ internal static class PosReconciliationBuilder
                 }
             }
 
+            decimal? marketplaceGmv = null;
+            decimal? retailGmv = null;
+            if (miraklTotals is not null && siparisNo.Length > 0)
+            {
+                var key = TabularFile.OrderCore(siparisNo);
+                // Only a positive (sale) row can carry it — a refund row of the same order must not
+                // consume it before the sale row is reached.
+                marketplaceGmv = islemTutari > 0 && miraklTotals.TryGetValue(key, out var mirakl) && miraklApplied.Add(key)
+                    ? Math.Round(mirakl, 2, MidpointRounding.AwayFromZero)
+                    : 0m;
+                retailGmv = islemTutari - marketplaceGmv;
+            }
+
             rows.Add(new PosReconciliationRow(
-                islemKodu, posBanka, kartBanka, islemTutari, komisyonTutari, provizyonNo, taksit, siparisNo, kaynak));
+                islemKodu, posBanka, kartBanka, islemTutari, komisyonTutari, provizyonNo, taksit, siparisNo, kaynak,
+                marketplaceGmv, retailGmv));
         }
 
         return (rows, unmatched);
@@ -231,7 +286,11 @@ internal static class PosReconciliationBuilder
         return new PosReconciliationSummary(
             rows.Count, original, matched, unmatchedCount, conflicted,
             Math.Round(rows.Sum(r => r.IslemTutari), 2, MidpointRounding.AwayFromZero),
-            Math.Round(rows.Sum(r => r.ToplamKomisyonTutari), 2, MidpointRounding.AwayFromZero));
+            Math.Round(rows.Sum(r => r.ToplamKomisyonTutari), 2, MidpointRounding.AwayFromZero),
+            rows.Any(r => r.MarketplaceGmv.HasValue)
+                ? Math.Round(rows.Sum(r => r.MarketplaceGmv ?? 0), 2, MidpointRounding.AwayFromZero) : null,
+            rows.Any(r => r.RetailGmv.HasValue)
+                ? Math.Round(rows.Sum(r => r.RetailGmv ?? 0), 2, MidpointRounding.AwayFromZero) : null);
     }
 
     /// <summary>
@@ -361,7 +420,8 @@ internal static class PosReconciliationBuilder
         string[] headers =
         [
             "İşlem Kodu", "POS Banka", "Kart Banka", "İşlem Tutarı", "Toplam Komisyon Tutarı",
-            "Provizyon No", "Taksit", "Sipariş Numarası", "Sipariş Numarası Kaynağı"
+            "Provizyon No", "Taksit", "Sipariş Numarası", "Sipariş Numarası Kaynağı",
+            "Marketplace GMV", "Retail GMV", "MP GMV - Retail GMV Fark"
         ];
         for (var c = 0; c < headers.Length; c++)
             sheet.Cell(1, c + 1).SetValue(headers[c]);
@@ -386,6 +446,12 @@ internal static class PosReconciliationBuilder
             sheet.Cell(excelRow, 7).Value = row.Taksit;
             sheet.Cell(excelRow, 8).SetValue(row.SiparisNumarasi);
             sheet.Cell(excelRow, 9).SetValue(row.SiparisKaynagi);
+            if (row.MarketplaceGmv is { } marketplace)
+                WriteMoneyCell(sheet.Cell(excelRow, 10), marketplace);
+            if (row.RetailGmv is { } retail)
+                WriteMoneyCell(sheet.Cell(excelRow, 11), retail);
+            if (row.MarketplaceGmv is { } mp && row.RetailGmv is { } rt)
+                WriteMoneyCell(sheet.Cell(excelRow, 12), mp - rt);
         }
 
         var lastRow = rows.Count + 1;
