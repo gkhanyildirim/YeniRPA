@@ -422,6 +422,11 @@ public sealed class WhatsAppMessageRunner
         var count = await rows.CountAsync();
         var matches = new List<ILocator>();
 
+        // A search lists the chat itself under "Sohbetler"/"Chats" and then every message hit under
+        // "Mesajlar"/"Messages". A message hit inside the same group carries the group's name as its
+        // title too, so one real group read as two. Rows at or below the messages header are not chats.
+        var messagesTop = await GetMessagesSectionTopAsync(page);
+
         for (var i = 0; i < count; i++)
         {
             var row = rows.Nth(i);
@@ -431,11 +436,48 @@ public sealed class WhatsAppMessageRunner
                 continue;
 
             var title = Normalize(await titleElement.GetAttributeAsync("title") ?? "");
-            if (string.Equals(title, target, StringComparison.Ordinal))
-                matches.Add(row);
+            if (!string.Equals(title, target, StringComparison.Ordinal))
+                continue;
+
+            if (messagesTop is not null)
+            {
+                var box = await row.BoundingBoxAsync();
+                if (box is not null && box.Y >= messagesTop.Value)
+                    continue;
+            }
+
+            matches.Add(row);
         }
 
         return matches;
+    }
+
+    /// <summary>
+    /// Vertical position of the "Mesajlar" / "Messages" section header in the search results, or null
+    /// when the results have no such section. Found by its exact text so it does not depend on which
+    /// element WhatsApp renders the header as.
+    /// </summary>
+    static async Task<float?> GetMessagesSectionTopAsync(IPage page)
+    {
+        foreach (var label in WhatsAppSelectors.MessagesSectionLabels)
+        {
+            try
+            {
+                var header = page.Locator($"#pane-side :text-is('{label}')").First;
+                if (await header.CountAsync() == 0)
+                    continue;
+
+                var box = await header.BoundingBoxAsync();
+                if (box is not null)
+                    return box.Y;
+            }
+            catch (PlaywrightException)
+            {
+                // Header probing is best-effort; without it the duplicate guard still runs on all rows.
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

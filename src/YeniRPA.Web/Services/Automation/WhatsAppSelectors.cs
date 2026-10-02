@@ -98,6 +98,9 @@ public static class WhatsAppSelectors
     /// </summary>
     public const string ResultTitleInRow = "span[title]";
 
+    /// <summary>Header text of the message-hits section in search results (Turkish and English UI).</summary>
+    public static readonly string[] MessagesSectionLabels = ["Mesajlar", "Messages"];
+
     public static readonly string[] ConversationPanel = ["#main"];
 
     /// <summary>
