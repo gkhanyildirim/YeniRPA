@@ -198,6 +198,7 @@ public static class StockoutWarningBuilder
                 MappingProblem: match.Problem,
                 ProductCount: products.Count,
                 TotalGmv: products.Sum(p => p.Gmv),
+                TotalSoldItems: products.Sum(p => TabularFile.ParseNumber(p.SoldItemsAccepted)),
                 Products: products));
         }
 

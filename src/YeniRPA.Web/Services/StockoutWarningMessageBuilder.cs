@@ -21,20 +21,21 @@ public static partial class StockoutWarningMessageBuilder
     /// to emoji as typed, which would fail the runner's read-back verification.</summary>
     public const string DefaultTemplate =
         """
-        Selamlar,
+        Merhaba,
 
-        Aşağıdaki {productCount} ürününüz stokta görünmüyor ve satış potansiyeli yüksek (toplam GMV: {totalGmv}):
+        Son 7 günde satış alan ancak şu anda stokta görünmeyen {productCount} ürününüz bulunmaktadır. Bu ürünlerde toplam {totalSoldItems} adet satış ve {totalGmv} TL GMV gerçekleşmiştir.
 
+        Satış kaybı ve sipariş iptalini önlemek için lütfen stok bilgilerinizi güncelleyiniz.
+
+        Ürünler:
         {products}{truncationNote}
-
-        Stok durumunuzu en kısa sürede güncellemenizi rica ederiz. Desteğinizi bekleriz.
         """;
 
     public const string DefaultProductLineTemplate = "• {productName} — GTIN: {gtin} — Satılan adet: {soldItemsAccepted}";
 
     public static readonly string[] EnvelopePlaceholders =
     [
-        "{seller}", "{productCount}", "{totalGmv}", "{products}", "{referenceTime}", "{truncationNote}",
+        "{seller}", "{productCount}", "{totalGmv}", "{totalSoldItems}", "{products}", "{referenceTime}", "{truncationNote}",
     ];
 
     public static readonly string[] ProductLinePlaceholders =
@@ -109,7 +110,7 @@ public static partial class StockoutWarningMessageBuilder
         var hidden = totalProducts - shownCount;
 
         var truncationNote = hidden > 0
-            ? $"\n…ve {hidden:N0} ürün daha — tam liste ekte."
+            ? $"\n…ve {hidden.ToString("N0", CultureInfo.GetCultureInfo("tr-TR"))} ürün daha — tam liste ekte."
             : "";
 
         var names = sellers
@@ -121,11 +122,13 @@ public static partial class StockoutWarningMessageBuilder
         var sellerName = string.Join(NameSeparator, names);
         var productCount = sellers.Sum(s => s.ProductCount);
         var totalGmv = sellers.Sum(s => s.TotalGmv);
+        var totalSoldItems = sellers.Sum(s => s.TotalSoldItems);
 
         var body = envelope
             .Replace("{seller}", sellerName)
-            .Replace("{productCount}", productCount.ToString("N0", CultureInfo.InvariantCulture))
-            .Replace("{totalGmv}", totalGmv.ToString("N0", CultureInfo.InvariantCulture))
+            .Replace("{productCount}", productCount.ToString("N0", CultureInfo.GetCultureInfo("tr-TR")))
+            .Replace("{totalGmv}", totalGmv.ToString("N0", CultureInfo.GetCultureInfo("tr-TR")))
+            .Replace("{totalSoldItems}", totalSoldItems.ToString("N0", CultureInfo.GetCultureInfo("tr-TR")))
             .Replace("{referenceTime}", referenceTime)
             .Replace("{truncationNote}", truncationNote)
             // Substituted LAST, after every other envelope placeholder — a product name containing a
@@ -149,7 +152,7 @@ public static partial class StockoutWarningMessageBuilder
         .Replace("{brand}", product.Brand ?? "")
         .Replace("{category}", product.Category ?? "")
         .Replace("{offerCondition}", product.OfferCondition ?? "")
-        .Replace("{gmv}", product.Gmv.ToString("N0", CultureInfo.InvariantCulture))
+        .Replace("{gmv}", product.Gmv.ToString("N0", CultureInfo.GetCultureInfo("tr-TR")))
         .Replace("{soldItemsAccepted}", product.SoldItemsAccepted);
 
     /// <summary>Which of <see cref="RequiredProductLinePlaceholders"/> are missing from the product

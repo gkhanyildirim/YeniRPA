@@ -1136,13 +1136,26 @@ textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
+
+  /* var(--ink), not a fixed colour: this app switches between a light and a dark theme (data-theme,
+     or the OS setting), and var(--ink) is already the token that stays readable against
+     var(--surface) in both. A literal #fff read fine against a dark theme's dark surface and went
+     invisible — white on white — the moment the theme (or the operator's own) was light. The
+     exported mail carries no colour at all either way (CustomMailController.Send never sets one), so
+     this box's colour is purely local display and was never why an Outlook draft looked a certain
+     shade — that was dark-mode Outlook rendering colourless text on its own, not this box's doing. */
   color: var(--ink);
 }
 .rich-body:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 
-/* The recipient card preview mirrors .rich-body's font for the same reason — msg-body's own default
-   (shared with Offer/VAT Warnings' plain-text previews) is deliberately monospace, which is wrong for
-   text that will arrive in a normal font. */
+/* Belt and braces alongside the paste sanitizer in custom-mail.js: a browser that still hands a
+   typed or pasted line back as <p>/<div> must not get to add that tag's own default margin — the
+   operator's line breaks are the only spacing that may show up here. */
+.rich-body p, .rich-body div { margin: 0; padding: 0; }
+
+/* The recipient card preview mirrors .rich-body's font — msg-body's own default (shared with
+   Offer/VAT Warnings' plain-text previews) is a monospace font, wrong for prose in a normal font.
+   Colour is left as msg-body's own var(--ink): same light/dark-theme reasoning as .rich-body above. */
 .msg-body.is-rich { font-family: Calibri, Aptos, 'Segoe UI', Arial, sans-serif; font-size: .85rem; }
 
 /* The To/Subject header custom-mail.js prepends to a recipient card's rich-text preview — dimmed so

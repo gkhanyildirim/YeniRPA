@@ -345,8 +345,16 @@ public sealed class CustomMailController : ControllerBase
         // item falls back to, which is a serif font, not the Calibri/Aptos sans-serif every normal
         // Outlook compose window uses. Wrapping in one div with that font is what makes the sent mail
         // look like a mail someone typed in Outlook rather than a raw HTML page.
+        //
+        // The <style> reset is a second, separate fix: Outlook's own rendering engine (Word's) adds
+        // its own default spacing after every <p>/<div> it sees, on top of whatever the source markup
+        // did or didn't specify — the well-known reason a mail can gain paragraph gaps nobody put
+        // there between "what the browser sent" and "what Outlook renders". The operator's own line
+        // breaks are the only spacing this mail is allowed to carry.
         var mailBodyHtml =
-            $"<div style=\"font-family:Calibri,Aptos,'Segoe UI',Arial,sans-serif;font-size:11pt;\">{bodyHtml}</div>";
+            "<style>p,div{margin:0;padding:0;}</style>" +
+            "<div style=\"font-family:Calibri,Aptos,'Segoe UI',Arial,sans-serif;font-size:11pt;\">" +
+            bodyHtml + "</div>";
 
         var (cleanCc, ccProblem) = NormalizeAddressField(cc);
         if (ccProblem is not null)

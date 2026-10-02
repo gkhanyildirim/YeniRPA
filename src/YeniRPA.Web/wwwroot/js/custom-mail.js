@@ -296,6 +296,47 @@
     });
   }
 
+  /**
+   * Cleans HTML pasted into the body box down to bold/italic/underline/line-breaks, dropping every
+   * attribute — style, class, font, color, and (the point of this) the paragraph margins Word/Outlook
+   * bakes into every <p>. Left alone, those margins are what turn one blank line in the source into a
+   * gap the operator never typed and cannot see or edit — spacing has to come only from the line
+   * breaks actually on the page, so pressing Enter is the only way it changes.
+   *
+   * A block boundary (</p>, </div>) becomes exactly one line break, not the source's own paragraph
+   * gap: pasting keeps every line break that was there, adds none, and the operator presses Enter
+   * again for a blank line exactly where they want one.
+   */
+  function sanitizePastedHtml(html) {
+    const container = document.createElement('div');
+    container.innerHTML = html;
+
+    const keepTag = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1 };
+
+    function clean(node) {
+      Array.from(node.childNodes).forEach(function (child) {
+        if (child.nodeType !== Node.ELEMENT_NODE) return;
+
+        clean(child);
+
+        if (keepTag[child.tagName]) {
+          Array.from(child.attributes).forEach(attr => child.removeAttribute(attr.name));
+        } else if (child.tagName === 'P' || child.tagName === 'DIV') {
+          child.replaceWith.apply(child, Array.from(child.childNodes).concat([document.createElement('br')]));
+        } else if (child.tagName === 'BR') {
+          // Already what a line break should be — left as-is.
+        } else {
+          // A span carrying its own font/color, a table cell, anything else: the wrapper is
+          // discarded, its content survives.
+          child.replaceWith.apply(child, Array.from(child.childNodes));
+        }
+      });
+    }
+
+    clean(container);
+    return container.innerHTML;
+  }
+
   /** What the expanded body of one recipient's mail card shows — the exact mail this seller receives.
    * Built from the wording boxes' current content, not from anything captured at prepare time, so an
    * edit to the subject/body is reflected the moment a card is opened. The body box is rich text
@@ -847,6 +888,21 @@
     // Keeps every open card's preview in step with the wording boxes without a full re-render.
     ['cm-subject', 'cm-body'].forEach(function (id) {
       el(id).addEventListener('input', refreshOpenPreviews);
+    });
+
+    // A raw paste carries Word/Outlook's own fonts, colours and paragraph margins — every one of
+    // those is what the operator asked not to have imposed on them. Only bold/italic/underline and
+    // the line breaks actually on the page survive; every other line break the operator wants is one
+    // they press themselves.
+    el('cm-body').addEventListener('paste', function (event) {
+      const html = event.clipboardData && event.clipboardData.getData('text/html');
+      const text = event.clipboardData && event.clipboardData.getData('text/plain');
+      if (!html && !text) return;
+
+      event.preventDefault();
+      const cleaned = html ? sanitizePastedHtml(html) : RPA.escapeHtml(text).replace(/\n/g, '<br>');
+      document.execCommand('insertHTML', false, cleaned);
+      refreshOpenPreviews();
     });
 
     // Bold/italic/underline on the rich body box. execCommand is deprecated but remains the pragmatic

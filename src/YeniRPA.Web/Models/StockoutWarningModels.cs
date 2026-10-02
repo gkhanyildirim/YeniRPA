@@ -43,6 +43,7 @@ public sealed record StockoutWarningSeller(
 
     [property: JsonPropertyName("productCount")] int ProductCount,
     [property: JsonPropertyName("totalGmv")] double TotalGmv,
+    [property: JsonPropertyName("totalSoldItems")] double TotalSoldItems,
     [property: JsonPropertyName("products")] IReadOnlyList<StockoutProductLine> Products);
 
 /// <summary>Where the rows in the file went. Each count is a terminal bucket, so they sum to
