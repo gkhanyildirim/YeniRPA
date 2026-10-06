@@ -1,4 +1,4 @@
-﻿@model YeniRPA.Web.Models.MethodologyViewModel
+@model YeniRPA.Web.Models.MethodologyViewModel
 @{
     ViewData["Title"] = "Reports";
 }
@@ -238,11 +238,21 @@
 
             <header class="page-head">
                 @PageIcon("order-report")
-                <h1>Late Shipment &amp; Cancellation Report</h1>
+                <h1 id="order-title">Late Shipment &amp; Cancellation Report</h1>
                 <span class="stamp" id="order-stamp"></span>
             </header>
 
-            <div class="card">
+            @* Two views over the same uploaded orders export. The Sales Analysis view is Turkish and
+               tr-TR formatted — an explicit exception to the English-UI rule, requested by the
+               operator. It aggregates server-side (api/sales-analysis), unlike the view above. *@
+            <div class="view-switch" role="tablist" aria-label="Order Report views">
+                <button type="button" role="tab" class="view-switch-btn is-active" id="order-view-late-tab"
+                        aria-selected="true" aria-controls="order-view-late" data-view="late">Late Shipment &amp; Cancellation</button>
+                <button type="button" role="tab" class="view-switch-btn" id="order-view-sales-tab"
+                        aria-selected="false" aria-controls="sales-view" data-view="sales" tabindex="-1">Satış Analizi</button>
+            </div>
+
+            <div class="card" id="order-upload-card">
                 <div class="uploader">
                     <div class="uploader-grid">
                         <label class="drop" id="order-drop">
@@ -265,6 +275,10 @@
                             <span class="spinner" aria-hidden="true"></span>
                             <span class="btn-text">Download Excel</span>
                         </button>
+                        <button type="button" class="btn btn-primary" id="sales-load" hidden>
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Satış analizini başlat</span>
+                        </button>
                     </div>
 
                     <div class="alert" id="order-alert" role="alert">
@@ -273,6 +287,8 @@
                     </div>
                 </div>
             </div>
+
+            <div id="order-view-late" role="tabpanel" aria-labelledby="order-view-late-tab">
 
             @* The scene is decorative and marks itself aria-hidden; the stage line inside it is
                not, and announces progress through its own aria-live. *@
@@ -515,6 +531,316 @@
                 </div>
 
                 <footer class="page-foot">Marketplace Reporting &middot; Order Report</footer>
+            </div>
+            </div>
+
+            @* ----- Sales Analysis view (Turkish UI; see the note on the view switch above) ----- *@
+            <div id="sales-view" role="tabpanel" aria-labelledby="order-view-sales-tab" lang="tr" hidden>
+
+                @* Two modes of the Sales Analysis: two periods of one export, or two countries' exports. *@
+                <div class="view-switch sales-mode-switch" role="tablist" aria-label="Satış analizi türü">
+                    <button type="button" role="tab" class="view-switch-btn sales-mode-btn is-active" id="sales-mode-period-tab"
+                            aria-selected="true" aria-controls="sales-period-mode" data-mode="period">Dönem Karşılaştırma</button>
+                    <button type="button" role="tab" class="view-switch-btn sales-mode-btn" id="sales-mode-country-tab"
+                            aria-selected="false" aria-controls="country-mode" data-mode="country" tabindex="-1">Ülke Kıyaslama</button>
+                </div>
+
+                <div id="sales-period-mode" role="tabpanel" aria-labelledby="sales-mode-period-tab">
+
+                <div class="alert" id="sales-alert" role="alert">
+                    <strong>Hata</strong>
+                    <span class="msg"></span>
+                </div>
+
+                <p class="note" id="sales-intro">
+                    Yukarıdan sipariş dosyasını seçip <strong>&nbsp;Satış analizini başlat&nbsp;</strong> düğmesine basın.
+                    Rapor iki dönemi karşılaştırır ve satışların, sipariş sayısının ve ortalama fiyatın neden değiştiğini gösterir.
+                </p>
+
+                <div class="skeleton" id="sales-skeleton">
+                    <partial name="_TowerLoader" model="TowerLoader.Report()" />
+                </div>
+
+                <div class="results" id="sales-results" hidden>
+
+                    <div class="filter-bar filter-bar--collapsible sales-filter" id="sales-filter-bar">
+                        <div class="filter-bar-head">
+                            <button type="button" class="filter-toggle" aria-expanded="true" aria-controls="sales-filter-fields">
+                                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M6 9l6 6 6-6" />
+                                </svg>
+                                Filtreler
+                            </button>
+                            <span class="filter-summary" id="sales-filter-summary"></span>
+                        </div>
+                        <div class="filter-fields" id="sales-filter-fields">
+                            <div class="field">
+                                <label for="sales-b-from">İncelenen dönem (B) başlangıç</label>
+                                <input type="date" id="sales-b-from" />
+                            </div>
+                            <div class="field">
+                                <label for="sales-b-to">İncelenen dönem (B) bitiş</label>
+                                <input type="date" id="sales-b-to" />
+                            </div>
+                            <div class="field">
+                                <label for="sales-compare">Neyle karşılaştırılsın?</label>
+                                <select id="sales-compare">
+                                    <option value="previous">Hemen önceki eşit uzunlukta dönem</option>
+                                    <option value="custom">Tarihleri kendim seçeceğim</option>
+                                </select>
+                            </div>
+                            <div class="field" id="sales-a-from-field" hidden>
+                                <label for="sales-a-from">Karşılaştırma dönemi (A) başlangıç</label>
+                                <input type="date" id="sales-a-from" />
+                            </div>
+                            <div class="field" id="sales-a-to-field" hidden>
+                                <label for="sales-a-to">Karşılaştırma dönemi (A) bitiş</label>
+                                <input type="date" id="sales-a-to" />
+                            </div>
+                            <div class="field">
+                                <span class="field-label">Satışa sayılan statüler</span>
+                                <div class="ms" id="sales-ms-status" data-label="Statü"></div>
+                            </div>
+                            <div class="field">
+                                <span class="field-label">Kategori</span>
+                                <div class="ms" id="sales-ms-category" data-label="Kategori"></div>
+                            </div>
+                            <div class="field">
+                                <span class="field-label">Marka</span>
+                                <div class="ms" id="sales-ms-brand" data-label="Marka"></div>
+                            </div>
+                            <div class="field">
+                                <span class="field-label">Satıcı</span>
+                                <div class="ms" id="sales-ms-seller" data-label="Satıcı"></div>
+                            </div>
+                            <div class="field">
+                                <label for="sales-outlier">Çok büyük siparişler</label>
+                                <select id="sales-outlier">
+                                    <option value="none">Hesaba kat</option>
+                                    <option value="top1pct">Çıkar: en büyük %1</option>
+                                    <option value="iqr">Çıkar: diğerlerinden çok ayrışanlar (IQR)</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label for="sales-other">Küçük kategorileri "Diğer"de topla (% altı)</label>
+                                <input type="number" id="sales-other" min="0" max="50" step="0.5" value="1" />
+                            </div>
+                            <button type="button" class="btn btn-primary" id="sales-apply">
+                                <span class="spinner" aria-hidden="true"></span>
+                                <span class="btn-text">Uygula</span>
+                            </button>
+                            <button type="button" class="btn btn-ghost" id="sales-reset">Sıfırla</button>
+                        </div>
+                    </div>
+
+                    <p class="note" id="sales-period-note"></p>
+                    <div id="sales-warnings"></div>
+                    <p class="note" id="sales-import-note" hidden></p>
+
+                    <div class="section-title" id="sec-sales-kpi" data-section="Özet">
+                        Özet göstergeler
+                        <partial name="_ExportButton" model='new ExportButton("sales-kpis", "Özet göstergeler", "Satış Analizi")' />
+                    </div>
+                    <div class="kpi-grid" id="sales-kpis"></div>
+
+                    <div class="section-title" id="sec-sales-reasons" data-section="Sebepler">Sebepler</div>
+                    <div class="card accent-navy sales-reasons" id="sales-reasons" aria-live="polite"></div>
+
+                    <div class="section-title" id="sec-sales-pvm" data-section="Fark nereden geliyor">Satış farkı nereden geliyor?</div>
+                    <div class="grid-2">
+                        <div class="card">
+                            <h3>Farkın üç kaynağı</h3>
+                            <p class="sub">Soldaki A dönemi satışından sağdaki B dönemi satışına nasıl gelindiğini adım adım gösterir</p>
+                            <div class="chart-box"><canvas id="salesPvmChart" role="img" aria-label="Satış farkının kaynakları grafiği"></canvas></div>
+                            <ul class="sales-summary" id="sales-pvm-summary"></ul>
+                            <dl class="sales-glossary">
+                                <dt>Satılan adet</dt><dd>Daha çok ya da daha az ürün satılmasının etkisi.</dd>
+                                <dt>Ürün dağılımı (mix)</dt><dd>Pahalı ve ucuz ürünlerin satıştaki payının değişmesinin etkisi. Örneğin telefon yerine kılıf daha çok satıldıysa bu etki eksiye düşer.</dd>
+                                <dt>Fiyat</dt><dd>Aynı ürünün iki dönemde farklı fiyata satılmasının etkisi.</dd>
+                            </dl>
+                        </div>
+                        <div class="card">
+                            <div class="card-actions">
+                                <partial name="_ExportButton" model='new ExportButton("sales-outlier-wrap", "Büyük siparişlerin etkisi", "Satış Analizi")' />
+                                <button type="button" class="btn btn-ghost btn-export" data-csv="sales-outlier-wrap" data-csv-title="Büyük siparişlerin etkisi" disabled>CSV</button>
+                            </div>
+                            <h3>Büyük siparişlerin etkisi</h3>
+                            <p class="sub">Tek bir 150.000 TL'lik telefon siparişi bile toplamı ciddi oynatabilir. Bu bölüm, farkın birkaç büyük siparişten mi yoksa satışların genelinden mi geldiğini kontrol eder: en büyük siparişleri her iki dönemden çıkarıp farkın ne kadar değiştiğine bakar.</p>
+                            <ul class="sales-summary" id="sales-outlier-summary"></ul>
+                            <div class="table-scroll" id="sales-outlier-wrap"></div>
+                            <h4 class="sales-subhead">Dönem B'deki en büyük 10 sipariş</h4>
+                            <div class="table-scroll" id="sales-outlier-orders-wrap"></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-actions">
+                            <partial name="_ExportButton" model='new ExportButton("sales-pvm-wrap", "Farkı en çok etkileyen ürünler", "Satış Analizi")' />
+                            <button type="button" class="btn btn-ghost btn-export" data-csv="sales-pvm-wrap" data-csv-title="Farkı en çok etkileyen ürünler" disabled>CSV</button>
+                        </div>
+                        <h3>Farkı en çok etkileyen ürünler</h3>
+                        <p class="sub">Her ürün için satış farkının adet, fiyat ve ürün dağılımından gelen kısmı</p>
+                        <div class="table-scroll" id="sales-pvm-wrap"></div>
+                    </div>
+
+                    <div class="section-title" id="sec-sales-detail" data-section="Detay">Detay</div>
+                    <div class="sales-tabs" role="tablist" aria-label="Satış analizi detayları" id="sales-tabs">
+                        <button type="button" role="tab" class="sales-tab is-active" aria-selected="true" data-tab="category">Kategori</button>
+                        <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="product">Ürün</button>
+                        <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="brand">Marka</button>
+                        <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="seller">Satıcı</button>
+                        <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="status">Statü</button>
+                        <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="time">Zaman</button>
+                        <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="city">Şehir</button>
+                        <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="profit">Kârlılık</button>
+                    </div>
+                    @* Filled by sales-analysis.js the first time each tab opens — the tabs load lazily. *@
+                    <div class="sales-tab-panel" id="sales-tab-panel" role="tabpanel"></div>
+
+                    <footer class="page-foot">Marketplace Reporting &middot; Satış Analizi</footer>
+                </div>
+                </div>
+
+                @* ----- Country comparison mode: two countries' orders exports side by side (country-comparison.js) ----- *@
+                <div id="country-mode" role="tabpanel" aria-labelledby="sales-mode-country-tab" hidden>
+
+                    <div class="card">
+                        <div class="uploader">
+                            <div class="uploader-grid">
+                                <div class="country-input">
+                                    <label class="drop" id="country-a-drop">
+                                        <span class="drop-step">Ülke A</span>
+                                        <span class="drop-title">Sipariş dosyası</span>
+                                        <span class="drop-hint">Mirakl Orders export (.xlsx)</span>
+                                        <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                                        <input type="file" id="country-a-file" accept=".xlsx,.xls,.csv" aria-label="Ülke A sipariş dosyası" />
+                                    </label>
+                                    <div class="field">
+                                        <label for="country-a-name">Ülke A adı</label>
+                                        <input type="text" id="country-a-name" maxlength="40" placeholder="ör. Türkiye" />
+                                    </div>
+                                </div>
+                                <div class="country-input">
+                                    <label class="drop" id="country-b-drop">
+                                        <span class="drop-step">Ülke B</span>
+                                        <span class="drop-title">Sipariş dosyası</span>
+                                        <span class="drop-hint">Mirakl Orders export (.xlsx)</span>
+                                        <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                                        <input type="file" id="country-b-file" accept=".xlsx,.xls,.csv" aria-label="Ülke B sipariş dosyası" />
+                                    </label>
+                                    <div class="field">
+                                        <label for="country-b-name">Ülke B adı</label>
+                                        <input type="text" id="country-b-name" maxlength="40" placeholder="ör. Almanya" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="actions">
+                                <button type="button" class="btn btn-primary" id="country-load">
+                                    <span class="spinner" aria-hidden="true"></span>
+                                    <span class="btn-text">Kıyaslamayı başlat</span>
+                                </button>
+                            </div>
+
+                            <div class="alert" id="country-alert" role="alert">
+                                <strong>Hata</strong>
+                                <span class="msg"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p class="note" id="country-intro">
+                        İki ülkenin sipariş dosyasını seçip <strong>&nbsp;Kıyaslamayı başlat&nbsp;</strong> düğmesine basın.
+                        Rapor iki ülkenin satışlarını, sipariş davranışını ve kategori dağılımını karşılaştırır; hangi ülkenin hangi alanda önde olduğunu gösterir.
+                    </p>
+
+                    <div class="skeleton" id="country-skeleton">
+                        <partial name="_TowerLoader" model="TowerLoader.Report()" />
+                    </div>
+
+                    <div class="results" id="country-results" hidden>
+
+                        <div class="filter-bar filter-bar--collapsible sales-filter" id="country-filter-bar">
+                            <div class="filter-bar-head">
+                                <button type="button" class="filter-toggle" aria-expanded="true" aria-controls="country-filter-fields">
+                                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M6 9l6 6 6-6" />
+                                    </svg>
+                                    Ayarlar
+                                </button>
+                                <span class="filter-summary" id="country-filter-summary"></span>
+                            </div>
+                            <div class="filter-fields" id="country-filter-fields">
+                                <div class="field">
+                                    <span class="field-label">Satışa sayılan statüler</span>
+                                    <div class="ms" id="country-ms-status" data-label="Statü"></div>
+                                </div>
+                                <div class="field">
+                                    <label for="country-scope">Tarih kapsamı</label>
+                                    <select id="country-scope">
+                                        <option value="all">Her dosyanın tüm tarihleri</option>
+                                        <option value="overlap">Sadece ortak günler</option>
+                                    </select>
+                                </div>
+                                <div class="field" id="country-rate-field" hidden>
+                                    <label for="country-rate" id="country-rate-label">Kur</label>
+                                    <input type="number" id="country-rate" min="0" step="any" placeholder="boş = tutarları çevirme" />
+                                </div>
+                                <button type="button" class="btn btn-primary" id="country-apply">
+                                    <span class="spinner" aria-hidden="true"></span>
+                                    <span class="btn-text">Uygula</span>
+                                </button>
+                                <button type="button" class="btn btn-ghost" id="country-reset">Sıfırla</button>
+                            </div>
+                        </div>
+
+                        <p class="note" id="country-period-note"></p>
+                        <div id="country-warnings"></div>
+                        <p class="note" id="country-import-note" hidden></p>
+
+                        <div class="card country-gaps" id="country-gaps" hidden>
+                            <h3>Karşılaştırılamayan veya eksik veriler</h3>
+                            <ul class="sales-summary" id="country-gaps-list"></ul>
+                        </div>
+
+                        <div class="section-title" id="sec-country-insights" data-section="İçgörüler">Öne Çıkan İçgörüler</div>
+                        <div class="card accent-navy sales-reasons" id="country-insights" aria-live="polite"></div>
+
+                        <div class="section-title" id="sec-country-kpi" data-section="Göstergeler">Temel göstergeler</div>
+                        <div class="card">
+                            <div class="card-actions">
+                                <partial name="_ExportButton" model='new ExportButton("country-kpi-wrap", "Temel göstergeler", "Ülke Kıyaslama")' />
+                                <button type="button" class="btn btn-ghost btn-export" data-csv="country-kpi-wrap" data-csv-title="Temel göstergeler" data-csv-prefix="Ülke Kıyaslama" disabled>CSV</button>
+                            </div>
+                            <h3>İki ülkenin karşılaştırması</h3>
+                            <p class="sub" id="country-kpi-sub">Fark = A − B; yüzde fark B'ye göre hesaplanır. Oranlarda fark puan olarak gösterilir.</p>
+                            <div class="table-scroll" id="country-kpi-wrap"></div>
+                        </div>
+                        <div class="card">
+                            <h3>Seçili göstergeler</h3>
+                            <p class="sub">Her gösterge kendi ülkesinin değerine göre; uzun çubuk o göstergede daha yüksek olan ülke</p>
+                            <div class="chart-box" style="height:300px"><canvas id="countryKpiChart" role="img" aria-label="Seçili göstergelerin ülke karşılaştırması"></canvas></div>
+                        </div>
+
+                        <div class="section-title" id="sec-country-strength" data-section="Güçlü alanlar">Güçlü ve zayıf alanlar</div>
+                        <div class="grid-2">
+                            <div class="card country-strength" id="country-strength-a"></div>
+                            <div class="card country-strength" id="country-strength-b"></div>
+                        </div>
+
+                        <div class="section-title" id="sec-country-detail" data-section="Detay">Detay</div>
+                        <div class="sales-tabs" role="tablist" aria-label="Ülke kıyaslama detayları" id="country-tabs">
+                            <button type="button" role="tab" class="sales-tab is-active" aria-selected="true" data-tab="category">Kategori</button>
+                            <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="brand">Marka</button>
+                            <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="product">Ürün</button>
+                            <button type="button" role="tab" class="sales-tab" aria-selected="false" tabindex="-1" data-tab="behaviour">Sipariş davranışı &amp; zaman</button>
+                        </div>
+                        <div class="sales-tab-panel" id="country-tab-panel" role="tabpanel"></div>
+
+                        <footer class="page-foot">Marketplace Reporting &middot; Ülke Kıyaslama</footer>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -4341,6 +4667,8 @@
     <script src="~/lib/chartjs/chart.umd.js" asp-append-version="true"></script>
     <script src="~/js/app.js" asp-append-version="true"></script>
     <script src="~/js/order-report.js" asp-append-version="true"></script>
+    <script src="~/js/sales-analysis.js" asp-append-version="true"></script>
+    <script src="~/js/country-comparison.js" asp-append-version="true"></script>
     <script src="~/js/return-sla-report.js" asp-append-version="true"></script>
     <script src="~/js/incidents-report.js" asp-append-version="true"></script>
     <script src="~/js/ticket-seller.js" asp-append-version="true"></script>

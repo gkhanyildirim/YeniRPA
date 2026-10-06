@@ -1108,6 +1108,101 @@ return (the return exists; re-running the list would file a duplicate): it is lo
 `Notification failed`, screenshotted, and listed at the end of the log so it can be sent from Seller
 Notification.
 
+## Sales Analysis (Order Report → "Satış Analizi")
+
+The second view of the Order Report panel, behind the view switch under the title. It compares two
+periods of the same orders export and explains **why** gross sales, average price and order count
+moved, not just by how much: the price–volume–mix split, which categories, products, brands, sellers
+and cities drove the change, cancellation shifts, and how much of the change rests on a few large
+orders. The page is Turkish and tr-TR formatted (`1.234,56 ₺`, `dd.mm.yyyy`), which is a deliberate
+exception to the English-UI rule, requested by the operator.
+
+Unlike the Late Shipment view, nothing is aggregated in the browser. `POST api/sales-analysis/load`
+parses the export once (streamed with `OpenXmlReader`) into `SalesAnalysisStore`, which is in memory
+only and is invalidated by a restart or a new upload. `POST api/sales-analysis/analyze` returns
+aggregates for the sections a request names. The KPIs, Reasons, PVM and outlier sections load with
+**Uygula**. Each detail tab loads the first time it is opened. Results are cached per filter
+combination (up to 32 combinations). Both endpoints use the `{ success, message, data }` envelope.
+
+**Periods.** Period B is the selected range. Period A defaults to the equally long window right
+before it, and can also be set by hand. On load, the default is the file's span cut in half. Dates in
+the export carry no offset; they are read as Europe/Istanbul wall-clock time and compared as calendar
+days, so no time-zone conversion happens anywhere.
+
+**Metric definitions** (one place: `Services/SalesAnalysis/SalesMetrics.cs`):
+
+| Metric | Definition |
+|---|---|
+| Gross sales | Σ `Amount` (VAT incl.) of lines whose status is in the status filter. The default filter is every status except Canceled and Rejected. |
+| Orders / Units | Distinct `Order number` / Σ `Quantity` over those lines. |
+| Average unit price | Gross sales ÷ Units. This is Amount-based, not `Unit price`, which excludes withholding tax and runs about 0.9% lower; using Amount keeps the price consistent with PVM. |
+| AOV | Gross sales ÷ Orders. |
+| Cancellation rate | Canceled lines ÷ all lines, and canceled amount ÷ (Σ Amount + canceled amount). Counted over every status, ignoring the status filter. Canceled lines carry `Amount = 0`, so their value comes from *Total canceled amount*. Rejected is reported separately. |
+| Commission rate | Σ `Commission (excluding taxes)` ÷ Gross sales. |
+| Shipping | Order-level, so it is counted once per order and never once per line. |
+
+Every ratio whose denominator is zero is `null` and shows as "—". It is never shown as 0, NaN or ∞.
+
+**PVM** (`PvmDecomposition.cs`, product = `Product SKU`). With P̄A = SalesA ÷ QtyA:
+
+- **Volume** = (QtyB − QtyA)·P̄A
+- **Price** = Σ over products sold in both periods of qB·(pB − pA)
+- **Mix** = (qB − qA)·(pA − P̄A) for products sold in both periods; qB·(pB − P̄A) for a new product; −qA·(pA − P̄A) for a lost product
+
+The three terms add up to the change in sales exactly, both per product and in total, with no
+residual. Unit tests check this, including on randomised data. The average-price change splits the
+same way, into Price ÷ QtyB and Mix ÷ QtyB.
+
+**Outliers.** The switch removes orders before any section runs. *Top 1%* removes the largest 1% of
+orders. *IQR* removes orders above Q3 + 1.5·IQR, measured over both periods together. The outlier
+card always shows how the change would look without the largest order, the largest five, and the top
+1%.
+
+**Warnings.** The page warns in four cases:
+- Fewer than 30 orders in either period: the comparison is statistically weak.
+- One period is empty.
+- The two periods have different lengths.
+- An edge day of the file looks partial. A day counts as partial when it has under half the median
+  line count of the other days; in the sample, 05.10 holds 26 lines against roughly 500 on other days.
+
+**Import validation** reports the following, each with sample row numbers:
+- Unparseable dates. These rows are left out of the analysis.
+- Negative amounts.
+- Quantity 0 on a line that is not canceled.
+- Duplicate order line numbers.
+- More than one currency.
+
+Missing optional columns are listed. A missing required column fails the upload with its name.
+Customer e-mail, phone, name and address columns are never mapped (`SalesColumnMap.cs`), so they
+cannot reach the model, the logs or the page.
+
+### Adding a new "why" analysis
+
+1. Write a class implementing `IInsightProvider` (`Services/SalesAnalysis/Providers/`). It reads both
+   periods from `SalesAnalysisContext` and returns an `InsightResult`: a title, Turkish summary
+   sentences built from numbers, `Findings`, and `Data` for the chart or table. Express each
+   finding's `Impact` in lira; that value is how it competes for a slot in the Reasons panel.
+2. Register it with one line in `Program.cs`: `AddSingleton<IInsightProvider, YourProvider>()`.
+3. The service finds it by `Key`, and its findings join the Reasons panel automatically. To show its
+   data, add a tab button in `Index.cshtml` and a render branch in `sales-analysis.js` `renderTab`.
+
+Category, brand, seller and city share `DimensionProvider`. Another dimension of that shape, such as
+offer state, is a five-line subclass.
+
+### Known limitations
+
+- The sample export's last day (05.10) is partial; the page warns, but the totals still include it.
+- Commission is excl. taxes while Amount is VAT-incl.: the commission *rate* is consistent between
+  periods, but it is not a margin.
+- One currency (TRY) is assumed. A mixed-currency file is flagged, but the amounts are summed without
+  conversion.
+- The parsed data lives in memory. A restart, or a second file loaded from another tab, invalidates
+  the token, and the page then asks for a re-upload.
+- Products are keyed by `Product SKU`. The same item sold under two SKUs counts as two products.
+- Out of scope for now: forecasting, per-user personalisation, LLM-written commentary. The Reasons
+  panel is rule-based; `ReasonsData` is the natural input if an optional summariser is ever added
+  behind a flag.
+
 ## Return SLA report
 
 The report answers one question per return: *the parcel went back to the seller N days ago — is that

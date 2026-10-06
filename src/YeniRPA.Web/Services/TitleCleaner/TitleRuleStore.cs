@@ -135,7 +135,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
             EncodeUnitLines(rule.UnitList),
             EncodeAliasLines(rule.AliasGroups),
             rule.ReferenceList ?? "",
-            rule.AdoptLargest)).ToList(),
+            rule.AdoptLargest,
+            rule.UseReferenceName)).ToList(),
         set.DecimalSeparator == "," ? "," : ".",
         set.CollapseRepeats);
 
@@ -159,7 +160,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
                     ParseUnits(a.Units),
                     ParseAliases(a.Aliases),
                     string.IsNullOrWhiteSpace(a.ReferenceList) ? null : a.ReferenceList.Trim(),
-                    a.AdoptLargest))
+                    a.AdoptLargest,
+                    a.UseReferenceName))
                 .ToList(),
             form.DecimalSeparator == "," ? "," : ".",
             form.CollapseRepeats);
@@ -266,11 +268,14 @@ public sealed class TitleRuleStore : ITitleRuleStore
     /// in the row would shift every constant above it.</summary>
     const int AdoptLargestColumn = 15;
 
+    /// <summary>Appended last, for the same reason as <see cref="AdoptLargestColumn"/>.</summary>
+    const int ReferenceNameColumn = 16;
+
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
         "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek", "Kısmi",
-        "Referans Listesi", "Tekrarı Sil", "Büyüğü Seç",
+        "Referans Listesi", "Tekrarı Sil", "Büyüğü Seç", "Tam Ad",
     ];
 
     /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
@@ -297,7 +302,7 @@ public sealed class TitleRuleStore : ITitleRuleStore
 
         // Text throughout: a unit spelling of "11" or a set named "2024" must not come back as a
         // number, and the encoded unit/alias cells must survive verbatim.
-        sheet.Columns(SetColumn, AdoptLargestColumn).Style.NumberFormat.Format = "@";
+        sheet.Columns(SetColumn, ReferenceNameColumn).Style.NumberFormat.Format = "@";
 
         var row = 2;
         foreach (var set in sets)
@@ -319,11 +324,12 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 sheet.Cell(row, ReferenceColumn).SetValue(rule.ReferenceList ?? "");
                 sheet.Cell(row, RepeatColumn).SetValue(Yes(set.CollapseRepeats));
                 sheet.Cell(row, AdoptLargestColumn).SetValue(Yes(rule.AdoptLargest));
+                sheet.Cell(row, ReferenceNameColumn).SetValue(Yes(rule.UseReferenceName));
                 row++;
             }
         }
 
-        sheet.Columns(SetColumn, AdoptLargestColumn).AdjustToContents();
+        sheet.Columns(SetColumn, ReferenceNameColumn).AdjustToContents();
         foreach (var column in sheet.ColumnsUsed())
             column.Width = Math.Clamp(column.Width, 10, 52);
 
@@ -363,6 +369,7 @@ public sealed class TitleRuleStore : ITitleRuleStore
         var cReference = Optional(header, Headers[ReferenceColumn - 1]);
         var cRepeat = Optional(header, Headers[RepeatColumn - 1]);
         var cAdoptLargest = Optional(header, Headers[AdoptLargestColumn - 1]);
+        var cReferenceName = Optional(header, Headers[ReferenceNameColumn - 1]);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
@@ -401,7 +408,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 ParseUnits(TabularFile.GetCell(row, cUnits)),
                 ParseAliases(TabularFile.GetCell(row, cAlias)),
                 Blank(TabularFile.GetCell(row, cReference)),
-                ParseBool(TabularFile.GetCell(row, cAdoptLargest), fallback: false)));
+                ParseBool(TabularFile.GetCell(row, cAdoptLargest), fallback: false),
+                ParseBool(TabularFile.GetCell(row, cReferenceName), fallback: false)));
         }
 
         if (sets.Count == 0)

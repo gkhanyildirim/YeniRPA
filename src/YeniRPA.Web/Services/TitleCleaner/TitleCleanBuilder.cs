@@ -631,6 +631,13 @@ public static class TitleCleanBuilder
             // the rule does not know — see TitleAttributeReason.SpellingUnknown.
             if (said.Count == 0)
             {
+                // The standard wants one size in the cell whether or not the title mentions it.
+                if (CollapseTo(rule, value) is { } single)
+                {
+                    return new TitleAttributeResult(
+                        rule.Column, TitleAttributeStatus.Corrected, original, single.Canonical);
+                }
+
                 return new TitleAttributeResult(
                     rule.Column, TitleAttributeStatus.NotInTitle, original, original,
                     Reason: TitleAttributeReason.SpellingUnknown);
@@ -733,6 +740,20 @@ public static class TitleCleanBuilder
             attr.PairFor(value.Key, hits[0].Match.Key)?.Canonical
             ?? hits[0].Match.Canonical;
 
+        // The reference entry's full name, where the column asks for it and every hit came through the
+        // same entry. Hits that disagree about the entry — or some that came from somewhere else — leave
+        // the cell as it is; picking one would be a guess.
+        var referenceName = rule.UseReferenceName ? hits[0].Match.ReferenceName : null;
+        if (referenceName is not null &&
+            hits.All(c => string.Equals(c.Match.ReferenceName, referenceName, StringComparison.Ordinal)))
+        {
+            canonical = referenceName;
+        }
+        else
+        {
+            referenceName = null;
+        }
+
         var differs = !string.Equals(original, canonical, StringComparison.Ordinal);
 
         // A rounded match agrees about the product and disagrees about the precision, and the cell is
@@ -743,9 +764,22 @@ public static class TitleCleanBuilder
         // A cell holding several measurements is never rewritten. The canonical form of one match is
         // one value, and writing it back over "1 TB + 1 TB" would throw the second disk away — the
         // title is cleaned and the cell keeps everything it said.
-        var status = differs && rule.Correct && !rounded && value.Parts is null
+        //
+        // The reference name is written whether or not Düzelt is on: turning on Tam Ad is the operator
+        // asking for exactly this rewrite.
+        var status = differs && (rule.Correct || referenceName is not null) && !rounded && value.Parts is null
             ? TitleAttributeStatus.Corrected
             : TitleAttributeStatus.Ok;
+
+        // Except where the column has opted into Büyüğü Seç: "1 TB + 512 GB" becomes "1 TB", which is
+        // the single value the marketplace standard asks for. The title is cleaned the same as before.
+        if (CollapseTo(rule, value) is { } largest)
+        {
+            canonical = largest.Canonical;
+            status = string.Equals(original, canonical, StringComparison.Ordinal)
+                ? TitleAttributeStatus.Ok
+                : TitleAttributeStatus.Corrected;
+        }
 
         // The pieces, not the reach: a scattered match spans text that belongs to another attribute,
         // and cutting the whole stretch would take that with it.
@@ -803,13 +837,33 @@ public static class TitleCleanBuilder
             winner.Match.Canonical);
     }
 
+    /// <summary>
+    /// The part a multi-size cell collapses to under <see cref="TitleAttributeRule.AdoptLargest"/> —
+    /// the largest, so "1 TB + 512 GB" reads "1 TB". Null where the rule does not ask for it, the cell
+    /// holds one size, or a part's unit does not convert and there is no "largest" to pick.
+    /// </summary>
+    static AttributeValue? CollapseTo(TitleAttributeRule rule, AttributeValue value)
+    {
+        if (rule.Kind != TitleAttributeKind.Measure || !rule.AdoptLargest || !rule.Correct ||
+            value.Parts is not { Count: > 1 } parts || parts.Any(p => p.BaseQuantity is null))
+        {
+            return null;
+        }
+
+        return parts.MaxBy(p => p.BaseQuantity!.Value);
+    }
+
     static TitleAttributeResult JudgeEmpty(
         TitleAttributeRule rule,
         string original,
         List<Candidate> mine,
         List<(int Start, int End)> removals)
     {
-        if (!rule.FillFromTitle)
+        // Tam Ad fills on its own, but only from a reference entry the title names by model code —
+        // see AttributeMatcher.AddReferenceForEmpty.
+        var fromReference = rule.UseReferenceName && mine.Any(c => c.Match.ReferenceName is not null);
+
+        if (!rule.FillFromTitle && !fromReference)
             return new TitleAttributeResult(rule.Column, TitleAttributeStatus.Empty, original, original);
 
         var keys = mine.Select(c => c.Match.Key).Distinct(StringComparer.Ordinal).ToList();

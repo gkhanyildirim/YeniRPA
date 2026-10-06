@@ -2963,3 +2963,275 @@ footer.page-foot {
   overflow-y: auto;
   max-height: 50vh;
 }
+
+
+/* ---------------------------------------------------------------------------
+   Order Report — Sales Analysis view
+
+   The second view of the Order Report panel. Everything here reuses the existing tokens; nothing
+   new is added to either theme block, so the light/dark palettes stay identical by construction.
+   --------------------------------------------------------------------------- */
+
+/* Segmented control between the two Order Report views. */
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 0 var(--s-4);
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+}
+.view-switch-btn {
+  padding: 7px 16px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.view-switch-btn:hover { color: var(--ink); }
+.view-switch-btn.is-active { background: var(--accent); color: var(--accent-ink); box-shadow: var(--e-1); }
+.view-switch-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#order-view-late[hidden],
+#sales-view[hidden] { display: none; }
+
+/* Several buttons in a card's top-right corner (Excel + CSV) instead of the single absolute one. */
+.card > .card-actions {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
+  display: flex;
+  gap: 6px;
+}
+.card:has(> .card-actions) > h3,
+.card:has(> .card-actions) > .sub { padding-right: 160px; }
+
+/* A filter label that is not a <label> (the multi-selects own their own controls). */
+.field > .field-label {
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* ---------- multi-select with search ---------- */
+
+.ms { position: relative; }
+.ms-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 16ch;
+  max-width: 26ch;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: .85rem;
+  cursor: pointer;
+}
+.ms-toggle svg { width: 14px; height: 14px; flex: none; color: var(--ink-3); }
+.ms-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms.is-filtered .ms-toggle { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.ms-toggle:focus-visible { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.ms-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: min(340px, 86vw);
+  padding: var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--e-3);
+}
+.ms-pop[hidden] { display: none; }
+.ms-bulk { display: flex; gap: 6px; margin: var(--s-2) 0; }
+.ms-list { max-height: 260px; overflow-y: auto; }
+.ms-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: var(--r-xs);
+  font-size: .8rem;
+  cursor: pointer;
+}
+.ms-opt:hover { background: var(--surface-2); }
+.ms-opt[hidden] { display: none; }
+.ms-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ms-n { color: var(--ink-3); font-family: var(--font-mono); font-size: .7rem; }
+
+/* ---------- reasons, summaries, trends ---------- */
+
+.sales-headline {
+  margin: 0 0 var(--s-3);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.reasons-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--s-2); }
+.reasons-list li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--s-3);
+  align-items: baseline;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: .86rem;
+  line-height: 1.5;
+}
+.reason-mark { font-size: .8rem; }
+.reasons-list li.is-up .reason-mark,
+.reasons-list li.is-up .reason-impact { color: var(--green); }
+.reasons-list li.is-down .reason-mark,
+.reasons-list li.is-down .reason-impact { color: var(--red); }
+.reason-impact { font-family: var(--font-mono); font-size: .78rem; font-weight: 600; white-space: nowrap; }
+
+.sales-summary { margin: var(--s-3) 0 0; padding-left: 1.1em; color: var(--ink-2); font-size: .82rem; line-height: 1.6; }
+.sales-summary:empty { display: none; }
+.sales-tab-panel > .sales-summary { margin: 0 0 var(--s-3); }
+
+.sa-trend { font-family: var(--font-mono); white-space: nowrap; }
+.sa-trend.is-good { color: var(--green); }
+.sa-trend.is-bad { color: var(--red); }
+
+.sales-warn { background: var(--amber-soft); color: var(--amber); }
+.sales-warn::before { content: '!'; font-style: normal; background: var(--amber); }
+
+.sales-subhead { margin: var(--s-4) 0 var(--s-2); font-size: .8rem; color: var(--ink-2); }
+
+/* A recalculation keeps the old figures on screen, dimmed, rather than blanking the page. */
+#sales-results.is-busy .kpi-grid,
+#sales-results.is-busy .card { opacity: .55; transition: opacity var(--dur) var(--ease); }
+
+/* ---------- detail tabs ---------- */
+
+.sales-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin: var(--s-3) 0;
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--line);
+}
+.sales-tab {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sales-tab:hover { background: var(--surface-2); color: var(--ink); }
+.sales-tab.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.sales-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sales-tab-panel { display: grid; gap: var(--s-4); }
+.sales-tab-panel > .note { margin: 0; }
+
+.sales-inline-bar { display: flex; flex-wrap: wrap; gap: var(--s-3); margin: 0 0 var(--s-3); }
+
+/* ---------- weekday × hour heat grid ---------- */
+
+.sales-heat-wrap { border: 0; }
+.sales-heat { border-collapse: separate; border-spacing: 2px; width: 100%; }
+.sales-heat th { position: static; padding: 2px 4px; background: none; font-family: var(--font-mono); font-size: .62rem; color: var(--ink-3); text-align: center; }
+.sales-heat td {
+  min-width: 18px;
+  height: 22px;
+  padding: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) calc(var(--heat, 0) * 100%), var(--surface-3));
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 760px) {
+  .view-switch { display: flex; }
+  .view-switch-btn { flex: 1; padding: 7px 8px; }
+  .sales-filter .filter-fields > .field,
+  .sales-filter .filter-fields > .btn { flex: 1 1 100%; }
+  .ms-toggle { max-width: none; width: 100%; }
+  .sales-filter input[type="number"] { width: 100%; }
+  .reasons-list li { grid-template-columns: auto 1fr; }
+  .reason-impact { grid-column: 2; }
+  .card:has(> .card-actions) > h3,
+  .card:has(> .card-actions) > .sub { padding-right: 0; padding-top: 34px; }
+}
+/* Long product titles in a narrow card: two lines at most, the rest on hover. */
+.sa-clip { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-width: 22ch; }
+.sa-meta { display: block; margin-top: 2px; color: var(--ink-3); font-size: .7rem; }
+/* With a dozen fields the open bar is too tall to follow the reader down the page — it would cover
+   the charts — so here it stays where it is. */
+.filter-bar.sales-filter { position: static; }
+/* Plain-language definitions under the "where does the difference come from" chart. */
+.sales-glossary { display: grid; grid-template-columns: max-content 1fr; gap: 4px var(--s-3); margin: var(--s-3) 0 0; font-size: .78rem; line-height: 1.5; }
+.sales-glossary dt { font-weight: 600; color: var(--ink); }
+.sales-glossary dd { margin: 0; color: var(--ink-2); }
+@media (max-width: 760px) { .sales-glossary { grid-template-columns: 1fr; } .sales-glossary dd { margin-bottom: 6px; } }
+
+/* ---------- Sales Analysis modes: period comparison / country comparison ---------- */
+
+#order-upload-card[hidden],
+#sales-period-mode[hidden],
+#country-mode[hidden],
+.country-gaps[hidden] { display: none; }
+
+.sales-mode-switch { margin-bottom: var(--s-4); }
+
+/* Each country's uploader with its name field under it. */
+.country-input { display: grid; gap: var(--s-2); align-content: start; }
+.country-input .field input[type="text"] { width: 100%; }
+
+/* The settings bar carries no date pickers, so the rate field can take a readable width. */
+#country-rate { width: 18ch; }
+
+.country-gaps { border-left: 3px solid var(--amber); }
+.country-gaps h3 { color: var(--amber); }
+
+/* Highlights: a letter badge names the country the line favours, so colour is never the only cue. */
+.country-insights li { grid-template-columns: auto 1fr; }
+.cc-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  font-weight: 700;
+}
+.cc-badge.is-a { background: var(--series-1); color: #fff; }
+.cc-badge.is-b { background: var(--series-2); color: #fff; }
+
+.cc-leader { font-weight: 600; white-space: nowrap; }
+.cc-leader.is-a { color: var(--series-1); }
+.cc-leader.is-b { color: var(--series-2); }
+.cc-muted { color: var(--ink-3); white-space: nowrap; }
+
+.cc-strength-list { margin-top: 0; }
+#country-results.is-busy .card { opacity: .55; transition: opacity var(--dur) var(--ease); }
+
+@media (max-width: 760px) {
+  #country-rate { width: 100%; }
+}

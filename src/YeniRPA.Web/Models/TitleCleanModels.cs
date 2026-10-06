@@ -98,6 +98,20 @@ public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Unit
 /// discards every reading but the largest on the strength of "bigger is right", which is true of a
 /// disk capacity and would not be true of, say, a price. Left off, the row is reported exactly as
 /// before — a conflict nothing is guessed about.</para>
+///
+/// <para>The same rule applies to the cell: one holding several sizes — "1 TB + 512 GB" — is written
+/// back as its largest ("1 TB"), whether or not the title mentions it, because the marketplace
+/// standard takes a single value. Needs <paramref name="Correct"/> as well.</para>
+/// </param>
+/// <param name="UseReferenceName">
+/// Only meaningful with a <paramref name="ReferenceList"/>: where the title names a reference entry,
+/// the <b>entry's</b> full spelling is written into the cell — "Intel Core i9-12900HK" for a cell
+/// reading "Intel Core i9" against a title's "i9-12900HK".
+///
+/// <para>Off by default. Without it the list only says how a title writes the cell's value, and the
+/// cell keeps its own spelling. With it an empty cell is filled from the list too — without needing
+/// <paramref name="FillFromTitle"/>, which the editor does not show — but only from a single entry
+/// whose model code the title actually writes.</para>
 /// </param>
 public sealed record TitleAttributeRule(
     string Column,
@@ -110,7 +124,8 @@ public sealed record TitleAttributeRule(
     IReadOnlyList<MeasureUnit>? Units = null,
     IReadOnlyList<IReadOnlyList<string>>? Aliases = null,
     string? ReferenceList = null,
-    bool AdoptLargest = false)
+    bool AdoptLargest = false,
+    bool UseReferenceName = false)
 {
     public IReadOnlyList<MeasureUnit> UnitList => Units ?? [];
 
@@ -266,7 +281,8 @@ public sealed record TitleAttributeForm(
     string Units = "",
     string Aliases = "",
     string ReferenceList = "",
-    bool AdoptLargest = false);
+    bool AdoptLargest = false,
+    bool UseReferenceName = false);
 
 /// <summary>One ready-made unit set the editor offers, on its way to the browser.</summary>
 /// <param name="Units">Already encoded into the cell format by <c>TitleRuleStore</c>. The browser

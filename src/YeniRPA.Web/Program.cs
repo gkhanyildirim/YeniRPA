@@ -4,6 +4,9 @@ using Microsoft.AspNetCore.Mvc;
 using YeniRPA.Web.Infrastructure;
 using YeniRPA.Web.Services;
 using YeniRPA.Web.Services.Automation;
+using YeniRPA.Web.Services.SalesAnalysis;
+using YeniRPA.Web.Services.SalesAnalysis.Country;
+using YeniRPA.Web.Services.SalesAnalysis.Providers;
 using YeniRPA.Web.Services.TitleCleaner;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -96,6 +99,26 @@ builder.Services.AddSingleton<CargoSellerReportStore>();
 // No / authCode, then pivots by POS Banka x Taksit. Same in-memory, single-batch shape as
 // CargoSellerReportStore, for the same reason.
 builder.Services.AddSingleton<PosReconciliationStore>();
+
+// Sales Analysis (the Order Report's second view). The store holds the last loaded orders export
+// and the cached runs on it — in memory only, for the same restart-invalidates-it reason as above.
+// Each "why" analysis is an IInsightProvider; adding a new one is one class plus one line here.
+builder.Services.AddSingleton<SalesAnalysisStore>();
+builder.Services.AddSingleton<SalesAnalysisService>();
+builder.Services.AddSingleton<IInsightProvider, KpiProvider>();
+builder.Services.AddSingleton<IInsightProvider, PvmProvider>();
+builder.Services.AddSingleton<IInsightProvider, CategoryProvider>();
+builder.Services.AddSingleton<IInsightProvider, ProductProvider>();
+builder.Services.AddSingleton<IInsightProvider, BrandProvider>();
+builder.Services.AddSingleton<IInsightProvider, SellerProvider>();
+builder.Services.AddSingleton<IInsightProvider, StatusProvider>();
+builder.Services.AddSingleton<IInsightProvider, TimeSeriesProvider>();
+builder.Services.AddSingleton<IInsightProvider, CityProvider>();
+builder.Services.AddSingleton<IInsightProvider, ProfitabilityProvider>();
+builder.Services.AddSingleton<IInsightProvider, OutlierProvider>();
+// "Ülke Kıyaslama": two country exports compared side by side, held apart from the period dataset.
+builder.Services.AddSingleton<CountryComparisonStore>();
+builder.Services.AddSingleton<CountryComparisonService>();
 
 // The two WhatsApp warning modules — Late Order Warnings and Incident Warnings. The store owns the
 // seller → WhatsApp group mapping (shared by both) and each module's message templates; group names

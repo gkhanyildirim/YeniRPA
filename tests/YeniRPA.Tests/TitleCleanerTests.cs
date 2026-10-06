@@ -508,6 +508,152 @@ public class TitleCleanerTests
     }
 
     // -----------------------------------------------------------------
+    // Writing the reference entry's full name into the cell (Tam Ad)
+    // -----------------------------------------------------------------
+
+    static TitleAttributeResult ProcessorResult(
+        string title, string? cell, bool useReferenceName, params string[] entries)
+    {
+        var rules = new TitleRuleSet("Test", "Başlık",
+        [
+            new TitleAttributeRule("İşlemci", TitleAttributeKind.Alias, AllowPartial: true,
+                ReferenceList: "İşlemciler", UseReferenceName: useReferenceName),
+        ]);
+
+        var list = new TitleReferenceList("İşlemciler", "test", entries);
+
+        return TitleCleanBuilder.CleanRow(
+            CompiledRuleSet.Compile(rules, [list]), 2, title, _ => cell).Attributes[0];
+    }
+
+    [Theory]
+    [InlineData("MSI Raider i9-12900HK 32GB", "Intel Core i9")]
+    [InlineData("MSI Raider i9 12900HK 32GB", "Intel Core i9")]
+    public void TamAdWritesTheEntrysFullNameOverAPartialCell(string title, string cell)
+    {
+        var result = ProcessorResult(title, cell, true, "Intel Core i9-12900H", "Intel Core i9-12900HK");
+
+        Assert.Equal(TitleAttributeStatus.Corrected, result.Status);
+        Assert.Equal("Intel Core i9-12900HK", result.Value);
+    }
+
+    [Fact]
+    public void WithoutTamAdThePartialCellKeepsItsOwnSpelling()
+    {
+        var result = ProcessorResult("MSI Raider i9-12900HK 32GB", "Intel Core i9", false,
+            "Intel Core i9-12900HK");
+
+        Assert.Equal(TitleAttributeStatus.Ok, result.Status);
+        Assert.Equal("Intel Core i9", result.Value);
+    }
+
+    [Theory]
+    [InlineData("MSI Raider i9-12900HK 32GB", "Intel Core i9-12900HK")]
+    [InlineData("Lenovo LOQ Ryzen7-7735HS 16GB", "AMD Ryzen 7 7735HS")]
+    [InlineData("HP ProBook Ultra5 125H WUXGA", "Intel Core Ultra 5 125H")]
+    public void TamAdFillsAnEmptyCellFromTheModelCode(string title, string expected)
+    {
+        var result = ProcessorResult(title, null, true,
+            "Intel Core i9-12900HK", "AMD Ryzen 7 7735HS", "AMD Ryzen 7 PRO 7735HS",
+            "Intel Core Ultra 5 125H");
+
+        Assert.Equal(TitleAttributeStatus.Filled, result.Status);
+        Assert.Equal(expected, result.Value);
+    }
+
+    [Fact]
+    public void AnEmptyCellIsLeftAloneWithoutTamAd()
+    {
+        var result = ProcessorResult("MSI Raider i9-12900HK 32GB", null, false, "Intel Core i9-12900HK");
+
+        Assert.Equal(TitleAttributeStatus.Empty, result.Status);
+    }
+
+    [Fact]
+    public void AnEmptyCellIsNotFilledWhenTheTitleNamesTwoProcessors()
+    {
+        var result = ProcessorResult("Bundle i9-12900HK and i7-12700H", null, true,
+            "Intel Core i9-12900HK", "Intel Core i7-12700H");
+
+        Assert.Equal(TitleAttributeStatus.Empty, result.Status);
+    }
+
+    [Fact]
+    public void AFamilyNameAloneNeverFillsAnEmptyCell()
+    {
+        var result = ProcessorResult("MSI Raider Core i9 32GB", null, true, "Intel Core i9-12900HK");
+
+        Assert.Equal(TitleAttributeStatus.Empty, result.Status);
+    }
+
+    [Fact]
+    public void TamAdSurvivesTheEditorAndWorkbookRoundTrips()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("İşlemci", ReferenceList: "İşlemciler", UseReferenceName: true)]);
+
+        Assert.True(TitleRuleStore.FromForm(TitleRuleStore.ToForm(set)).AttributeList[0].UseReferenceName);
+
+        using var stream = new MemoryStream(TitleRuleStore.BuildWorkbook([set]));
+        var read = TitleRuleStore.ReadWorkbook(stream, "rules.xlsx");
+
+        Assert.True(read[0].AttributeList[0].UseReferenceName);
+    }
+
+    // -----------------------------------------------------------------
+    // Büyüğü Seç on a multi-size cell: "1 TB + 512 GB" → "1 TB"
+    // -----------------------------------------------------------------
+
+    static TitleCleanRow DiskRow(string title, string cell, bool adoptLargest) =>
+        TitleCleanBuilder.CleanRow(
+            CompiledRuleSet.Compile(new TitleRuleSet("Test", "Başlık",
+            [
+                new TitleAttributeRule("Sabit disk kapasitesi", TitleAttributeKind.Measure,
+                    Units: [Gb, Tb], AdoptLargest: adoptLargest),
+            ])),
+            2, title, _ => cell);
+
+    [Theory]
+    [InlineData("1 TB + 512 GB")]
+    [InlineData("512 GB + 1 TB")]
+    public void BuyuguSecWritesAMultiSizeCellAsItsLargest(string cell)
+    {
+        var row = DiskRow("Asus Vivobook 1TB SSD + 512GB SSD 16GB", cell, adoptLargest: true);
+
+        Assert.Equal(TitleAttributeStatus.Corrected, row.Attributes[0].Status);
+        Assert.Equal("1 TB", row.Attributes[0].Value);
+        Assert.DoesNotContain("1TB", row.CleanTitle, StringComparison.Ordinal);
+        Assert.DoesNotContain("512GB", row.CleanTitle, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuyuguSecCollapsesTheCellEvenWhenTheTitleSaysNoSize()
+    {
+        var row = DiskRow("Asus Vivobook Laptop", "1 TB + 512 GB", adoptLargest: true);
+
+        Assert.Equal(TitleAttributeStatus.Corrected, row.Attributes[0].Status);
+        Assert.Equal("1 TB", row.Attributes[0].Value);
+        Assert.Equal("Asus VivoBook Laptop", row.CleanTitle);
+    }
+
+    [Fact]
+    public void WithoutBuyuguSecAMultiSizeCellIsKept()
+    {
+        var row = DiskRow("Asus Vivobook 1TB SSD + 512GB SSD", "1 TB + 512 GB", adoptLargest: false);
+
+        Assert.Equal("1 TB + 512 GB", row.Attributes[0].Value);
+    }
+
+    [Fact]
+    public void ATitleNamingADifferentSizeStillGoesToReview()
+    {
+        var row = DiskRow("Asus Vivobook 2TB SSD", "1 TB + 512 GB", adoptLargest: true);
+
+        Assert.Equal(TitleAttributeStatus.Conflict, row.Attributes[0].Status);
+        Assert.Equal("1 TB + 512 GB", row.Attributes[0].Value);
+    }
+
+    // -----------------------------------------------------------------
     // A title that is not a product name
     // -----------------------------------------------------------------
 
@@ -1886,25 +2032,19 @@ public class TitleCleanerTests
     }
 
     /// <summary>
-    /// The operator's actual column, reproduced verbatim from a screenshot of their rule editor:
-    /// "inç" <em>is</em> a registered spelling — the previous guess was wrong — but the column
-    /// already carries three declared pairs, and "16 inç" is already spoken for by the first one
-    /// ("15.6 inç" ↔ "16 inç"). <see cref="TitleFixSuggester.ApplyMatchMeasure"/>'s <c>AddSpelling</c>
-    /// walks the groups in order and, on reaching a group that already contains the spelling it was
-    /// asked to add, returns the set completely unchanged rather than moving "16 inç" to a second
-    /// group — the same refusal <see cref="TitleFixSuggester.Build"/>'s own comment describes for
-    /// "FreeDOS is not another way of writing Windows 11 Pro". <c>Unchanged</c> then sees no edit was
-    /// made and discards the card before it is ever offered.
+    /// The operator's actual column, reproduced verbatim from a screenshot of their rule editor: the
+    /// column already carries three declared pairs, and "16 inç" is already in the first one
+    /// ("15.6 inç" ↔ "16 inç").
     ///
-    /// <para>Not a bug to fix in the matching engine — it is the same intentional safety this file
-    /// already documents. What it actually means for the operator: on these rows, "16 inç" has
-    /// already been told to mean 15.6", and a 17.3" title disagreeing with it needs a person, not a
-    /// value-list merge — either the cell is genuinely wrong on these specific rows (a marketplace
-    /// data error to fix at the source), or "16" cannot be treated as always meaning one screen size,
-    /// which is a decision the tool correctly leaves to a person rather than guessing at.</para>
+    /// <para>This used to offer no card: the alias-style merge refused to add a size that was already
+    /// in another line. But each line on a measured column is a decision about one <em>pair</em> —
+    /// <c>PairFor</c> needs both the cell's and the title's size in the same line — so "16 inç" can
+    /// sit in two of them without either answer leaking into the other's rows. The same refusal is
+    /// what silently dropped a file's RAM answers when they were applied together. The card is
+    /// offered, unticked, and the operator still decides.</para>
     /// </summary>
     [Fact]
-    public void NoCardIsOfferedWhenTheCellsSpellingAlreadyBelongsToADifferentSize()
+    public void ACardIsOfferedEvenWhenTheCellsSizeIsAlreadyInAnotherPair()
     {
         var inch = new MeasureUnit("inç", ["inc", "\"", "''", "inch", "inches"]);
         var rules = CompiledRuleSet.Compile(new TitleRuleSet(
@@ -1927,8 +2067,16 @@ public class TitleCleanerTests
         Assert.Equal(TitleAttributeStatus.Conflict, screen.Status);
         Assert.Equal("17.3\"", screen.TitleSaid);
 
-        var fixes = TitleFixSuggester.Suggest(rules, [row]);
-        Assert.DoesNotContain(fixes, f => f.Kind == TitleFixKind.MatchMeasure);
+        var card = Assert.Single(TitleFixSuggester.Suggest(rules, [row]), f => f.Kind == TitleFixKind.MatchMeasure);
+        Assert.False(card.Preselected);
+
+        var updated = TitleFixSuggester.Apply(
+            rules.Source, [card with { Value = card.ChoiceList[0].Value }], [card.Id]);
+        var groups = updated.AttributeList.Single(a => a.Kind == TitleAttributeKind.Measure).AliasGroups;
+
+        // The new answer is a line of its own; the 15.6" decision is untouched.
+        Assert.Contains(groups, g => g.SequenceEqual(["15.6 inç", "16 inç"]));
+        Assert.Contains(groups, g => g.SequenceEqual(["17.3 inç", "16 inç"]));
     }
 
     // -----------------------------------------------------------------

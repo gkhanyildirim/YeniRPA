@@ -40,10 +40,15 @@ namespace YeniRPA.Web.Services.TitleCleaner;
 /// the column's catalogue. Such a match is the weaker claim of the two: the catalogue is a record of
 /// how titles write things, and a cell value that happens to sit inside one of those phrases is
 /// reading half of it — see <c>TitleCleanBuilder.Fragments</c>.</param>
+/// <param name="ReferenceName">The reference entry this match was found through, spelled as the list
+/// spells it — "Intel Core i9-12900HK". Null for every other match. Carried apart from
+/// <paramref name="Canonical"/>, which stays the cell's own value: the entry only goes into the cell
+/// where the rule asks for it (<see cref="TitleAttributeRule.UseReferenceName"/>).</param>
 public sealed record TitleMatch(
     int Start, int End, string Text, string Canonical, string Key, double? Quantity = null,
     IReadOnlyList<(int Start, int End)>? Parts = null,
-    double? BaseQuantity = null, int Decimals = 0, bool Bare = false, bool FromCell = false)
+    double? BaseQuantity = null, int Decimals = 0, bool Bare = false, bool FromCell = false,
+    string? ReferenceName = null)
 {
     public int Length => End - Start;
 
@@ -192,7 +197,8 @@ public sealed class CompiledAttribute
         IReadOnlyDictionary<string, MeasureUnit> unitBySpelling,
         IReadOnlyList<(string Folded, string Canonical, string Key)> aliasSpellings,
         IReadOnlyList<ReferenceEntry> referenceEntries,
-        IReadOnlyList<MeasurePair> measurePairs)
+        IReadOnlyList<MeasurePair> measurePairs,
+        IReadOnlyDictionary<string, IReadOnlyList<ReferenceEntry>>? modelCodes = null)
     {
         Rule = rule;
         Index = index;
@@ -201,6 +207,7 @@ public sealed class CompiledAttribute
         AliasSpellings = aliasSpellings;
         ReferenceEntries = referenceEntries;
         MeasurePairs = measurePairs;
+        ModelCodes = modelCodes ?? new Dictionary<string, IReadOnlyList<ReferenceEntry>>();
     }
 
     public TitleAttributeRule Rule { get; }
@@ -212,6 +219,11 @@ public sealed class CompiledAttribute
     internal IReadOnlyDictionary<string, MeasureUnit> UnitBySpelling { get; }
     internal IReadOnlyList<(string Folded, string Canonical, string Key)> AliasSpellings { get; }
     internal IReadOnlyList<ReferenceEntry> ReferenceEntries { get; }
+
+    /// <summary>Reference entries by the model code they end in — "i912900hk" for
+    /// "Intel Core i9-12900HK" — for filling an empty cell. Built only where the rule takes the list's
+    /// names (<see cref="TitleAttributeRule.UseReferenceName"/>); empty otherwise.</summary>
+    internal IReadOnlyDictionary<string, IReadOnlyList<ReferenceEntry>> ModelCodes { get; }
 
     /// <summary>Sizes the operator has declared equal on this column. Empty on every other kind.</summary>
     internal IReadOnlyList<MeasurePair> MeasurePairs { get; }
@@ -433,9 +445,28 @@ public static class AttributeMatcher
             }
         }
 
+        Dictionary<string, IReadOnlyList<ReferenceEntry>>? modelCodes = null;
+
+        if (rule.UseReferenceName && entries.Count > 0)
+        {
+            modelCodes = entries
+                .Select(e => (Code: Bare(e.Words[^1]), Entry: e))
+                .Where(x => IsModelCode(x.Code))
+                .GroupBy(x => x.Code, StringComparer.Ordinal)
+                .ToDictionary(
+                    g => g.Key,
+                    g => (IReadOnlyList<ReferenceEntry>)g.Select(x => x.Entry).ToList(),
+                    StringComparer.Ordinal);
+        }
+
         return new CompiledAttribute(
-            rule, index, measureRegex, unitBySpelling, aliasSpellings, entries, measurePairs);
+            rule, index, measureRegex, unitBySpelling, aliasSpellings, entries, measurePairs, modelCodes);
     }
+
+    /// <summary>Whether an entry's last word is specific enough to fill a cell on — a digit in it and
+    /// some length to it, so "12900hk" or "125h" qualify and a bare family name like "i9" does not.</summary>
+    static bool IsModelCode(string bare) =>
+        bare.Length >= 4 && bare.Any(char.IsDigit);
 
     /// <summary>
     /// A measured rule's value list, read as declarations that two sizes are the same product.
@@ -638,6 +669,9 @@ public static class AttributeMatcher
             case TitleAttributeKind.Alias:
                 AddReference(matches, attr, title, value);
 
+                if (value is null)
+                    AddReferenceForEmpty(matches, attr, title);
+
                 AddSpellings(
                     matches, title, attr.AliasSpellings,
                     attr.Rule.AllowSuffix, attr.Rule.AllowPartial);
@@ -681,6 +715,10 @@ public static class AttributeMatcher
                         [(FoldedTitle.Fold(value.Canonical), value.Canonical, value.Key)],
                         attr.Rule.AllowSuffix, attr.Rule.AllowPartial);
                 }
+                else
+                {
+                    AddReferenceForEmpty(matches, attr, title);
+                }
                 break;
         }
 
@@ -704,7 +742,9 @@ public static class AttributeMatcher
     ///
     /// <para>The match carries the <b>cell's</b> canonical spelling, not the entry's. The list says
     /// what the title says; what the cell ought to say is not its business, and rewriting a catalogue
-    /// column out of a reference file is a much larger claim than removing text from a title.</para>
+    /// column out of a reference file is a much larger claim than removing text from a title. The
+    /// entry rides along as <see cref="TitleMatch.ReferenceName"/>, and only reaches the cell on a
+    /// column the operator has opted in with <see cref="TitleAttributeRule.UseReferenceName"/>.</para>
     /// </summary>
     static void AddReference(
         List<TitleMatch> matches, CompiledAttribute attr, FoldedTitle title, AttributeValue? value)
@@ -805,10 +845,89 @@ public static class AttributeMatcher
             // would have found, and blocked the entry that would have taken the model code with it.
             var end = Bare(FoldedTitle.Fold(matches[^1].Text));
             if (end.Contains(Bare(tail[^1]), StringComparison.Ordinal))
+            {
+                for (var i = before; i < matches.Count; i++)
+                    matches[i] = matches[i] with { ReferenceName = entry.Canonical };
                 return;
+            }
 
             matches.RemoveRange(before, matches.Count - before);
         }
+    }
+
+    /// <summary>
+    /// An empty cell, and a title that names one reference entry by its model code — "i9-12900HK"
+    /// for the catalogue's "Intel Core i9-12900HK". The match carries the entry as its value, so
+    /// <c>TitleCleanBuilder.JudgeEmpty</c> fills the cell with the full name.
+    ///
+    /// <para>Only on a rule that takes the list's names (<see cref="CompiledAttribute.ModelCodes"/> is
+    /// empty otherwise). An entry is only considered
+    /// where its last word — the model code, never a bare family name like "i9" — is a token of the
+    /// title, alone or joined with its neighbour ("i9" + "12900hk"). Where entries match the same
+    /// stretch of title only the longest reading is kept, so "AMD Ryzen 7 7735HS" beats a
+    /// "… PRO 7735HS" whose "PRO" the title never wrote. Anything else left over — a tie, or a second
+    /// processor elsewhere in the title — is offered too, and <c>JudgeEmpty</c> refuses to choose.</para>
+    /// </summary>
+    static void AddReferenceForEmpty(List<TitleMatch> matches, CompiledAttribute attr, FoldedTitle title)
+    {
+        if (attr.ModelCodes.Count == 0)
+            return;
+
+        var tokens = new string(title.Folded.Select(c => IsGap(c) ? ' ' : c).ToArray())
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Select(Bare)
+            .Where(t => t.Length > 0)
+            .ToList();
+
+        var candidates = new List<ReferenceEntry>();
+
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (attr.ModelCodes.TryGetValue(tokens[i], out var one))
+                candidates.AddRange(one);
+
+            if (i + 1 < tokens.Count && attr.ModelCodes.TryGetValue(tokens[i] + tokens[i + 1], out var two))
+                candidates.AddRange(two);
+        }
+
+        if (candidates.Count == 0)
+            return;
+
+        var letters = Bare(title.Folded);
+        var found = new List<TitleMatch>();
+
+        foreach (var entry in candidates.Distinct())
+        {
+            // The front of the entry as far as the title writes it, the same way AddReference keeps
+            // it: "Intel Core" goes when the title only says "i9-12900HK".
+            var from = entry.Words.Count - 1;
+            while (from > 0 && letters.Contains(Bare(entry.Words[from - 1]), StringComparison.Ordinal))
+                from--;
+
+            var tail = entry.Words.Skip(from).ToList();
+            var key = FoldedTitle.Fold(entry.Canonical);
+            var scratch = new List<TitleMatch>();
+
+            AddSpellings(
+                scratch, title,
+                [(string.Join(' ', tail), entry.Canonical, key)],
+                attr.Rule.AllowSuffix,
+                allowPartial: true,
+                allowTruncated: false);
+
+            var code = Bare(tail[^1]);
+
+            // What matched has to carry the model code itself, or it is the family name alone.
+            found.AddRange(scratch
+                .Where(m => Bare(FoldedTitle.Fold(m.Text)).Contains(code, StringComparison.Ordinal))
+                .Select(m => m with { ReferenceName = entry.Canonical }));
+        }
+
+        // Longest wins only against a reading of the same stretch of title. A second processor named
+        // somewhere else in the title stays, so JudgeEmpty sees two and refuses to choose.
+        matches.AddRange(found.Where(m => !found.Any(o =>
+            o.Start < m.End && m.Start < o.End &&
+            Bare(o.Text).Length > Bare(m.Text).Length)));
     }
 
     /// <summary>The entries whose words carry <paramref name="needle"/> as a run — the narrowing that

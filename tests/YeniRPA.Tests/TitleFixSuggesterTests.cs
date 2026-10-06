@@ -473,6 +473,45 @@ public class TitleFixSuggesterTests
         Assert.False(rows[0].HasConflict);
     }
 
+    /// <summary>
+    /// Answering several size cards of one column at once. "32 GB|24 GB" and "24 GB|16 GB" share a
+    /// size, and the alias-style merge used to drop the second answer because "24 GB" was already in
+    /// the value list — its rows stayed in review with the title untouched.
+    /// </summary>
+    [Fact]
+    public void SizeCardsThatShareASizeAreAllApplied()
+    {
+        var set = new TitleRuleSet("Test", "Başlık",
+            [new TitleAttributeRule("RAM", TitleAttributeKind.Measure, Units: [Gb])]);
+
+        List<List<string>> table =
+        [
+            ["Başlık", "RAM"],
+            ["Asus Expertbook 24GB DR5", "16 GB"],
+            ["Asus Expertbook 32GB DR5", "24 GB"],
+            ["Asus Expertbook 48GB DR5", "32 GB"],
+        ];
+
+        // The operator picks the title's reading on every card.
+        var fixes = Fixes(set, table)
+            .Where(f => f.Kind == TitleFixKind.MatchMeasure)
+            .Select(f => f with { Value = f.ChoiceList[0].Value })
+            .ToList();
+
+        Assert.Equal(3, fixes.Count);
+
+        var updated = TitleFixSuggester.Apply(set, fixes, fixes.Select(f => f.Id).ToHashSet());
+        var (_, rows) = Run(updated, table);
+
+        Assert.All(rows, row =>
+        {
+            Assert.Equal("Asus ExpertBook DR5", row.CleanTitle);
+            Assert.False(row.HasConflict);
+        });
+
+        Assert.Equal(["24 GB", "32 GB", "48 GB"], rows.Select(r => r.Attributes[0].Value));
+    }
+
     // -----------------------------------------------------------------
     // C — a bare number in the cell
     // -----------------------------------------------------------------

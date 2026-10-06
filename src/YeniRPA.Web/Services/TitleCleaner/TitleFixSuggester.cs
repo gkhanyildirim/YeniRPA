@@ -1434,6 +1434,19 @@ public static class TitleFixSuggester
     /// <para>The two spellings ride in one string in the same "|" format the Değerler box uses, so
     /// the card's chosen value and a line typed by hand are the same thing.</para>
     /// </summary>
+    /// <summary>
+    /// The operator's answer as a value-list line of its own.
+    ///
+    /// <para>Not through <see cref="AddSpelling"/>. That is built for alias groups, where a spelling
+    /// belongs to one value only and finding it elsewhere means "leave it alone" — but on a measured
+    /// column each line is a separate decision about one pair of sizes, and one size can sit in
+    /// several of them: "32 GB|24 GB" and "24 GB|16 GB" are two different questions. Applying the RAM
+    /// cards of a file together silently dropped every answer whose size an earlier card had already
+    /// used, and those rows stayed in review with their title untouched.</para>
+    ///
+    /// <para>A line naming the same sizes is replaced rather than added to, so answering the card
+    /// again the other way round changes the answer instead of leaving both.</para>
+    /// </summary>
     static TitleRuleSet ApplyMatchMeasure(TitleRuleSet set, TitleFix fix) =>
         WithRule(set, fix.TargetColumn, rule =>
         {
@@ -1443,10 +1456,12 @@ public static class TitleFixSuggester
             if (sizes.Length < 2)
                 return rule;
 
-            var groups = rule.AliasGroups;
+            var wanted = sizes.Select(FoldedTitle.Fold).ToHashSet(StringComparer.Ordinal);
 
-            foreach (var size in sizes.Skip(1))
-                groups = AddSpelling(groups, sizes[0], size);
+            var groups = rule.AliasGroups
+                .Where(g => !g.Select(FoldedTitle.Fold).ToHashSet(StringComparer.Ordinal).SetEquals(wanted))
+                .Append(sizes)
+                .ToList();
 
             return rule with { Aliases = groups };
         });

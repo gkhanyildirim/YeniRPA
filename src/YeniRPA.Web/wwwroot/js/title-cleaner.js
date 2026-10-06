@@ -113,7 +113,8 @@
     ['tc-correct', 'D', 'Düzelt'],
     ['tc-suffix', 'E', 'Ek'],
     ['tc-partial', 'K', 'Kısmi'],
-    ['tc-adopt-largest', 'B', 'Büyüğü Seç']
+    ['tc-adopt-largest', 'B', 'Büyüğü Seç'],
+    ['tc-reference-name', 'T', 'Tam Ad']
   ];
 
   const FLAG_HINT = {
@@ -121,7 +122,8 @@
     'tc-correct': 'Hücredeki yazım standarda çevrilsin mi (16 → 16 GB). Tip = Metin olan satırlarda kullanılmaz.',
     'tc-suffix': 'Başlıktaki "Ocaklar" kelimesi "Ocak" değerini karşılasın mı — Türkçe çekim ekli yazımlar. Model kodu taşıyan kolonlarda kapalı bırakın.',
     'tc-partial': 'Değerin bir parçası tamamının yerine geçsin mi — hücrede "CETINTAS EVII" yazarken başlıkta yalnızca "Çetintaş" geçmesi. Yalnızca marka, malzeme gibi kolonlarda açın; ürün tipinde açmayın.',
-    'tc-adopt-largest': 'Ölçüde: başlık bu özelliği iki farklı boyutla anıyorsa (ör. 512GB ve 4TB) büyük olanı hücreye yazıp ikisini de başlıktan siler. Değer Listesi\'nde: değer başlıkta iki farklı boyutla (ör. "1TBSSD" ve "2TBSSD") tekrar ediyorsa, büyük boyutlu olanı işaretleyip her iki geçişi de başlıktan siler. Yalnızca Ölçü ve Değer Listesi tiplerinde kullanılır.'
+    'tc-adopt-largest': 'Ölçüde: başlık bu özelliği iki farklı boyutla anıyorsa (ör. 512GB ve 4TB) büyük olanı hücreye yazıp ikisini de başlıktan siler. Hücrede birden fazla boyut varsa (ör. 1 TB + 512 GB) en büyüğünü (1 TB) hücreye yazar. Değer Listesi\'nde: değer başlıkta iki farklı boyutla (ör. "1TBSSD" ve "2TBSSD") tekrar ediyorsa, büyük boyutlu olanı işaretleyip her iki geçişi de başlıktan siler. Yalnızca Ölçü ve Değer Listesi tiplerinde kullanılır.',
+    'tc-reference-name': 'Başlık referans listesindeki bir girişi anıyorsa (ör. "i9-12900HK") hücreye listedeki tam adı yazar ("Intel Core i9-12900HK"). Hücre boşsa, başlıktaki model kodu tek bir girişe uyuyorsa doldurur. Yalnızca referans listesi seçili kolonlarda kullanılır.'
   };
 
   const STATUS_LABEL = {
@@ -207,6 +209,10 @@
     // glued to one of the occurrences — so it stays open on both Measure and Alias, closed only
     // where neither reading applies.
     lock(row.querySelector('.tc-adopt-largest'), kind === 'Measure' || kind === 'Alias');
+
+    // Only a row with a reference list has a full name to write.
+    lock(row.querySelector('.tc-reference-name'),
+      kind !== 'Measure' && !!row.querySelector('.tc-reference').value);
 
     syncRuleHead(row);
   }
@@ -298,9 +304,10 @@
 
   /** Puts a row on screen: the locks its type implies, its two pickers, and its summary line. */
   function dressRuleRow(row) {
+    // The reference picker first: whether Tam Ad is open depends on what it holds.
+    fillReferenceLists(row);
     applyKindLock(row);
     fillUnitPresets(row);
-    fillReferenceLists(row);
     autoGrow(row.querySelector('.tc-units'));
     autoGrow(row.querySelector('.tc-aliases'));
   }
@@ -330,7 +337,8 @@
 
     const on = { 'tc-remove': r.remove !== false, 'tc-correct': r.correct !== false,
                  'tc-suffix': r.allowSuffix === true, 'tc-partial': r.allowPartial === true,
-                 'tc-adopt-largest': r.adoptLargest === true };
+                 'tc-adopt-largest': r.adoptLargest === true,
+                 'tc-reference-name': r.useReferenceName === true };
 
     const dots = FLAGS.map(([cls]) =>
       '<span class="tc-rule-flag" data-flag="' + cls + '"></span>').join('');
@@ -464,6 +472,7 @@
       allowSuffix: row.querySelector('.tc-suffix').checked,
       allowPartial: row.querySelector('.tc-partial').checked,
       adoptLargest: row.querySelector('.tc-adopt-largest').checked,
+      useReferenceName: row.querySelector('.tc-reference-name').checked,
       fillFromTitle: row.querySelector('.tc-fill').value === 'true',
       units: row.querySelector('.tc-units').value.trim(),
       aliases: row.querySelector('.tc-aliases').value.trim(),
@@ -1312,8 +1321,10 @@
       // The picker is rebuilt whenever the loaded lists change, and it rebuilds itself from
       // data-value — so a choice that only lived in select.value would be lost the moment someone
       // uploaded another list.
-      if (event.target.classList.contains('tc-reference'))
+      if (event.target.classList.contains('tc-reference')) {
         event.target.dataset.value = event.target.value;
+        applyKindLock(rule);
+      }
 
       if (event.target.type === 'checkbox') syncRuleHead(rule);
 
