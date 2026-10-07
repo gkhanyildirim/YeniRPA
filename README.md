@@ -1005,6 +1005,33 @@ The `/api/incident-warnings/…` routes are the exception, and the only one: the
 including catching their own `InvalidOperationException` rather than letting `ReportExceptionFilter`
 rewrite it into `{ error }`. The rule is forward-only; every route above keeps the shape it has.
 
+## GMV Notification
+
+Sends today's GMV from the Mirakl dashboard to a Telegram chat at set times ("Automation" → GMV
+Notification). Settings are the bot token, chat ID, frequency (hourly, specific times or manual), an
+on/off switch and an optional daily target; the panel also has "Send test notification", "Check GMV
+now" and the send history.
+
+- **Source.** `GET /marketplace-dashboard/private/sales` with the saved Mirakl login, over plain HTTP —
+  no Chrome window. The GMV switches are sent explicitly (all orders, taxes and shipping included,
+  today in Central European Time), because the dashboard otherwise applies whatever its browser
+  saved: the saved login's browser state read 15.617 where the operator's own screen read 77.074.
+- **Login.** The Marketplace ends a login after 30 minutes without activity. While notifications are
+  on, a light request every 10 minutes keeps it alive (one long-lived request context, so the
+  renewed cookies are kept). It is still a manual sign-in plus "Save session" in the Create Return
+  panel (phone/authenticator step); when the login has ended, one "sign in again" message goes to
+  Telegram and the panel shows the session as expired.
+- **Only while the app runs.** The schedule is a background task inside this process. Nothing is sent
+  with the app closed, and a time that passes meanwhile is recorded as "missed", not sent late. To have
+  the app start with Windows, create a Task Scheduler task ("At log on") that runs
+  `dotnet run --project src/YeniRPA.Web` (or a published build) in the repo folder.
+- **Never wrong data.** A figure that cannot be read is not sent; one scheduled time produces at most
+  one entry; every attempt, with its reason, is in the history.
+- **The token** is stored encrypted (Data Protection, like `auth.dat`), never shown again and left out
+  of the Settings export, which is plain JSON — enter it again after restoring on another machine.
+- `api/automation/probe/*` are read-only diagnostics used to find this endpoint and to measure how
+  long the login survives; they are not part of the notification flow.
+
 ## Create Return automation
 
 ### Preparing the list

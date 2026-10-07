@@ -1014,8 +1014,9 @@
   }
 
   function setView(view) {
+    if (view !== 'sales' && view !== 'late') return;
     const sales = view === 'sales';
-    document.querySelectorAll('.view-switch-btn').forEach(button => {
+    document.querySelectorAll('.view-switch-btn[data-view]').forEach(button => {
       const active = button.dataset.view === view;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-selected', String(active));
@@ -1041,7 +1042,7 @@
   document.addEventListener('DOMContentLoaded', function () {
     if (!document.getElementById('sales-view')) return;
 
-    document.querySelectorAll('.view-switch-btn').forEach(button => {
+    document.querySelectorAll('.view-switch-btn[data-view]').forEach(button => {
       button.addEventListener('click', () => setView(button.dataset.view));
       button.addEventListener('keydown', e => {
         if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;

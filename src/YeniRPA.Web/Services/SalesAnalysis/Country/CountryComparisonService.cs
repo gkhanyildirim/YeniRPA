@@ -230,7 +230,8 @@ public sealed class CountryComparisonService
         }
 
         var commissionMissing = Missing(SalesColumnMap.Commission);
-        var canceledMissing = Missing(SalesColumnMap.CanceledAmount);
+        var transferredMissing = Missing(SalesColumnMap.TransferredToSeller);
+        var customerMissing = Missing(SalesColumnMap.CustomerId);
         var shippingMissing = Missing(SalesColumnMap.ShippingPrice);
 
         CountryKpi Money(string key, string label, string? goodWhen, double? va, double? vb, string? missing = null) =>
@@ -251,12 +252,12 @@ public sealed class CountryComparisonService
             Money("avgPrice", "Ürün başına ort. fiyat", null, a.AvgUnitPrice, b.AvgUnitPrice),
             Kpi("unitsPerOrder", "Sipariş başına ürün adedi", "number", "up", unitsPerOrderA, unitsPerOrderB),
             Kpi("multiItemShare", "Birden çok ürünlü sipariş payı", "rate", "up", MultiItemShare(ctx.SalesA), MultiItemShare(ctx.SalesB)),
-            Kpi("cancelRate", "İptal oranı (satır)", "rate", "down", a.CancelRateLines, b.CancelRateLines),
-            canceledMissing is not null
-                ? Kpi("cancelAmountRate", "İptal oranı (tutar)", "rate", "down", a.CancelRateAmount, b.CancelRateAmount, false, canceledMissing)
-                : Kpi("cancelAmountRate", "İptal oranı (tutar)", "rate", "down", a.CancelRateAmount, b.CancelRateAmount),
-            Kpi("rejectedRate", "Satıcının reddettiği satır oranı", "rate", "down",
-                SalesMetrics.Ratio(a.RejectedLines, a.Lines), SalesMetrics.Ratio(b.RejectedLines, b.Lines)),
+            Money("transferred", "Satıcıya aktarılan tutar", "up", a.TransferredToSeller, b.TransferredToSeller, transferredMissing),
+            Kpi("buyers", "Alıcı sayısı", "count", "up", Distinct(ctx.SalesA, l => l.CustomerId), Distinct(ctx.SalesB, l => l.CustomerId),
+                customerMissing is null, customerMissing),
+            Kpi("ordersPerBuyer", "Alıcı başına sipariş", "number", "up",
+                SalesMetrics.Ratio(a.Orders, Distinct(ctx.SalesA, l => l.CustomerId)), SalesMetrics.Ratio(b.Orders, Distinct(ctx.SalesB, l => l.CustomerId)),
+                customerMissing is null, customerMissing),
             commissionMissing is not null
                 ? Kpi("commissionRate", "Komisyon oranı", "rate", null, a.CommissionRate, b.CommissionRate, false, commissionMissing)
                 : Kpi("commissionRate", "Komisyon oranı", "rate", null, a.CommissionRate, b.CommissionRate),

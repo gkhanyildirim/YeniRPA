@@ -53,6 +53,11 @@ public sealed class MiraklBrowser : IAsyncDisposable
 
     public bool HasSavedSession => File.Exists(_authFilePath);
 
+    /// <summary>When the session was last saved (<see cref="DateTime.MinValue"/> when none is). A
+    /// long-lived reader compares it to know the operator signed in again.</summary>
+    public DateTime SessionSavedUtc =>
+        File.Exists(_authFilePath) ? File.GetLastWriteTimeUtc(_authFilePath) : DateTime.MinValue;
+
     /// <summary>True once Chrome is up. It is started on first use, not at app startup — the report
     /// modules must not pay for a browser nobody asked for.</summary>
     public bool IsBrowserReady => _browser is { IsConnected: true };

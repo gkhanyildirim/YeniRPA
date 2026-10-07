@@ -3947,3 +3947,17 @@ select,
   .st-threshold { grid-template-columns: 1fr; }
   .st-threshold-split { justify-content: flex-start; }
 }
+
+/* GMV Notification */
+.gmv-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--s-4);
+  margin: var(--s-4) 0;
+}
+.gmv-form .field input,
+.gmv-form .field select { width: 100%; }
+.gmv-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); }
+.gmv-hint { font-size: var(--text-sm); color: var(--ink-2); }
+.gmv-check { display: flex; align-items: center; gap: var(--s-2); align-self: end; }
+.gmv-result { min-height: 1.4em; margin: var(--s-3) 0 0; font-variant-numeric: tabular-nums; }

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using YeniRPA.Web.Infrastructure;
 using YeniRPA.Web.Services;
 using YeniRPA.Web.Services.Automation;
+using YeniRPA.Web.Services.GmvNotification;
 using YeniRPA.Web.Services.SalesAnalysis;
 using YeniRPA.Web.Services.SalesAnalysis.Country;
 using YeniRPA.Web.Services.SalesAnalysis.Providers;
@@ -65,6 +66,21 @@ builder.Services.AddSingleton<ISystemLogStore, SystemLogStore>();
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<AutomationJobBus>();
 builder.Services.AddSingleton<MiraklBrowser>();
+builder.Services.AddSingleton<MiraklSessionProbe>();
+
+// GMV Notification: reads today's GMV from the Mirakl dashboard with the saved login and sends it to
+// Telegram at the configured times. The first outbound-HTTP code in the app (Telegram's Bot API), so
+// it brings AddHttpClient with it. The worker runs inside this process: nothing is sent while the
+// app is closed. Settings (token encrypted) and history live in the shared LiteDB database; the
+// token is deliberately left out of DatabaseBackupService's plain-JSON export.
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<IGmvSettingsStore, GmvSettingsStore>();
+builder.Services.AddSingleton<IGmvHistoryStore, GmvHistoryStore>();
+builder.Services.AddSingleton<GmvReader>();
+builder.Services.AddSingleton<IGmvReader>(sp => sp.GetRequiredService<GmvReader>());
+builder.Services.AddSingleton<ITelegramSender, TelegramSender>();
+builder.Services.AddSingleton<GmvNotifier>();
+builder.Services.AddHostedService<GmvNotificationWorker>();
 builder.Services.AddSingleton<CreateReturnRunner>();
 builder.Services.AddSingleton<MarkAsReceivedRunner>();
 // Shared by SellerNotificationRunner and CreateReturnRunner, so the return notification can be sent

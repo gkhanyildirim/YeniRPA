@@ -189,8 +189,8 @@
     const leadA = kpis.filter(k => k.leader === 'a').length;
     const leadB = kpis.filter(k => k.leader === 'b').length;
     const headline = kpis.length
-      ? 'Yönü belli olan ' + kpis.length + ' göstergenin ' + leadA + ' tanesinde ' + nameA() + ', ' + leadB + ' tanesinde ' + nameB() + ' önde.'
-      : 'Karşılaştırılabilen göstergelerde iki ülke arasında belirgin bir öne geçme yok.';
+      ? 'Yönü belli ' + kpis.length + ' göstergede ' + nameA() + ' ' + leadA + ', ' + nameB() + ' ' + leadB + ' tanesinde öne çıkıyor.'
+      : 'Karşılaştırılabilen göstergelerde iki ülke arasında belirgin bir fark görünmüyor.';
 
     const items = RESULT.insights || [];
     const list = items.length
@@ -201,10 +201,10 @@
               (side ? side.toUpperCase() : '•') + '</span>' +
             '<span class="reason-text">' + UI.esc(i.text) + '</span></li>';
         }).join('') + '</ol>'
-      : '<p class="sub">İki ülke arasında öne çıkan, anlamlı büyüklükte bir fark bulunamadı.</p>';
+      : '<p class="sub">İki ülke arasında öne çıkan, anlamlı büyüklükte bir fark yok.</p>';
 
     el.innerHTML = '<p class="sales-headline">' + UI.esc(headline) + '</p>' + list +
-      '<p class="table-note">Maddeler yalnızca yüklenen dosyalardaki verilerden hesaplanır ve farkın büyüklüğüne göre sıralanır. ' +
+      '<p class="table-note">Maddeler yalnızca yüklenen dosyalardaki verilerden hesaplanır, fark büyüklüğüne göre sıralanır. ' +
       'Küçük farklar (%5\'ten az ya da birkaç puandan az) listelenmez.</p>';
   }
 
@@ -228,7 +228,7 @@
   /** Each metric scaled so the higher country is 100 — different units side by side, honestly. */
   function renderKpiChart() {
     const p = RPA.palette();
-    const keys = ['orders', 'units', 'dailyOrders', 'gross', 'aov', 'avgPrice', 'unitsPerOrder', 'multiItemShare', 'cancelRate'];
+    const keys = ['orders', 'units', 'dailyOrders', 'gross', 'aov', 'avgPrice', 'unitsPerOrder', 'multiItemShare', 'transferred', 'buyers', 'ordersPerBuyer'];
     const rows = keys.map(key => RESULT.kpis.find(k => k.key === key))
       .filter(k => k && k.comparable && UI.ok(k.a) && UI.ok(k.b) && Math.max(k.a, k.b) > 0);
     const scale = k => 100 / Math.max(k.a, k.b);
@@ -261,11 +261,11 @@
   function renderStrengths() {
     const card = (id, name, items, other) => {
       document.getElementById(id).innerHTML =
-        '<h3>Güçlü alanlar — ' + UI.esc(name) + '</h3>' +
-        '<p class="sub">Bu ülkenin ' + UI.esc(other) + ' karşısında belirgin şekilde önde olduğu alanlar; aynı alanlar ' + UI.esc(other) + ' için görece zayıf</p>' +
+'<h3>Güçlü alanlar — ' + UI.esc(name) + '</h3>' +
+        '<p class="sub">' + UI.esc(name) + ' tarafının ' + UI.esc(other) + ' tarafına göre belirgin şekilde öne çıktığı alanlar.</p>' +
         (items.length
           ? '<ul class="sales-summary cc-strength-list">' + items.map(s => '<li>' + UI.esc(s) + '</li>').join('') + '</ul>'
-          : '<p class="sub">Belirgin şekilde önde olduğu bir alan bulunamadı.</p>');
+          : '<p class="sub">Belirgin şekilde öne çıkan bir alan yok.</p>');
     };
     card('country-strength-a', nameA(), RESULT.strengthsA || [], nameB());
     card('country-strength-b', nameB(), RESULT.strengthsB || [], nameA());

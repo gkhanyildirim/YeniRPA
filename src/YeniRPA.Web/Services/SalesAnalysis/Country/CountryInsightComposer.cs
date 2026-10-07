@@ -37,7 +37,7 @@ public static class CountryInsightComposer
     /// <summary>A category/brand share gap under this (3 points) does not make the highlights.</summary>
     public const double MinHighlightShareGap = 0.03;
 
-    static readonly HashSet<string> Primary = ["gross", "orders", "dailySales", "dailyOrders"];
+    static readonly HashSet<string> Primary = ["gross", "orders", "dailySales", "dailyOrders", "transferred"];
 
     public static CountryInsightResult Compose(CountryInsightInput input)
     {
@@ -52,8 +52,8 @@ public static class CountryInsightComposer
         // ----- headline metrics -----
         // With windows of different length the totals are not comparable; the daily averages are.
         string[] keys = input.A.Days == input.B.Days
-            ? ["gross", "orders", "units", "aov", "avgPrice", "unitsPerOrder", "multiItemShare", "cancelRate", "cancelAmountRate", "rejectedRate", "commissionRate"]
-            : ["dailySales", "dailyOrders", "aov", "avgPrice", "unitsPerOrder", "multiItemShare", "cancelRate", "cancelAmountRate", "rejectedRate", "commissionRate"];
+            ? ["gross", "orders", "units", "transferred", "buyers", "aov", "avgPrice", "unitsPerOrder", "ordersPerBuyer", "multiItemShare", "commissionRate"]
+            : ["dailySales", "dailyOrders", "aov", "avgPrice", "unitsPerOrder", "ordersPerBuyer", "multiItemShare", "commissionRate"];
 
         foreach (var key in keys)
         {
@@ -91,16 +91,14 @@ public static class CountryInsightComposer
             if (k.Leader is "a" or "b")
             {
                 var winner = NameOf(k.Leader);
-                text = k.GoodWhen == "down"
-                    ? $"{k.Label}: {winner} daha iyi durumda — {values} ({gapText})."
-                    : $"{k.Label}: {winner} önde — {values} ({gapText}).";
+                text = $"{k.Label}: {winner} tarafında daha yüksek — {values} ({gapText}).";
                 var winnerValue = k.Leader == "a" ? Format(k, a, input.A) : Format(k, b, input.B);
                 var loserValue = k.Leader == "a" ? Format(k, b, input.B) : Format(k, a, input.A);
                 Strength(k.Leader, $"{k.Label}: {winnerValue} (karşı ülke: {loserValue})");
             }
             else
             {
-                text = $"{k.Label} {NameOf(k.Higher)} için daha yüksek — {values} ({gapText}).";
+                text = $"{k.Label}: {NameOf(k.Higher)} tarafında daha yüksek — {values} ({gapText}).";
             }
             insights.Add(new CountryInsight(text, k.Leader is "a" or "b" ? k.Leader : null, "kpi", score));
         }
@@ -132,8 +130,8 @@ public static class CountryInsightComposer
                 var text = $"{r.Label} {genitive} satış payı: {nameA} {SalesTextTr.Pct(r.ShareA ?? 0)} · {nameB} {SalesTextTr.Pct(r.ShareB ?? 0)} " +
                            $"({SalesTextTr.Number(Math.Abs(r.Gap ?? 0) * 100, 1)} puan fark). " +
                            (loserShare is null or 0
-                               ? $"Bu {noun} {NameOf(side)} için güçlü; {NameOf(side == "a" ? "b" : "a")} tarafında hiç satışı yok."
-                               : $"Bu {noun} {NameOf(side)} için görece daha güçlü.");
+                               ? $"Bu {noun} yalnızca {NameOf(side)} tarafında satılıyor."
+                               : $"Bu {noun} {NameOf(side)} tarafında öne çıkıyor.");
                 insights.Add(new CountryInsight(text, side, noun, Math.Abs(r.Gap ?? 0) * 5));
             }
         }
@@ -142,7 +140,7 @@ public static class CountryInsightComposer
         {
             var concentrated = t5a > t5b ? nameA : nameB;
             insights.Add(new CountryInsight(
-                $"Satışlar {concentrated} için daha az kategoride yoğunlaşıyor: en büyük 5 kategorinin payı {nameA} {SalesTextTr.Pct(t5a)} · {nameB} {SalesTextTr.Pct(t5b)}.",
+                $"{concentrated} tarafında satışlar daha az kategoride toplanıyor: en büyük 5 kategorinin payı {nameA} {SalesTextTr.Pct(t5a)} · {nameB} {SalesTextTr.Pct(t5b)}.",
                 null, "category", Math.Abs(t5a - t5b) * 3));
         }
 
@@ -154,7 +152,7 @@ public static class CountryInsightComposer
             var dayB = CountryComparisonService.Peak(behaviour.Weekdays, false);
             if (dayA is not null && dayB is not null && dayA.Key != dayB.Key)
                 insights.Add(new CountryInsight(
-                    $"Siparişlerin en yoğun olduğu gün farklı: {nameA} {dayA.Label} ({SalesTextTr.Pct(dayA.ShareA ?? 0)}) · {nameB} {dayB.Label} ({SalesTextTr.Pct(dayB.ShareB ?? 0)}).",
+                    $"En yoğun sipariş günü farklı: {nameA} {dayA.Label} ({SalesTextTr.Pct(dayA.ShareA ?? 0)}) · {nameB} {dayB.Label} ({SalesTextTr.Pct(dayB.ShareB ?? 0)}).",
                     null, "time", 0.15));
         }
 
@@ -169,14 +167,14 @@ public static class CountryInsightComposer
             ((Math.Sign(ta) != Math.Sign(tb) && Math.Abs(ta) >= 0.05 && Math.Abs(tb) >= 0.05) || Math.Abs(ta - tb) >= 0.15))
         {
             insights.Add(new CountryInsight(
-                $"Dönem içi sipariş eğilimi farklı: {nameA} {Trend(ta)} · {nameB} {Trend(tb)} (ikinci yarının günlük ortalama siparişi, ilk yarıya göre).",
+                $"Dönem içinde sipariş eğilimi farklı: {nameA} {Trend(ta)} · {nameB} {Trend(tb)} (ikinci yarı, ilk yarıya göre günlük ortalama).",
                 ta > tb ? "a" : "b", "trend", Math.Min(Math.Abs(ta - tb), 2)));
         }
 
         // ----- product overlap -----
         if (input.Products is { Common: > 0, CommonShareA: { } ca, CommonShareB: { } cb })
             insights.Add(new CountryInsight(
-                $"{SalesTextTr.Number(input.Products.Common)} ürün iki ülkede de satıldı; bu ürünler satışların {nameA} için {SalesTextTr.Pct(ca)}, {nameB} için {SalesTextTr.Pct(cb)} kadarını oluşturuyor.",
+                $"{SalesTextTr.Number(input.Products.Common)} ürün iki ülkede de satılıyor; satışlardaki payı {nameA} tarafında {SalesTextTr.Pct(ca)}, {nameB} tarafında {SalesTextTr.Pct(cb)}.",
                 null, "product", 0.05));
 
         return new CountryInsightResult(

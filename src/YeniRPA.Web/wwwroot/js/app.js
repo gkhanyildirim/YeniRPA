@@ -1195,6 +1195,8 @@ window.RPA = window.RPA || {};
     // Backfills Bulut Tahsilat's blank order numbers from Craftgate (Provizyon No / authCode), then
     // pivots by POS Banka x Taksit. Mirakl is uploaded here too but not read yet.
     'pos-reconciliation': { tab: 'tab-pos-reconciliation', panel: 'panel-pos-reconciliation' },
+    // Reads today's GMV from the Mirakl dashboard with the saved login and sends it to Telegram.
+    'gmv-notification': { tab: 'tab-gmv-notification', panel: 'panel-gmv-notification' },
     // Reference page: static content, no upload and no dashboard of its own.
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' },
     // Moves this install's LiteDB-backed settings to and from a backup file. No upload feeds a
