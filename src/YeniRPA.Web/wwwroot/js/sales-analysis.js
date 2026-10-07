@@ -782,7 +782,7 @@
           { label: 'Dönem A', data: d.points.map(pt => (pt.labelA ? pt.salesA : null)), borderColor: p.ink3, borderDash: [5, 4],
             pointRadius: hourly ? 0 : 3, tension: 0.25, spanGaps: false },
           { label: 'Dönem B', data: d.points.map(pt => (pt.labelB ? pt.salesB : null)), borderColor: p.series[0],
-            backgroundColor: RPA.alpha(p.series[0], 0.12), fill: true, pointRadius: hourly ? 0 : 3, tension: 0.25, spanGaps: false }
+            backgroundColor: RPA.areaGradient(p.series[0]), fill: true, pointRadius: hourly ? 0 : 3, tension: 0.25, spanGaps: false }
         ]
       },
       options: {

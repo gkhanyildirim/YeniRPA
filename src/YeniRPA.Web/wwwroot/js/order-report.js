@@ -220,7 +220,7 @@
           } : {}
         },
         scales: {
-          x: { beginAtZero: true, grid: { color: p.line }, border: { display: false } },
+          x: { beginAtZero: true, grid: { color: p.grid }, border: { display: false } },
           y: { grid: { display: false }, border: { display: false } }
         }
       }
@@ -728,7 +728,7 @@
         scales: {
           y: {
             beginAtZero: true,
-            grid: { color: p.line, drawTicks: false },
+            grid: { color: p.grid, drawTicks: false },
             border: { display: false, dash: [3, 3] },
             ticks: { padding: 8, maxTicksLimit: 5 }
           },

@@ -15,6 +15,32 @@ window.RPA = window.RPA || {};
   // document rather than hard-coded here.
   // ---------------------------------------------------------------------------
 
+  /** Whether the page is currently painted dark — read from the surface colour, so it follows the
+   *  toggle and the OS setting alike without a second source of truth. */
+  RPA.isDark = function () {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim().replace('#', '');
+    const full = raw.length === 3 ? raw.split('').map(c => c + c).join('') : raw;
+    if (!/^[0-9a-f]{6}$/i.test(full)) return false;
+    const n = parseInt(full, 16);
+    return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) < 110;
+  };
+
+  /**
+   * A line chart's soft area fill: the series colour fading to nothing toward the axis. Returned as a
+   * scriptable option because the gradient needs the chart area, which only exists once the chart has
+   * laid out; until then it falls back to a flat wash.
+   */
+  RPA.areaGradient = function (color, topAlpha) {
+    const top = topAlpha === undefined ? 0.22 : topAlpha;
+    return function (context) {
+      const area = context.chart.chartArea;
+      if (!area) return RPA.alpha(color, top / 2);
+      const gradient = context.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+      gradient.addColorStop(0, RPA.alpha(color, top));
+      gradient.addColorStop(1, RPA.alpha(color, 0));
+      return gradient;
+    };
+  };
   RPA.palette = function () {
     const css = getComputedStyle(document.documentElement);
     const read = (name, fallback) => (css.getPropertyValue(name).trim() || fallback);
@@ -30,12 +56,12 @@ window.RPA = window.RPA || {};
     // painting in the previous design's colours while the page around them changes. Any edit to the
     // :root palette in app.css has to land here in the same commit.
     return {
-      accent: read('--accent', '#6D3BEB'),
-      accentGlow: read('--accent-glow', 'rgba(109,59,235,.20)'),
+      accent: read('--accent', '#6366F1'),
+      accentGlow: read('--accent-glow', 'rgba(99,102,241,.22)'),
       red: read('--red', '#C41F50'),
       green: read('--green', '#0A7A55'),
       amber: read('--amber', '#9A5B00'),
-      ink: read('--ink', '#191627'),
+      ink: read('--ink', '#14161F'),
       ink2: read('--ink-2', '#5B5578'),
       ink3: read('--ink-3', '#918BAC'),
 
@@ -45,7 +71,10 @@ window.RPA = window.RPA || {};
       markSerious: read('--mark-serious', '#EC835A'),
       markWarning: read('--mark-warning', '#FAB219'),
       markGood: read('--mark-good', '#0CA30C'),
-      line: read('--line', '#E9E6F5'),
+      line: read('--line', '#E6E8F0'),
+      // Grid lines are barely there on purpose: the data is the figure, the grid only a ruler. A
+      // translucent ink/white rather than a token, so it stays this faint on either surface.
+      grid: RPA.isDark() ? 'rgba(255,255,255,.06)' : 'rgba(16,19,32,.05)',
       surface: read('--surface', '#FFFFFF'),
       surface2: read('--surface-2', '#FAF9FE'),
       surface3: read('--surface-3', '#F1EFFA'),
@@ -155,21 +184,47 @@ window.RPA = window.RPA || {};
     Chart.defaults.animation.duration = RPA.reducedMotion() ? 0 : 480;
     Chart.defaults.animation.easing = 'easeOutQuart';
 
-    // One tooltip design for every chart in the app: a small panel in the page's own surface
-    // colours, figures in the same mono face the tables use.
+    // Quiet axes: hairline grid, no axis line, no tick marks. Individual charts that pass their own
+    // grid.color (p.grid) keep it; the rest inherit this.
+    if (Chart.defaults.scale && Chart.defaults.scale.grid) {
+      Chart.defaults.scale.grid.color = p.grid;
+      Chart.defaults.scale.grid.drawTicks = false;
+    }
+    if (Chart.defaults.scale && Chart.defaults.scale.border) Chart.defaults.scale.border.display = false;
+
+    // Lines are 2px and softly curved, points appear only under the pointer; bars get rounded tops.
+    Chart.defaults.elements.line.borderWidth = 2;
+    Chart.defaults.elements.line.tension = 0.32;
+    Chart.defaults.elements.line.borderJoinStyle = 'round';
+    Chart.defaults.elements.point.radius = 0;
+    Chart.defaults.elements.point.hoverRadius = 4;
+    Chart.defaults.elements.point.hitRadius = 12;
+    Chart.defaults.elements.bar.borderRadius = 4;
+    Chart.defaults.elements.bar.borderSkipped = false;
+    Chart.defaults.plugins.legend.labels.usePointStyle = true;
+    Chart.defaults.plugins.legend.labels.boxWidth = 8;
+    Chart.defaults.plugins.legend.labels.boxHeight = 8;
+
+    // One tooltip design for every chart in the app: an opaque card in the page's surface colours with
+    // a hairline border, figures in the mono face the tables use. Canvas tooltips cannot take CSS, so
+    // this is the styled-defaults route rather than an HTML overlay.
     const tooltip = Chart.defaults.plugins.tooltip;
-    tooltip.backgroundColor = p.surface3;
+    tooltip.backgroundColor = p.surface;
     tooltip.titleColor = p.ink;
     tooltip.bodyColor = p.ink2;
-    tooltip.borderColor = p.line;
+    tooltip.borderColor = RPA.isDark() ? 'rgba(255,255,255,.12)' : 'rgba(16,19,32,.12)';
     tooltip.borderWidth = 1;
     tooltip.cornerRadius = 8;
-    tooltip.padding = 10;
-    tooltip.caretSize = 5;
+    tooltip.padding = { top: 8, right: 11, bottom: 8, left: 11 };
+    tooltip.caretSize = 0;
+    tooltip.caretPadding = 8;
+    tooltip.displayColors = true;
     tooltip.usePointStyle = true;
     tooltip.boxWidth = 8;
     tooltip.boxHeight = 8;
     tooltip.boxPadding = 6;
+    tooltip.bodySpacing = 4;
+    tooltip.titleMarginBottom = 6;
     tooltip.titleFont = { family: sans, size: 11.5, weight: '600' };
     tooltip.bodyFont = { family: mono, size: 11 };
   };
@@ -1130,6 +1185,7 @@ window.RPA = window.RPA || {};
     // operator writes one subject/body and one shared file, and picks recipients from two uploaded
     // lists merged and deduplicated by e-mail.
     'custom-mail': { tab: 'tab-custom-mail', panel: 'panel-custom-mail' },
+    'seller-targets': { tab: 'tab-seller-targets', panel: 'panel-seller-targets' },
     // Rewrites a column of the uploaded file rather than reporting on it. Which column, and what
     // comes out of it, is decided by a per-category rule set rather than by anything in here.
     'title-cleaner': { tab: 'tab-title-cleaner', panel: 'panel-title-cleaner' },

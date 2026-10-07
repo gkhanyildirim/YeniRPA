@@ -13,7 +13,7 @@ public sealed record OutgoingMail(
     string SellerName,
     string Subject,
     string Body,
-    string AttachmentPath,
+    string? AttachmentPath,
     string AttachmentName,
 
     /// <summary>Who is copied, visibly, or <c>null</c> for nobody. Optional and last so a module that
@@ -237,7 +237,7 @@ public sealed class OfferMailRunner
                     // Re-checked here rather than trusting the prepare step: minutes can pass between the
                     // preview and the click, and an attachment that has been moved or replaced in the
                     // meantime must stop this row rather than travel as a stale price list.
-                    if (!File.Exists(mail.AttachmentPath))
+                    if (mail.AttachmentPath is not null && !File.Exists(mail.AttachmentPath))
                         throw new FileNotFoundException($"The attachment is no longer at {mail.AttachmentPath}.");
 
                     await _sender.SendAsync(
@@ -252,7 +252,7 @@ public sealed class OfferMailRunner
                     // seen by any recipient, which is the whole point of a blind copy.
                     var copiedTo = string.IsNullOrWhiteSpace(mail.Cc) ? "" : $" · cc {mail.Cc}";
                     var blindCopiedTo = string.IsNullOrWhiteSpace(mail.Bcc) ? "" : $" · bcc {mail.Bcc}";
-                    _bus.Log($"{(dryRun ? "Drafted" : "Sent")} → {mail.SellerName} · {mail.To}{copiedTo}{blindCopiedTo} · {mail.AttachmentName}");
+                    _bus.Log($"{(dryRun ? "Drafted" : "Sent")} → {mail.SellerName} · {mail.To}{copiedTo}{blindCopiedTo}{(string.IsNullOrEmpty(mail.AttachmentName) ? "" : " · " + mail.AttachmentName)}");
                 }
                 catch (Exception ex)
                 {

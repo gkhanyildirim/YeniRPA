@@ -401,7 +401,7 @@
       data: {
         labels: d.hours.map(h => h.label),
         datasets: [
-          { label: nameA(), data: d.hours.map(h => (UI.ok(h.shareA) ? h.shareA * 100 : 0)), borderColor: p.series[0], backgroundColor: RPA.alpha(p.series[0], 0.12), fill: true, tension: 0.3, pointRadius: 2 },
+          { label: nameA(), data: d.hours.map(h => (UI.ok(h.shareA) ? h.shareA * 100 : 0)), borderColor: p.series[0], backgroundColor: RPA.areaGradient(p.series[0]), fill: true, tension: 0.3, pointRadius: 2 },
           { label: nameB(), data: d.hours.map(h => (UI.ok(h.shareB) ? h.shareB * 100 : 0)), borderColor: p.series[1], borderDash: [5, 4], tension: 0.3, pointRadius: 2 }
         ]
       },

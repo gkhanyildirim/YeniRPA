@@ -163,57 +163,124 @@
   --mark-serious:  #EC835A;
   --mark-warning:  #FAB219;
   --mark-good:     #0CA30C;
+
+  /* ---------- semantic layer ----------
+
+     Named for what a token is FOR rather than what colour it is. Everything here is derived from the
+     palette tokens in the two theme blocks below, so it is declared once, here, and follows whichever
+     theme is active without being repeated in the dark blocks (which AppCssThemeTests keeps identical).
+     New CSS should reach for these; the palette names above stay for the rules already written. */
+
+  /* Surface elevation: canvas < surface < hover < active, then the raised/overlay steps. */
+  --bg-canvas:         var(--bg);
+  --bg-surface:        var(--surface);
+  --bg-surface-raised: var(--surface-2);
+  --bg-surface-hover:  color-mix(in srgb, var(--accent) 6%, var(--surface));
+  --bg-surface-active: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --bg-overlay:        var(--surface);
+
+  --border-subtle: var(--line);
+  --border-strong: var(--line-strong);
+
+  /* Focus: one ring for every control, 2px, offset so it never merges with the control's own border. */
+  --accent-ring: color-mix(in srgb, var(--accent) 55%, transparent);
+  --focus-ring:  2px solid var(--accent-ring);
+  --focus-offset: 1px;
+
+  /* Sidebar states. */
+  --nav-hover:  rgba(255, 255, 255, .06);
+  --nav-active: rgba(255, 255, 255, .10);
+  --nav-bar:    var(--rail-active);
+
+  /* Status, as text colour + a translucent wash of the same hue. */
+  --success:      var(--green);
+  --warning:      var(--amber);
+  --danger:       var(--red);
+  --success-soft: color-mix(in srgb, var(--green) 12%, transparent);
+  --warning-soft: color-mix(in srgb, var(--amber) 14%, transparent);
+  --danger-soft:  color-mix(in srgb, var(--red) 12%, transparent);
+  --info:         var(--accent);
+  --info-soft:    color-mix(in srgb, var(--accent) 12%, transparent);
+
+  /* Type scale. Display = headings, sans = body, mono = every figure, metric and log line. */
+  --text-2xs: .66rem;
+  --text-xs:  .72rem;
+  --text-sm:  .8rem;
+  --text-md:  .875rem;
+  --text-lg:  1rem;
+  --text-xl:  1.25rem;
+  --text-2xl: 1.6rem;
+  --text-metric: 1.75rem;
+
+  --lh-tight: 1.2;
+  --lh-snug:  1.4;
+  --lh-body:  1.6;
+
+  /* Density: row heights for tables and lists. Compact is for long data tables, comfortable for forms. */
+  --row-compact:     34px;
+  --row-comfortable: 44px;
+  --cell-pad-y-compact: 7px;
+  --cell-pad-y: 11px;
+  --cell-pad-x: 14px;
+
+  --dur-fast: .12s;
+  --dur-slow: .3s;
+}
+
+/* Figures line up wherever they appear: tabular digits, the mono face, no ligature surprises. */
+.num, .mono, td.num, th.num, .kpi-value {
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- tokens: light ---------- */
 
 :root {
-  --bg:            #F5F4FB;
+  --bg:            #F6F7FB;
 
   --surface:       #FFFFFF;
-  --surface-2:     #FAF9FE;
-  --surface-3:     #F1EFFA;
+  --surface-2:     #F9FAFC;
+  --surface-3:     #F0F2F8;
 
-  --ink:           #191627;
-  --ink-2:         #5B5578;
-  --ink-3:         #918BAC;
+  --ink:           #14161F;
+  --ink-2:         #4B5163;
+  --ink-3:         #737B93;
 
-  --line:          #E9E6F5;
-  --line-strong:   #D6D1EA;
+  --line:          #E6E8F0;
+  --line-strong:   #D3D7E3;
 
-  --accent:        #6D3BEB;
+  --accent:        #6366F1;
   --accent-ink:    #FFFFFF;
-  --accent-soft:   #EFEAFD;
-  --accent-glow:   rgba(109, 59, 235, .20);
+  --accent-soft:   #EEF0FF;
+  --accent-glow:   rgba(99, 102, 241, .22);
 
   /* Text-grade status colours, measured against their own -soft background at 4.5:1 and against
      the surface. Distinct from --mark-* above, which fill bars and arcs. */
-  --red:           #C41F50;
-  --red-soft:      #FDEAF0;
+  --red:           #C8264F;
+  --red-soft:      #FDECF1;
   --amber:         #9A5B00;
-  --amber-soft:    #FFF2E0;
+  --amber-soft:    #FFF3E0;
   --green:         #0A7A55;
   --green-soft:    #E1F7EE;
 
-  /* The rail is a deep violet panel in BOTH themes — it is what stops the console reading as a
+  /* The rail is a deep slate-indigo panel in BOTH themes — it is what stops the console reading as a
      white admin template, and it gives the light theme somewhere for the eye to rest. */
-  --rail-bg:       #1E1638;
-  --rail-bg-2:     #2A1E4E;
-  --rail-ink:      #F2EFFF;
-  --rail-ink-2:    #A79BD4;
-  --rail-active:   #C4B0FF;
+  --rail-bg:       #151826;
+  --rail-bg-2:     #1F2335;
+  --rail-ink:      #EEF0F8;
+  --rail-ink-2:    #98A0BE;
+  --rail-active:   #A5A8FF;
 
   /* Cards are held up by a violet-tinted shadow instead of outlined by a ring: the colour is what
      makes the elevation read as deliberate rather than as a default box-shadow. */
-  --e-1:     0 1px 2px rgba(25, 22, 39, .06);
-  --e-2:     0 10px 30px -12px rgba(109, 59, 235, .22), 0 3px 8px -4px rgba(25, 22, 39, .06);
-  --e-3:     0 18px 44px -16px rgba(109, 59, 235, .30), 0 4px 12px -6px rgba(25, 22, 39, .08);
+  --e-1:     0 1px 2px rgba(16, 19, 32, .06);
+  --e-2:     0 8px 24px -12px rgba(30, 34, 80, .18), 0 2px 6px -3px rgba(16, 19, 32, .06);
+  --e-3:     0 16px 40px -16px rgba(30, 34, 80, .28), 0 4px 12px -6px rgba(16, 19, 32, .08);
   --shadow:  var(--e-2);
 }
 
 /* ---------- tokens: dark ---------- */
 
-/* The same layout in a deep violet dark, for people who read the console for long stretches.
+/* The same layout in a slate-indigo dark, for people who read the console for long stretches.
    The series steps are the dark column of the validated palette — the same eight hues re-stepped
    for a dark surface, not an automatic flip of the light ones.
 
@@ -222,36 +289,36 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg:          #0D0B16;
+    --bg:          #0F1117;
 
-    --surface:     #171432;
-    --surface-2:   #1D1A3C;
-    --surface-3:   #262247;
+    --surface:     #161922;
+    --surface-2:   #1B1F2B;
+    --surface-3:   #1E2230;
 
-    --ink:         #EBE8F7;
-    --ink-2:       #A49DC4;
-    --ink-3:       #746C96;
+    --ink:         #E8EAF2;
+    --ink-2:       #A3A9BF;
+    --ink-3:       #7A819A;
 
-    --line:        #272348;
-    --line-strong: #383260;
+    --line:        #242938;
+    --line-strong: #333A4E;
 
-    --accent:      #9B7BFF;
-    --accent-ink:  #120E23;
-    --accent-soft: #241E45;
-    --accent-glow: rgba(155, 123, 255, .28);
+    --accent:      #818CF8;
+    --accent-ink:  #0F1117;
+    --accent-soft: #1F2240;
+    --accent-glow: rgba(129, 140, 248, .28);
 
-    --red:         #FF6B95;
-    --red-soft:    #2E1424;
+    --red:         #FF7A9C;
+    --red-soft:    #2C1520;
     --amber:       #FFC061;
-    --amber-soft:  #2E2214;
+    --amber-soft:  #2B2113;
     --green:       #3EDCA0;
-    --green-soft:  #112E24;
+    --green-soft:  #10281F;
 
-    --rail-bg:     #16122E;
-    --rail-bg-2:   #201A47;
-    --rail-ink:    #F2EFFF;
-    --rail-ink-2:  #A79BD4;
-    --rail-active: #C4B0FF;
+    --rail-bg:     #0C0E15;
+    --rail-bg-2:   #161A28;
+    --rail-ink:    #EEF0F8;
+    --rail-ink-2:  #98A0BE;
+    --rail-active: #A5A8FF;
 
     --series-1: #3987E5;
     --series-2: #D95926;
@@ -269,36 +336,36 @@
 }
 
 :root[data-theme="dark"] {
-  --bg:          #0D0B16;
+  --bg:          #0F1117;
 
-  --surface:     #171432;
-  --surface-2:   #1D1A3C;
-  --surface-3:   #262247;
+  --surface:     #161922;
+  --surface-2:   #1B1F2B;
+  --surface-3:   #1E2230;
 
-  --ink:         #EBE8F7;
-  --ink-2:       #A49DC4;
-  --ink-3:       #746C96;
+  --ink:         #E8EAF2;
+  --ink-2:       #A3A9BF;
+  --ink-3:       #7A819A;
 
-  --line:        #272348;
-  --line-strong: #383260;
+  --line:        #242938;
+  --line-strong: #333A4E;
 
-  --accent:      #9B7BFF;
-  --accent-ink:  #120E23;
-  --accent-soft: #241E45;
-  --accent-glow: rgba(155, 123, 255, .28);
+  --accent:      #818CF8;
+  --accent-ink:  #0F1117;
+  --accent-soft: #1F2240;
+  --accent-glow: rgba(129, 140, 248, .28);
 
-  --red:         #FF6B95;
-  --red-soft:    #2E1424;
+  --red:         #FF7A9C;
+  --red-soft:    #2C1520;
   --amber:       #FFC061;
-  --amber-soft:  #2E2214;
+  --amber-soft:  #2B2113;
   --green:       #3EDCA0;
-  --green-soft:  #112E24;
+  --green-soft:  #10281F;
 
-  --rail-bg:     #16122E;
-  --rail-bg-2:   #201A47;
-  --rail-ink:    #F2EFFF;
-  --rail-ink-2:  #A79BD4;
-  --rail-active: #C4B0FF;
+  --rail-bg:     #0C0E15;
+  --rail-bg-2:   #161A28;
+  --rail-ink:    #EEF0F8;
+  --rail-ink-2:  #98A0BE;
+  --rail-active: #A5A8FF;
 
   --series-1: #3987E5;
   --series-2: #D95926;
@@ -866,7 +933,7 @@ h1, h2, h3, .brand-title, .section-title, .page-head h1 {
 .btn-primary {
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 84%, #FFFFFF), var(--accent));
   color: var(--accent-ink);
-  box-shadow: 0 4px 14px -4px var(--accent-glow), 0 1px 2px rgba(25, 22, 39, .12);
+  box-shadow: 0 4px 14px -4px var(--accent-glow), 0 1px 2px rgba(16, 19, 32, .12);
 }
 .btn-primary:hover:not(:disabled) {
   filter: brightness(1.05);
@@ -3234,4 +3301,649 @@ footer.page-foot {
 
 @media (max-width: 760px) {
   #country-rate { width: 100%; }
+}
+
+/* ---------------------------------------------------------------------------
+   Seller Targets — progress cards, preview/contacts dialogs
+
+   Tokens only, nothing new in either theme block, so light and dark stay identical by construction.
+   --------------------------------------------------------------------------- */
+
+.st-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.st-stat {
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e-1);
+}
+.st-stat-value { font-size: 1.6rem; font-weight: 700; line-height: 1.1; color: var(--ink); }
+.st-stat-label { margin-top: 4px; font-size: .78rem; color: var(--ink-3); }
+
+.st-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.st-toolbar .spacer { flex: 1 1 auto; }
+
+.st-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: var(--s-4);
+}
+
+.st-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e-1);
+  transition: box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.st-card:hover { border-color: var(--line-strong); box-shadow: var(--e-2); }
+.st-card.is-nodata { background: var(--surface-2); box-shadow: none; }
+.st-card.is-nodata .st-name { color: var(--ink-2); }
+
+.st-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); }
+.st-name { font-weight: 650; color: var(--ink); overflow-wrap: anywhere; }
+.st-id { font-size: .76rem; color: var(--ink-3); font-family: var(--font-mono); }
+.st-percent { font-size: 1.5rem; font-weight: 700; line-height: 1; color: var(--accent); white-space: nowrap; }
+.st-percent.is-done { color: var(--green); }
+
+.st-bar {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.st-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width var(--dur) var(--ease);
+}
+.st-bar-fill.is-done { background: var(--green); }
+
+.st-figures { display: flex; justify-content: space-between; gap: var(--s-3); font-size: .82rem; color: var(--ink-2); }
+.st-figures b { color: var(--ink); font-weight: 650; }
+
+.st-channels { display: flex; flex-direction: column; gap: 6px; }
+.st-channel {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: .8rem;
+  color: var(--ink-2);
+}
+.st-channel .st-dest { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-channel.is-missing { color: var(--ink-3); }
+.st-channel input[type="checkbox"] { accent-color: var(--accent); }
+
+.st-card-foot { display: flex; justify-content: flex-end; margin-top: auto; }
+
+.modal-dialog {
+  width: min(720px, 94vw);
+  max-height: 88vh;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--e-3);
+}
+.modal-dialog::backdrop { background: rgba(16, 24, 40, .45); }
+.modal-dialog.is-wide { width: min(960px, 96vw); }
+.modal-form { display: flex; flex-direction: column; max-height: 88vh; }
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--line);
+}
+.modal-head h3 { margin: 0; }
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-5);
+  overflow-y: auto;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-top: 1px solid var(--line);
+}
+.modal-body textarea { min-height: 190px; resize: vertical; }
+.modal-body textarea.is-short { min-height: 120px; }
+
+.st-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  align-self: flex-start;
+}
+.st-tab {
+  padding: 6px 16px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.st-tab[aria-selected="true"] { background: var(--surface); color: var(--accent); box-shadow: var(--e-1); }
+
+@media (max-width: 760px) {
+  .st-grid { grid-template-columns: 1fr; }
+}
+
+
+/* ===========================================================================
+   Design system v2 — dense, quiet, B2B
+
+   Written as one layer on top of the rules above so every module moves together without its markup
+   or script changing. It reaches for the semantic tokens (--bg-surface, --border-subtle,
+   --focus-ring, --nav-active ...) declared next to the palette, and adds NO colour of its own, so the
+   light and dark themes stay identical by construction (AppCssThemeTests).
+
+   Sections: 1 base · 2 buttons · 3 cards & headers · 4 tables · 5 badges & status dots ·
+             6 forms & focus · 7 KPI · 8 empty & loading · 9 sidebar & panel transition · 10 run log
+   =========================================================================== */
+
+/* ---------- 1. base ---------- */
+
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+/* One keyboard-focus ring for everything that is not a text field (those are handled in section 6). */
+:where(a, button, summary, [tabindex], [role="tab"], .drop):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+/* ---------- 2. buttons ---------- */
+
+/* Hierarchy: primary (the one action) > secondary (.btn-ghost / .btn-secondary) > quiet (.btn-quiet)
+   > danger (.btn-danger). 8px corners, a hairline border and 150ms transitions on all of them. */
+.btn {
+  gap: 7px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: .82rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.3;
+  transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease),
+              box-shadow .15s var(--ease), transform .1s;
+}
+
+.btn-primary {
+  border-color: color-mix(in srgb, var(--accent) 82%, #000000);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 1px 2px rgba(16, 19, 32, .14);
+}
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 90%, #FFFFFF);
+  filter: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 2px 8px -2px var(--accent-glow);
+}
+
+.btn-ghost,
+.btn-secondary {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(16, 19, 32, .05);
+}
+.btn-ghost:hover:not(:disabled),
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  color: var(--ink);
+}
+
+.btn-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+  box-shadow: none;
+}
+.btn-quiet:hover:not(:disabled) { background: var(--bg-surface-hover); color: var(--ink); }
+
+.btn-danger {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+  box-shadow: none;
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--accent-ink);
+}
+
+.btn-sm { padding: 4px 10px; font-size: .72rem; border-radius: 6px; }
+
+/* ---------- 3. cards & headers ---------- */
+
+.page-head {
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-5);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  box-shadow: var(--e-1), inset 0 0 0 1px var(--border-subtle);
+}
+.page-icon {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 4px 10px -4px var(--accent-glow);
+}
+.page-icon svg { width: 19px; height: 19px; }
+.page-head h1 { font-size: 1.22rem; }
+
+.section-title {
+  margin: var(--s-6) 0 var(--s-3);
+  font-size: .98rem;
+  letter-spacing: -.015em;
+}
+.section-title::before { width: 3px; height: 1em; }
+
+.card {
+  padding: var(--s-4) var(--s-5);
+  border-radius: var(--r);
+  box-shadow: var(--e-1), 0 0 0 1px var(--border-subtle);
+}
+.card:hover { transform: none; box-shadow: var(--e-2), 0 0 0 1px var(--border-subtle); }
+.card > h3 { font-size: .92rem; }
+
+/* A message/preview card is a card too. */
+.msg-card {
+  border: 0;
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  box-shadow: var(--e-1), inset 0 0 0 1px var(--border-subtle);
+  transition: box-shadow .15s var(--ease);
+}
+.msg-card:hover { box-shadow: var(--e-2), inset 0 0 0 1px var(--border-strong); }
+.msg-head { background: var(--bg-surface-raised); border-bottom: 1px solid var(--border-subtle); }
+.msg-card.is-collapsed .msg-head { cursor: pointer; }
+
+.filter-bar { border-radius: var(--r); }
+
+/* Upload tiles keep the icon target from the first refinement, tuned to the new tokens. */
+.drop {
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 26px 20px 20px;
+  border-radius: var(--r);
+  background: var(--bg-surface-raised);
+}
+.drop::before {
+  content: '';
+  width: 40px; height: 40px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  box-shadow: 0 0 0 7px var(--accent-soft);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 16V6'/%3E%3Cpath d='m8 9.5 4-4 4 4'/%3E%3Cpath d='M5 17v1.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V17'/%3E%3C/svg%3E");
+  background-size: 20px;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: transform .15s var(--ease);
+}
+.drop:hover::before, .drop.is-dragover::before { transform: translateY(-2px); }
+.drop.has-file::before {
+  background-color: var(--green);
+  box-shadow: 0 0 0 7px var(--green-soft);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12.5 4 4 8-9'/%3E%3C/svg%3E");
+}
+.drop-file { align-self: stretch; justify-content: center; }
+.drop.has-file { border-color: color-mix(in srgb, var(--green) 40%, var(--border-strong)); }
+
+/* ---------- 4. tables ---------- */
+
+/* Compact by default (~36px rows); .table-comfortable opens them up for tables that hold inputs. */
+.table-scroll {
+  border: 0;
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  box-shadow: var(--e-1), inset 0 0 0 1px var(--border-subtle);
+}
+
+table { font-size: .8rem; }
+
+/* Opaque, not glass: a sticky header with transparency lets scrolled rows ghost through the labels. */
+thead th {
+  padding: 9px var(--cell-pad-x);
+  background: var(--bg-surface-raised);
+  backdrop-filter: none;
+  border-bottom: 1px solid var(--border-strong);
+  font-size: var(--text-2xs);
+  letter-spacing: .06em;
+  color: var(--ink-2);
+}
+
+tbody td {
+  padding: 8px var(--cell-pad-x);
+  border-bottom: 1px solid var(--border-subtle);
+  line-height: 1.4;
+}
+tbody tr:nth-child(even) td { background: transparent; }
+tbody tr:hover td { background: var(--bg-surface-hover); }
+tbody tr:hover td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+tbody td:first-child { font-weight: 550; }
+
+.table-compact tbody td { padding-top: var(--cell-pad-y-compact); padding-bottom: var(--cell-pad-y-compact); }
+.table-comfortable tbody td { padding-top: var(--cell-pad-y); padding-bottom: var(--cell-pad-y); }
+/* A cell that holds an input already has its own height. */
+tbody td:has(> input, > select) { padding-top: 5px; padding-bottom: 5px; }
+
+/* Text left, figures right and mono. */
+th.num, td.num { text-align: right; }
+td.num,
+td.num .cell-sub {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 5. badges & status dots ---------- */
+
+/* Translucent wash + solid text of the same hue: reads as a status chip on any surface. */
+.badge {
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--ink-3) 14%, transparent);
+  color: var(--ink-2);
+  font-size: .72rem;
+  font-weight: 600;
+}
+.badge.red   { background: var(--danger-soft);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 22%, transparent); }
+.badge.amber { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 22%, transparent); }
+.badge.green { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 22%, transparent); }
+.badge.accent,
+.badge.blue  { background: var(--info-soft);    color: var(--info);    border-color: color-mix(in srgb, var(--info) 22%, transparent); }
+
+/* The live-state dot. is-live (green, breathing) for work in progress, is-pending (amber, breathing)
+   for waiting, is-error (red) and is-idle (grey) are still. */
+.status-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px; height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-3);
+  vertical-align: middle;
+}
+.status-dot.is-live    { background: var(--success); }
+.status-dot.is-pending { background: var(--warning); }
+.status-dot.is-error   { background: var(--danger); }
+.status-dot.is-live::after,
+.status-dot.is-pending::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: status-pulse 1.8s ease-out infinite;
+}
+@keyframes status-pulse {
+  0%   { transform: scale(1);   opacity: .55; }
+  80%  { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* The run header carries the SSE state by itself: breathing green while /api/automation/events is
+   still reporting progress for this run, a still green dot once the bar is full. No script involved —
+   the progress bar's own is-done class is the signal every module already sets. */
+.run-head::before {
+  content: '';
+  width: 8px; height: 8px;
+  flex: none;
+  align-self: center;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.run-head:has(+ .progress:not(.is-done))::before {
+  background: var(--success);
+  animation: status-pulse-ring 1.8s ease-out infinite;
+}
+.run-head:has(+ .progress.is-done)::before { background: var(--success); }
+@keyframes status-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent); }
+  80%  { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ---------- 6. forms & focus ---------- */
+
+input[type="text"],
+input[type="number"],
+input[type="search"],
+input[type="date"],
+textarea,
+select,
+.rich-body {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  padding: 7px 11px;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+:is(input[type="text"], input[type="number"], input[type="search"], input[type="date"], textarea, select, .rich-body):hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--ink-3) 70%, var(--border-strong));
+}
+
+/* One focus ring for every field: 2px, offset, in the accent. Specificity is raised on purpose so it
+   replaces the older glow-style focus rules instead of stacking with them. */
+:root input:focus,
+:root select:focus,
+:root textarea:focus,
+:root .rich-body:focus {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.field > label { font-size: var(--text-xs); letter-spacing: .01em; }
+
+/* ---------- 7. KPI ---------- */
+
+.kpi {
+  border-radius: var(--r);
+  box-shadow: var(--e-1), 0 0 0 1px var(--border-subtle);
+}
+.kpi:hover { transform: none; box-shadow: var(--e-2), 0 0 0 1px var(--border-subtle); }
+
+/* Figures are mono and tabular everywhere a metric is shown. */
+.kpi-value,
+.hero-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.03em;
+}
+
+/* The trend line under a metric reads as a small pill. */
+.kpi-delta,
+.hero-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink-3) 14%, transparent);
+  font-family: var(--font-mono);
+  font-size: .66rem;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-delta.is-green, .hero-delta.is-green { background: var(--success-soft); }
+.kpi-delta.is-red,   .hero-delta.is-red   { background: var(--danger-soft); }
+
+/* ---------- 8. empty & loading ---------- */
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 34px 18px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r);
+  background: var(--bg-surface-raised);
+}
+.empty-state::before {
+  content: '';
+  width: 34px; height: 34px;
+  background-color: var(--ink-3);
+  opacity: .55;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 13h5l1.5 3h5L16 13h5'/%3E%3Cpath d='M5.5 5h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 13h5l1.5 3h5L16 13h5'/%3E%3Cpath d='M5.5 5h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* Skeleton placeholders: a shimmer that sweeps across a surface-coloured block. */
+.skel {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--bg-surface-raised) 50%, var(--surface-3) 75%);
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s linear infinite;
+}
+.skel-line  { height: 10px; margin: 8px 0; }
+.skel-title { height: 16px; width: 40%; margin: 8px 0 14px; }
+.skel-block { height: 96px; border-radius: var(--r); }
+@keyframes skel-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* ---------- 9. sidebar & panel transition ---------- */
+
+/* Flat, deep slate. The soft sheen and the glowing hairline of the old rail are gone: a quieter
+   surface lets the active item be the only bright thing in it. */
+.rail { background: var(--rail-bg); border-right: 1px solid rgba(255, 255, 255, .05); }
+.rail::before, .rail::after { content: none; }
+.brand, .rail-foot { border-color: rgba(255, 255, 255, .06); }
+
+.nav-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: .83rem;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+.nav-item:hover { background: var(--nav-hover); }
+
+/* Active: a soft capsule plus a thin lit bar on the rail's edge. */
+.nav-item[aria-selected="true"] {
+  background: var(--nav-active);
+  box-shadow: none;
+}
+.nav-item[aria-selected="true"]::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--nav-bar);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--nav-bar) 70%, transparent);
+}
+:root[data-rail="mini"] .nav-item[aria-selected="true"]::before { left: -10px; }
+.nav-label { font-size: var(--text-2xs); }
+
+.topbar { border-bottom-color: var(--border-subtle); }
+
+/* Tabs fade and rise a few pixels instead of snapping. `none` rather than translateY(0) at the end:
+   a lingering transform would turn the panel into a containing block for fixed descendants. */
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.panel:not([hidden]) { animation: panelFadeIn .22s var(--ease) both; }
+@media (prefers-reduced-motion: reduce) {
+  .panel:not([hidden]) { animation: none; }
+  .status-dot::after, .run-head::before, .skel { animation: none; }
+}
+
+/* ---------- 10. run log ---------- */
+
+.progress { height: 8px; border: 0; background: var(--surface-3); box-shadow: inset 0 1px 2px rgba(16, 19, 32, .08); }
+.progress-fill {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 72%, #FFFFFF), var(--accent));
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+.progress.is-done .progress-fill {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--green) 72%, #FFFFFF), var(--green));
+  box-shadow: none;
+}
+
+.console {
+  border: 0;
+  border-radius: var(--r);
+  padding: var(--s-4);
+  background: var(--rail-bg);
+  color: var(--rail-ink-2);
+  box-shadow: inset 0 0 0 1px var(--rail-bg-2);
+}
+.run-head { margin-bottom: var(--s-3); font-size: var(--text-xs); }
+.run-head .mono { color: var(--ink); font-weight: 600; }
+
+.alert {
+  border: 0;
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  box-shadow: var(--e-1);
+}
+.alert.is-success { border-left-color: var(--success); }
+.page-foot { margin-top: var(--s-7); }
+
+
+/* Seller Targets — threshold panel and per-card forecast line. */
+.st-threshold {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-4);
+  margin-bottom: var(--s-4);
+}
+.st-threshold .note { margin: 0; }
+.st-threshold-split { display: flex; flex-wrap: wrap; gap: var(--s-2); justify-content: flex-end; }
+.st-forecast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  font-size: .8rem;
+  color: var(--ink-2);
+}
+.st-forecast b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+@media (max-width: 760px) {
+  .st-threshold { grid-template-columns: 1fr; }
+  .st-threshold-split { justify-content: flex-start; }
 }

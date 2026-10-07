@@ -114,7 +114,7 @@ public sealed class OutlookMailSender : IDisposable
         string subject,
         string body,
         bool isHtmlBody,
-        string attachmentPath,
+        string? attachmentPath,
         bool dryRun,
         bool withSignature = false) =>
         RunAsync<object?>(() =>
@@ -146,7 +146,7 @@ public sealed class OutlookMailSender : IDisposable
         string subject,
         string body,
         bool isHtmlBody,
-        string attachmentPath,
+        string? attachmentPath,
         bool dryRun,
         bool withSignature)
     {
@@ -192,12 +192,16 @@ public sealed class OutlookMailSender : IDisposable
                 });
             }
 
-            Step("attaching the file", () =>
+            // Seller Targets mails carry no file, so the attachment is only touched when there is one.
+            if (!string.IsNullOrWhiteSpace(attachmentPath))
             {
-                attachments = Get(mail, "Attachments")
-                    ?? throw new InvalidOperationException("Outlook returned no attachments collection.");
-                Call(attachments, "Add", attachmentPath);
-            });
+                Step("attaching the file", () =>
+                {
+                    attachments = Get(mail, "Attachments")
+                        ?? throw new InvalidOperationException("Outlook returned no attachments collection.");
+                    Call(attachments, "Add", attachmentPath);
+                });
+            }
 
             Step(dryRun ? "saving the draft" : "sending the mail", () => Call(mail, dryRun ? "Save" : "Send"));
         }

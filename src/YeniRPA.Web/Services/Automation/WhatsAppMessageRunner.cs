@@ -51,6 +51,8 @@ public sealed class WhatsAppMessageRunner
 
     public const string StockoutWarningModule = "stockout-warnings";
 
+    public const string SellerTargetsModule = "seller-targets-whatsapp";
+
     /// <summary>
     /// Randomised pause between groups. A fixed interval is the single most machine-legible signal a
     /// client can emit; randomising across a 2x range removes it for free. Six seconds is roughly the
