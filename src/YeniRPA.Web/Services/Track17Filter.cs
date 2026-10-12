@@ -21,7 +21,7 @@ public static class Track17Filter
     /// <summary>17track.net's own public-tool limit: at most this many tracking numbers per search.</summary>
     public const int MaxPerBatch = 40;
 
-    /// <summary>A refusal, not a truncation — same reasoning as <c>ProductStatusRunner.MaxSellersPerRun</c>.
+    /// <summary>A refusal, not a truncation — same reasoning as <c>MarkAsReceivedRunner.MaxOrdersPerRun</c>.
     /// 40 numbers per 17track batch, so this is 40 batches for one run.</summary>
     public const int MaxTrackingNumbersPerRun = 1600;
 

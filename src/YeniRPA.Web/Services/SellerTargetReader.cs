@@ -38,6 +38,7 @@ internal static partial class SellerTargetReader
         var targetCol = FindColumnContaining(header, "target");
         var currentCol = FindColumnContaining(header, "güncel");
         var periodCol = FindColumn(header, "period");
+        var supportCol = FindColumn(header, "destek tipi");
 
         if (nameCol is null)
             throw new InvalidOperationException("The file has no 'Seller Name' column.");
@@ -71,7 +72,14 @@ internal static partial class SellerTargetReader
             // "1-5 Ekim" -> 5 days elapsed. Without a Period column the month is taken as running up to
             // today, which is the only other reading of "current revenue" the file allows.
             var days = periodCol is null ? null : ParseDaysElapsed(TabularFile.GetCell(row, periodCol.Value));
-            rows.Add(new SellerTargetRow(id, name, target, current, days ?? (periodCol is null ? DateTime.Now.Day : null), daysInMonth));
+
+            // Anything but "Kickback" (including a missing column) is the original commission scenario.
+            var supportType = supportCol is not null
+                && string.Equals(TabularFile.GetCell(row, supportCol.Value).Trim(), SellerTargetRow.Kickback, StringComparison.OrdinalIgnoreCase)
+                    ? SellerTargetRow.Kickback
+                    : SellerTargetRow.Commission;
+
+            rows.Add(new SellerTargetRow(id, name, target, current, days ?? (periodCol is null ? DateTime.Now.Day : null), daysInMonth, supportType));
         }
 
         if (rows.Count == 0)

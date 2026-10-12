@@ -6,7 +6,10 @@ public static class GmvMode
     public const string Times = "times";
     public const string Manual = "manual";
 
-    public static bool IsValid(string? mode) => mode is Hourly or Times or Manual;
+    /// <summary>A message every N minutes inside the hourly window.</summary>
+    public const string Interval = "interval";
+
+    public static bool IsValid(string? mode) => mode is Hourly or Times or Manual or Interval;
 }
 
 public static class GmvTrigger
@@ -48,9 +51,31 @@ public sealed class GmvSettings
     public int WindowStartHour { get; set; } = 9;
     public int WindowEndHour { get; set; } = 19;
 
+    /// <summary>For <see cref="GmvMode.Interval"/>: minutes between messages inside the window.</summary>
+    public int IntervalMinutes { get; set; } = GmvLimits.DefaultIntervalMinutes;
+
+    /// <summary>Minutes between the light requests that keep the Marketplace login alive.</summary>
+    public int KeepAliveMinutes { get; set; } = GmvLimits.DefaultKeepAliveMinutes;
+
     public string ChatId { get; set; } = "";
     public string? ProtectedToken { get; set; }
     public double? DailyTarget { get; set; }
+
+    /// <summary>Adds "yesterday at this time" to every message. Documents saved before this existed read as on.</summary>
+    public bool IncludeComparison { get; set; } = true;
+}
+
+public static class GmvLimits
+{
+    public const int DefaultIntervalMinutes = 15;
+    public const int MinIntervalMinutes = 5;
+    public const int MaxIntervalMinutes = 120;
+
+    public const int DefaultKeepAliveMinutes = 10;
+    public const int MinKeepAliveMinutes = 1;
+
+    /// <summary>The Marketplace ends a login after 30 idle minutes; the keep-alive has to stay under it.</summary>
+    public const int MaxKeepAliveMinutes = 25;
 }
 
 public sealed record GmvSettingsUpdate(
@@ -61,7 +86,19 @@ public sealed record GmvSettingsUpdate(
     int WindowEndHour,
     string? ChatId,
     string? Token,
-    double? DailyTarget);
+    double? DailyTarget,
+    int? IntervalMinutes = null,
+    int? KeepAliveMinutes = null,
+    bool? IncludeComparison = null);
+
+/// <summary>The schedule-only part of the settings, edited from the Jobs screen. Null keeps the stored value.</summary>
+public sealed record GmvScheduleUpdate(
+    bool? Enabled = null,
+    string? Mode = null,
+    int? IntervalMinutes = null,
+    int? WindowStartHour = null,
+    int? WindowEndHour = null,
+    int? KeepAliveMinutes = null);
 
 public sealed class GmvHistoryEntry
 {
@@ -80,6 +117,12 @@ public sealed class GmvHistoryEntry
 public sealed record GmvSlot(string Key, string Label, DateTime At);
 
 public sealed record GmvReading(double Gmv, DateTimeOffset At);
+
+/// <summary>
+/// Today's GMV next to the GMV of the same stretch of the day <see cref="DaysBack"/> days earlier
+/// (1 = yesterday, 7 = the same weekday last week). <see cref="Past"/> is null when it could not be read.
+/// </summary>
+public sealed record GmvComparison(double Current, double? Past, int DaysBack);
 
 /// <summary>"none" (no saved session), "unknown" (not checked yet), "valid" or "expired".</summary>
 public sealed record GmvSessionStatus(string State, DateTime? CheckedUtc);

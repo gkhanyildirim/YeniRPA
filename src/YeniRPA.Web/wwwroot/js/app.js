@@ -1192,6 +1192,8 @@ window.RPA = window.RPA || {};
     // Reads three exports and joins them by tracking code instead of order number; the seller is
     // picked from the cargo-invoice file itself rather than from a saved mapping.
     'cargo-seller-report': { tab: 'tab-cargo-seller-report', panel: 'panel-cargo-seller-report' },
+    // Joins the offers export with the Offer KPIs export per product: first-offer age/status + PDP traffic.
+    'sku-offer-report': { tab: 'tab-sku-offer-report', panel: 'panel-sku-offer-report' },
     // Backfills Bulut Tahsilat's blank order numbers from Craftgate (Provizyon No / authCode), then
     // pivots by POS Banka x Taksit. Mirakl is uploaded here too but not read yet.
     'pos-reconciliation': { tab: 'tab-pos-reconciliation', panel: 'panel-pos-reconciliation' },
@@ -1201,6 +1203,8 @@ window.RPA = window.RPA || {};
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' },
     // Moves this install's LiteDB-backed settings to and from a backup file. No upload feeds a
     // dashboard here — the two actions are Export (a plain download link) and Import.
+    // The background jobs (GMV notification, session keep-alive): when they run and how often.
+    'jobs': { tab: 'tab-jobs', panel: 'panel-jobs' },
     'settings': { tab: 'tab-settings', panel: 'panel-settings' }
   };
 

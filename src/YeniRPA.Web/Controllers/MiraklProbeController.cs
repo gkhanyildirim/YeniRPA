@@ -53,6 +53,14 @@ public sealed class MiraklProbeController : ControllerBase
         return Ok(new { success = true, message = "", data = lines });
     }
 
+    /// <summary>Checks whether the sales endpoint honours a time of day (needed for "yesterday at this time").</summary>
+    [HttpPost("range-check")]
+    public async Task<IActionResult> RangeCheck()
+    {
+        var lines = await _probe.RangeCheckAsync();
+        return Ok(new { success = true, message = "", data = lines });
+    }
+
     /// <summary>Starts the keep-alive loop. The interval stays under the 30-minute idle limit.</summary>
     [HttpPost("start")]
     public IActionResult Start([FromQuery] int intervalMinutes = 10)

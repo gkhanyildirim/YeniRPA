@@ -27,6 +27,19 @@ public static class GmvSchedule
                     .Where(h => h is >= 0 and <= 23)
                     .Select(h => new TimeOnly(h, 0))];
 
+            case GmvMode.Interval:
+            {
+                // From the start of the first window hour to the end of the last one, N minutes apart.
+                var step = Math.Clamp(settings.IntervalMinutes, GmvLimits.MinIntervalMinutes, GmvLimits.MaxIntervalMinutes);
+                var first = Math.Clamp(settings.WindowStartHour, 0, 23) * 60;
+                var last = Math.Clamp(settings.WindowEndHour, 0, 23) * 60 + 59;
+
+                var slots = new List<TimeOnly>();
+                for (var minute = first; minute <= last; minute += step)
+                    slots.Add(new TimeOnly(minute / 60, minute % 60));
+                return slots;
+            }
+
             case GmvMode.Times:
                 return [.. settings.Times
                     .Select(t => TimeOnly.TryParseExact(t, ["H:mm", "HH:mm"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var time) ? (TimeOnly?)time : null)
@@ -52,6 +65,25 @@ public static class GmvSchedule
         }
 
         return null;
+    }
+
+    /// <summary>The next configured time after <paramref name="now"/> today or tomorrow, or null for manual mode.</summary>
+    public static DateTime? Next(GmvSettings settings, DateTime now)
+    {
+        var slots = SlotTimes(settings);
+        if (slots.Count == 0)
+            return null;
+
+        var today = DateOnly.FromDateTime(now);
+        var time = TimeOnly.FromDateTime(now);
+
+        foreach (var slot in slots)
+        {
+            if (slot > time)
+                return today.ToDateTime(slot);
+        }
+
+        return today.AddDays(1).ToDateTime(slots[0]);
     }
 
     /// <summary>

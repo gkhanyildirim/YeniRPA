@@ -26,11 +26,11 @@ public sealed class ProductStatusRunner
     public const string ModuleName = "product-status";
 
     /// <summary>
-    /// A refusal, not a truncation — same reasoning as <see cref="MarkAsReceivedRunner.MaxOrdersPerRun"/>.
-    /// This module only reads, so the risk is not a bad write but a run nobody meant to start: at four
-    /// pages at a time, a pasted spreadsheet column would tie up the browser for hours.
+    /// A longer list is not refused: it is read in consecutive batches of this size inside one run, each
+    /// batch on a fresh browser context so a long run does not pile up memory in one Chromium context.
+    /// Everything still lands in one result table.
     /// </summary>
-    public const int MaxSellersPerRun = 500;
+    public const int SellersPerBatch = 500;
 
     /// <summary>Four real Chrome pages at once, as the source module ran. Higher mostly buys timeouts:
     /// each page is loading the full Catalog Manager UI.</summary>
@@ -150,7 +150,6 @@ public sealed class ProductStatusRunner
         }
 
         var browser = await _browser.EnsureBrowserAsync();
-        await using var context = await _browser.CreateAuthContextAsync(browser);
 
         var scraped = new ConcurrentBag<ProductStatusRow>();
         var failedBag = new ConcurrentBag<string>();
@@ -161,8 +160,16 @@ public sealed class ProductStatusRunner
         var withoutProductsBag = new ConcurrentBag<string>();
         var completed = 0;
 
+        var batches = sellerNames.Chunk(SellersPerBatch).ToList();
+        for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+        {
+        if (batches.Count > 1)
+            _bus.Log($"Batch {batchIndex + 1}/{batches.Count} ({batches[batchIndex].Length} seller(s)).");
+
+        await using var context = await _browser.CreateAuthContextAsync(browser);
+
         await Parallel.ForEachAsync(
-            sellerNames,
+            batches[batchIndex],
             new ParallelOptions { MaxDegreeOfParallelism = Parallelism },
             async (sellerName, cancellationToken) =>
             {
@@ -198,6 +205,7 @@ public sealed class ProductStatusRunner
                     try { await page.CloseAsync(); } catch { /* the page is already gone */ }
                 }
             });
+        }
 
         // Ordered by the submitted list rather than by whichever page finished first — see
         // ProductStatusResult.FromRows.

@@ -1,9 +1,9 @@
-namespace YeniRPA.Web.Models;
+﻿namespace YeniRPA.Web.Models;
 
 /// <summary>The three send modes, one per tab of the Seller Notification panel.</summary>
 public static class SellerNotificationKinds
 {
-    /// <summary>Mirakl topic "Return / Cancel the order"; the message is a saved return notice.</summary>
+    /// <summary>Mirakl topic "Return the order"; the message is a saved return notice.</summary>
     public const string Return = "return";
 
     /// <summary>Same Mirakl topic as <see cref="Return"/>; the message covers a parcel that came back undelivered.</summary>

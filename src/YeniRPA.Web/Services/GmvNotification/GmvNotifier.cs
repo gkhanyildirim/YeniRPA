@@ -1,6 +1,6 @@
 namespace YeniRPA.Web.Services.GmvNotification;
 
-public sealed record GmvOutcome(bool Success, string Status, string Message, double? Gmv);
+public sealed record GmvOutcome(bool Success, string Status, string Message, double? Gmv, GmvComparison? Comparison = null);
 
 /// <summary>
 /// Reads the GMV and tells the operator about it, and writes down what happened. The scheduled worker
@@ -49,11 +49,21 @@ public sealed class GmvNotifier(
 
     /// <summary>"Check GMV now": reads it, and sends it too when <paramref name="send"/> is set.</summary>
     public Task<GmvOutcome> CheckNowAsync(bool send, CancellationToken cancellationToken) =>
-        ExecuteAsync(GmvTrigger.Manual, null, send, cancellationToken);
+        ExecuteAsync(GmvTrigger.Manual, null, send, send ? DefaultCompareDays() : 0, cancellationToken);
+
+    /// <summary>
+    /// A Telegram command's read: nothing is sent from here (the handler answers), but the result
+    /// carries the comparison with the same stretch <paramref name="compareDays"/> days earlier (0 = none).
+    /// </summary>
+    public Task<GmvOutcome> QueryAsync(int compareDays, CancellationToken cancellationToken) =>
+        ExecuteAsync(GmvTrigger.Manual, null, false, compareDays, cancellationToken);
 
     /// <summary>A scheduled notification. Does nothing when the slot was already handled.</summary>
     public Task<GmvOutcome> RunSlotAsync(GmvSlot slot, CancellationToken cancellationToken) =>
-        ExecuteAsync(GmvTrigger.Scheduled, slot, true, cancellationToken);
+        ExecuteAsync(GmvTrigger.Scheduled, slot, true, DefaultCompareDays(), cancellationToken);
+
+    /// <summary>Yesterday's comparison for the messages the schedule and the buttons send, unless it was switched off.</summary>
+    int DefaultCompareDays() => settings.Load().IncludeComparison ? 1 : 0;
 
     /// <summary>Writes down a scheduled time the app was not running for.</summary>
     public void RecordMissed(GmvSlot slot)
@@ -62,7 +72,8 @@ public sealed class GmvNotifier(
             Record(GmvTrigger.Scheduled, slot.Key, null, GmvStatus.Missed, "The app was not running at this time.");
     }
 
-    async Task<GmvOutcome> ExecuteAsync(string trigger, GmvSlot? slot, bool send, CancellationToken cancellationToken)
+    async Task<GmvOutcome> ExecuteAsync(
+        string trigger, GmvSlot? slot, bool send, int compareDays, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -72,9 +83,18 @@ public sealed class GmvNotifier(
                 return new GmvOutcome(false, GmvStatus.Skipped, "This time was already handled.", null);
 
             GmvReading reading;
+            GmvComparison? comparison = null;
             try
             {
-                reading = await reader.ReadAsync(cancellationToken);
+                if (compareDays > 0)
+                {
+                    comparison = await reader.ReadComparedAsync(compareDays, cancellationToken);
+                    reading = new GmvReading(comparison.Current, DateTimeOffset.Now);
+                }
+                else
+                {
+                    reading = await reader.ReadAsync(cancellationToken);
+                }
             }
             catch (GmvSessionExpiredException ex)
             {
@@ -86,12 +106,12 @@ public sealed class GmvNotifier(
             }
 
             if (!send)
-                return Record(trigger, slotKey, reading.Gmv, GmvStatus.Checked, null);
+                return Record(trigger, slotKey, reading.Gmv, GmvStatus.Checked, null) with { Comparison = comparison };
 
             if (!TryCredentials(out var token, out var chatId))
                 return Record(trigger, slotKey, reading.Gmv, GmvStatus.Failed, MissingTelegram);
 
-            var text = GmvMessageComposer.Report(reading.Gmv, slot?.At ?? DateTime.Now, settings.Load().DailyTarget);
+            var text = GmvMessageComposer.Report(reading.Gmv, slot?.At ?? DateTime.Now, settings.Load().DailyTarget, comparison);
             try { await telegram.SendAsync(token, chatId, text, cancellationToken); }
             catch (GmvSendException ex) { return Record(trigger, slotKey, reading.Gmv, GmvStatus.Failed, ex.Message); }
 
@@ -111,8 +131,50 @@ public sealed class GmvNotifier(
         if (trigger != GmvTrigger.Scheduled || !send)
             return Record(trigger, slotKey, null, GmvStatus.Failed, reason);
 
+        return await WarnSessionAsync(slotKey, cancellationToken);
+    }
+
+    /// <summary>
+    /// The background keep-alive found the login gone between two scheduled times. Tells the operator
+    /// right away, under the same "once, until a read works again" rule as a scheduled time.
+    /// </summary>
+    public async Task<GmvOutcome> NotifySessionLostAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await WarnSessionAsync(null, cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// A keep-alive read worked. When the operator had been warned, that is the "signed in again" signal
+    /// that re-arms the warning; without a row for it a second expiry before the next scheduled time
+    /// would go unannounced.
+    /// </summary>
+    public void NoteSessionWorking(double gmv)
+    {
         if (history.LastLoginSignal() == GmvStatus.Session)
-            return Record(trigger, slotKey, null, GmvStatus.Skipped, "Session warning already sent; waiting for a new sign-in.");
+            Record(GmvTrigger.Scheduled, null, gmv, GmvStatus.Checked, null);
+    }
+
+    async Task<GmvOutcome> WarnSessionAsync(string? slotKey, CancellationToken cancellationToken)
+    {
+        const string trigger = GmvTrigger.Scheduled;
+
+        if (history.LastLoginSignal() == GmvStatus.Session)
+        {
+            const string waiting = "Session warning already sent; waiting for a new sign-in.";
+
+            // The keep-alive runs every few minutes; a history row for each would bury the real ones.
+            return slotKey is null
+                ? new GmvOutcome(false, GmvStatus.Skipped, waiting, null)
+                : Record(trigger, slotKey, null, GmvStatus.Skipped, waiting);
+        }
 
         if (!TryCredentials(out var token, out var chatId))
             return Record(trigger, slotKey, null, GmvStatus.Failed, MissingTelegram);

@@ -10,8 +10,9 @@ namespace YeniRPA.Web.Services;
 /// <para>Plain <c>{placeholder}</c> substitution, the same as the other message builders: an unknown
 /// token is reported and left in the text rather than silently removed. Amounts and the percentage
 /// are written the Turkish way (<c>15.000.000</c>, <c>3,3</c>) because the recipients are Turkish
-/// sellers. Templates are Turkish for the same reason and carry no emoticon sequences — WhatsApp's
-/// composer converts them as they are typed, which would fail the runner's read-back check.</para>
+/// sellers. Templates are Turkish for the same reason. Emoji characters are fine (the WhatsApp runner
+/// pastes the text and reads emoji back from the image alt), but not emoticon sequences like ":)" —
+/// WhatsApp's composer converts those, which would fail the runner's read-back check.</para>
 /// </summary>
 public static partial class SellerTargetMessageBuilder
 {
@@ -50,6 +51,37 @@ public static partial class SellerTargetMessageBuilder
         Saygılarımızla,
         """;
 
+    // Kickback sellers earn the right to invoice a share of the target ("hak ediş faturası") once they
+    // hit it, so their texts talk about that instead of commission prices. The 2% is plain text: the
+    // workbook carries no rate column.
+    public const string DefaultKickbackBelowBody =
+        """
+        Sayın {seller} Yetkilisi,
+
+        {monthName} ayı için belirlenen {target} TL’lik satış hedefinizin ilk {days} gününde {current} TL ciroya ulaşılmış olup, hedefin %{percent} kadarı tamamlanmıştır. Mevcut gidişatla ay sonunda hedefinizin %{forecastPercent} kadarını gerçekleştireceksiniz.
+
+        Ay sonu hedefinize ulaştığınızda hedef tutarının %2’si oranında tarafımıza hak ediş faturası kesebileceğinizi hatırlatır, hedefi yakalamak adına ürün fiyatlarınızı ve stoklarınızı gözden geçirmenizi rica ederiz.
+
+        İyi çalışmalar, bol satışlar dileriz.
+
+        Saygılarımızla,
+        """;
+
+    public const string DefaultKickbackAboveBody =
+        """
+        Sayın {seller} Yetkilisi,
+
+        {monthName} ayı için belirlenen {target} TL’lik satış hedefinizin ilk {days} gününde {current} TL ciroya ulaşılmış olup, hedefin %{percent} kadarı tamamlanmıştır. Tebrik ederiz; mevcut gidişatla ay sonunda hedefinizin %{forecastPercent} kadarını gerçekleştirerek hedefinize ulaşacaksınız! 👏
+
+        Harika bir başlangıç yaptınız, performansınızı bu tempoda sürdürmenizi dileriz. Ay sonu hedef tutturulduğunda hedef tutarının %2’si oranında tarafımıza hak ediş faturası kesme hakkı kazanacağınızı hatırlatırız.
+
+        Başarılarınızın devamını ve bol satışlar dileriz.
+
+        Saygılarımızla,
+        """;
+
+    public const double DefaultKickbackThreshold = 100;
+
     public static readonly string[] KnownPlaceholders =
         ["{seller}", "{month}", "{monthName}", "{target}", "{current}", "{percent}", "{remaining}", "{days}", "{forecastPercent}"];
     static readonly CultureInfo Turkish = CultureInfo.GetCultureInfo("tr-TR");
@@ -80,7 +112,10 @@ public static partial class SellerTargetMessageBuilder
         string? subjectTemplate,
         string? belowBody,
         string? aboveBody,
-        double threshold)
+        double threshold,
+        string? kickbackBelowBody = null,
+        string? kickbackAboveBody = null,
+        double? kickbackThreshold = null)
     {
         ArgumentNullException.ThrowIfNull(row);
 
@@ -98,11 +133,16 @@ public static partial class SellerTargetMessageBuilder
             ["{remaining}"] = Math.Max(0, row.Target - current).ToString("N0", Turkish),
         };
 
-        var below = IsBelowThreshold(row, threshold);
+        var kickback = row.IsKickback;
+        var below = IsBelowThreshold(row, kickback ? kickbackThreshold ?? DefaultKickbackThreshold : threshold);
         var subject = Fill(Pick(subjectTemplate, DefaultMailSubject), values);
-        var body = below
-            ? Fill(Pick(belowBody, DefaultBelowBody), values)
-            : Fill(Pick(aboveBody, DefaultAboveBody), values);
+        var body = (kickback, below) switch
+        {
+            (true, true) => Fill(Pick(kickbackBelowBody, DefaultKickbackBelowBody), values),
+            (true, false) => Fill(Pick(kickbackAboveBody, DefaultKickbackAboveBody), values),
+            (false, true) => Fill(Pick(belowBody, DefaultBelowBody), values),
+            _ => Fill(Pick(aboveBody, DefaultAboveBody), values),
+        };
 
         var unknown = PlaceholderPattern().Matches(subject + "\n" + body)
             .Select(m => m.Value)

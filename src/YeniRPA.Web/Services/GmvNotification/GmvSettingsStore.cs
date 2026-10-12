@@ -13,6 +13,13 @@ public interface IGmvSettingsStore
     /// <exception cref="InvalidOperationException">The message is meant for the operator.</exception>
     void Save(GmvSettingsUpdate update);
 
+    /// <summary>
+    /// Changes only the schedule fields that are set (the Jobs screen), leaving the token, chat and
+    /// target alone. Returns the settings as saved.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The message is meant for the operator.</exception>
+    GmvSettings UpdateSchedule(GmvScheduleUpdate update);
+
     /// <summary>The decrypted bot token, or null when none is saved or it can no longer be decrypted.</summary>
     string? ReadToken();
 
@@ -62,15 +69,20 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
 
         var mode = update.Mode?.Trim().ToLowerInvariant();
         if (!GmvMode.IsValid(mode))
-            throw new InvalidOperationException("Choose how often to notify: hourly, at specific times, or manual only.");
+            throw new InvalidOperationException("Choose how often to notify: every N minutes, hourly, at specific times, or manual only.");
 
         var times = NormalizeTimes(update.Times ?? []);
         if (mode == GmvMode.Times && update.Enabled && times.Count == 0)
             throw new InvalidOperationException("Enter at least one notification time, for example 14:00.");
 
-        if (mode == GmvMode.Hourly && (update.WindowStartHour is < 0 or > 23 || update.WindowEndHour is < 0 or > 23
-                || update.WindowStartHour > update.WindowEndHour))
-            throw new InvalidOperationException("The hourly window must run from an earlier hour to a later one (0-23).");
+        if (mode is GmvMode.Hourly or GmvMode.Interval)
+            ValidateWindow(update.WindowStartHour, update.WindowEndHour);
+
+        if (update.IntervalMinutes is { } interval)
+            ValidateInterval(interval);
+
+        if (update.KeepAliveMinutes is { } keepAlive)
+            ValidateKeepAlive(keepAlive);
 
         if (update.DailyTarget is <= 0 || update.DailyTarget is { } t && !double.IsFinite(t))
             throw new InvalidOperationException("The daily GMV target must be a positive number.");
@@ -95,12 +107,82 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
                     Times = times,
                     WindowStartHour = update.WindowStartHour,
                     WindowEndHour = update.WindowEndHour,
+                    IntervalMinutes = update.IntervalMinutes ?? current.IntervalMinutes,
+                    KeepAliveMinutes = update.KeepAliveMinutes ?? current.KeepAliveMinutes,
                     ChatId = chatId,
                     ProtectedToken = protectedToken,
                     DailyTarget = update.DailyTarget,
+                    IncludeComparison = update.IncludeComparison ?? current.IncludeComparison,
                 },
             });
         }
+    }
+
+    public GmvSettings UpdateSchedule(GmvScheduleUpdate update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+
+        var mode = update.Mode?.Trim().ToLowerInvariant();
+        if (mode is not null && !GmvMode.IsValid(mode))
+            throw new InvalidOperationException("Choose how often to notify: every N minutes, hourly, at specific times, or manual only.");
+
+        if (update.IntervalMinutes is { } interval)
+            ValidateInterval(interval);
+
+        if (update.KeepAliveMinutes is { } keepAlive)
+            ValidateKeepAlive(keepAlive);
+
+        lock (_sync)
+        {
+            var current = Load();
+
+            var next = new GmvSettings
+            {
+                Enabled = update.Enabled ?? current.Enabled,
+                Mode = mode ?? current.Mode,
+                Times = current.Times,
+                WindowStartHour = update.WindowStartHour ?? current.WindowStartHour,
+                WindowEndHour = update.WindowEndHour ?? current.WindowEndHour,
+                IntervalMinutes = update.IntervalMinutes ?? current.IntervalMinutes,
+                KeepAliveMinutes = update.KeepAliveMinutes ?? current.KeepAliveMinutes,
+                ChatId = current.ChatId,
+                ProtectedToken = current.ProtectedToken,
+                DailyTarget = current.DailyTarget,
+                IncludeComparison = current.IncludeComparison,
+            };
+
+            if (next.Mode is GmvMode.Hourly or GmvMode.Interval)
+                ValidateWindow(next.WindowStartHour, next.WindowEndHour);
+
+            if (next.Enabled && (next.ChatId.Length == 0 || next.ProtectedToken is null))
+                throw new InvalidOperationException("Enter the bot token and the chat ID in GMV Notification before turning this job on.");
+
+            if (next.Enabled && next.Mode == GmvMode.Times && next.Times.Count == 0)
+                throw new InvalidOperationException("Enter at least one notification time in GMV Notification, or pick another frequency.");
+
+            _collection.Upsert(new Document { Id = DocumentId, Data = next });
+            return next;
+        }
+    }
+
+    static void ValidateWindow(int start, int end)
+    {
+        if (start is < 0 or > 23 || end is < 0 or > 23 || start > end)
+            throw new InvalidOperationException("The window must run from an earlier hour to a later one (0-23).");
+    }
+
+    static void ValidateInterval(int minutes)
+    {
+        if (minutes is < GmvLimits.MinIntervalMinutes or > GmvLimits.MaxIntervalMinutes)
+            throw new InvalidOperationException(
+                $"The interval must be between {GmvLimits.MinIntervalMinutes} and {GmvLimits.MaxIntervalMinutes} minutes.");
+    }
+
+    static void ValidateKeepAlive(int minutes)
+    {
+        if (minutes is < GmvLimits.MinKeepAliveMinutes or > GmvLimits.MaxKeepAliveMinutes)
+            throw new InvalidOperationException(
+                $"The keep-alive interval must be between {GmvLimits.MinKeepAliveMinutes} and {GmvLimits.MaxKeepAliveMinutes} minutes, because the Marketplace ends a login after 30 idle minutes.");
     }
 
     public string? ReadToken()

@@ -84,7 +84,8 @@
   function syncModeFields() {
     const mode = el('gmv-mode').value;
     el('gmv-times-field').hidden = mode !== 'times';
-    el('gmv-window-field').hidden = mode !== 'hourly';
+    el('gmv-window-field').hidden = mode !== 'hourly' && mode !== 'interval';
+    el('gmv-interval-field').hidden = mode !== 'interval';
   }
 
   function applySettings(data) {
@@ -93,8 +94,10 @@
     el('gmv-times').value = (data.times || []).join(', ');
     el('gmv-from').value = data.windowStartHour;
     el('gmv-to').value = data.windowEndHour;
+    el('gmv-interval').value = data.intervalMinutes;
     el('gmv-target').value = data.dailyTarget == null ? '' : data.dailyTarget;
     el('gmv-enabled').checked = !!data.enabled;
+    el('gmv-compare').checked = data.includeComparison !== false;
     el('gmv-keepalive').textContent = data.keepAliveMinutes;
 
     // The token field is always emptied: a saved token is reported, never echoed back.
@@ -119,10 +122,12 @@
     const target = el('gmv-target').value.trim();
     return {
       enabled: el('gmv-enabled').checked,
+      includeComparison: el('gmv-compare').checked,
       mode: el('gmv-mode').value,
       times: el('gmv-times').value.split(',').map(function (t) { return t.trim(); }).filter(Boolean),
       windowStartHour: parseInt(el('gmv-from').value, 10),
       windowEndHour: parseInt(el('gmv-to').value, 10),
+      intervalMinutes: parseInt(el('gmv-interval').value, 10) || null,
       chatId: el('gmv-chat').value.trim(),
       token: el('gmv-token').value.trim(),
       dailyTarget: target === '' ? null : Number(target)

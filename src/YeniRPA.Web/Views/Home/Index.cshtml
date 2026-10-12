@@ -17,6 +17,7 @@
         ["ticket-seller"]  = "<path d='M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-6z'/><path d='M14 8v8'/>",
         ["title-cleaner"]  = "<path d='m5 19 9-9'/><path d='m14.5 4.5 5 5-3 3-5-5z'/><path d='M6 4v3M4.5 5.5h3M18 15v2.5M16.8 16.2h2.4'/>",
         ["cargo-seller-report"] = "<path d='M12 3 3 7.5v9L12 21l9-4.5v-9z'/><path d='M3 7.5 12 12l9-4.5'/><path d='M12 12v9'/>",
+        ["sku-offer-report"] = "<path d='M3 3v16a2 2 0 0 0 2 2h16'/><path d='m7 15 3.5-4 3 2.5L19 7'/><circle cx='19' cy='7' r='1.2'/>",
         ["pos-reconciliation"] = "<rect x='2.5' y='5.5' width='19' height='13' rx='2'/><path d='M2.5 10h19'/><path d='M6.5 14.5h4'/>",
         ["create-return"]  = "<path d='M3 12a9 9 0 1 0 2.6-6.4'/><path d='M3 4v5h5'/>",
         ["mark-received"]  = "<circle cx='12' cy='12' r='9'/><path d='m8.5 12.2 2.4 2.4 4.6-4.9'/>",
@@ -31,6 +32,7 @@
         ["seller-targets"] = "<circle cx='12' cy='12' r='9'/><circle cx='12' cy='12' r='5'/><circle cx='12' cy='12' r='1.4'/>",
         ["methodology"]    = "<path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z'/><path d='M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5'/>",
         ["gmv-notification"] = "<path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.9 1.9 0 0 0 3.4 0'/>",
+        ["jobs"]           = "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/><path d='M4 4l2.5 2.5M20 4l-2.5 2.5'/>",
         ["settings"]       = "<circle cx='12' cy='12' r='3'/><path d='M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1'/>",
         ["health"]         = "<path d='M21 8 12 3 3 8v8l9 5 9-5z'/><path d='m3 8 9 5 9-5M12 13v8'/>"
     };
@@ -101,6 +103,12 @@
                     aria-controls="panel-pos-reconciliation" aria-selected="false" data-module="pos-reconciliation" tabindex="-1">
                 @NavIcon("pos-reconciliation")
                 <span class="nav-text">POS Reconciliation</span>
+            </button>
+
+            <button type="button" class="nav-item" role="tab" id="tab-sku-offer-report"
+                    aria-controls="panel-sku-offer-report" aria-selected="false" data-module="sku-offer-report" tabindex="-1">
+                @NavIcon("sku-offer-report")
+                <span class="nav-text">SKU Offer &amp; Traffic</span>
             </button>
 
             <div class="nav-label">Automation</div>
@@ -186,6 +194,12 @@
             </button>
 
             <div class="nav-label">System</div>
+
+            <button type="button" class="nav-item" role="tab" id="tab-jobs"
+                    aria-controls="panel-jobs" aria-selected="false" data-module="jobs" tabindex="-1">
+                @NavIcon("jobs")
+                <span class="nav-text">Jobs</span>
+            </button>
 
             <button type="button" class="nav-item" role="tab" id="tab-settings"
                     aria-controls="panel-settings" aria-selected="false" data-module="settings" tabindex="-1">
@@ -1886,6 +1900,121 @@
             </div>
 
             <footer class="page-foot">Marketplace Reporting &middot; Cargo Seller Report</footer>
+        </section>
+
+        @* ================= SKU OFFER & TRAFFIC REPORT ================= *@
+        <section class="panel" id="panel-sku-offer-report" role="tabpanel" aria-labelledby="tab-sku-offer-report" hidden>
+
+            <header class="page-head">
+                @PageIcon("sku-offer-report")
+                <h1>SKU Offer &amp; Traffic</h1>
+                <span class="badge green">Read-only</span>
+            </header>
+
+            <div class="section-title">Upload the two exports</div>
+            <div class="card">
+                <div class="uploader">
+                    <div class="uploader-grid">
+                        <label class="drop" id="sor-offers-drop">
+                            <span class="drop-title">Offers export</span>
+                            <span class="drop-hint">.csv / .xlsx &mdash; "Product SKU", "Creation date", "Activated"</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="sor-offers-file" accept=".csv,.xlsx,.xls"
+                                   aria-label="Offers export (.csv or .xlsx)" />
+                        </label>
+
+                        <label class="drop" id="sor-traffic-drop">
+                            <span class="drop-title">Offer KPIs (traffic) export</span>
+                            <span class="drop-hint">.csv / .xlsx &mdash; "Product id", "Sessions by Product with PDP (30d)"</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="sor-traffic-file" accept=".csv,.xlsx,.xls"
+                                   aria-label="Offer KPIs traffic export (.csv or .xlsx)" />
+                        </label>
+                    </div>
+
+                    <div class="alert" id="sor-alert" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button type="button" class="btn btn-primary" id="sor-generate" disabled>
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span class="btn-text">Generate Report</span>
+                </button>
+            </div>
+
+            <div class="results" id="sor-results" hidden>
+                <div class="section-title">Overview</div>
+                <div class="card">
+                    <div class="kpi-grid" id="sor-kpis"></div>
+                    <p class="note" id="sor-notes"></p>
+                </div>
+
+                <button type="button" class="sor-callout" id="sor-callout" hidden>
+                    <span class="sor-callout-dot" aria-hidden="true"></span>
+                    <span class="sor-callout-text" id="sor-callout-text"></span>
+                    <span class="sor-callout-cta">Show them &rarr;</span>
+                </button>
+
+                <div class="section-title">Trends</div>
+                <div class="sor-charts">
+                    <div class="card">
+                        <div class="sor-chart-title">First offers created per month</div>
+                        <div class="sor-chart-sub">SKUs by the month their first offer was created &middot; closed ones highlighted</div>
+                        <div class="chart-box"><canvas id="sor-chart-month"></canvas></div>
+                    </div>
+                    <div class="card">
+                        <div class="sor-chart-title">Closed first offers by category</div>
+                        <div class="sor-chart-sub">Top 10 categories by SKUs whose first offer is closed</div>
+                        <div class="chart-box"><canvas id="sor-chart-category"></canvas></div>
+                    </div>
+                    <div class="card sor-chart-wide">
+                        <div class="sor-chart-title">Top 10 SKUs by PDP views (30d)</div>
+                        <div class="sor-chart-sub">Red bars: the SKU's first offer is closed</div>
+                        <div class="chart-box"><canvas id="sor-chart-top"></canvas></div>
+                    </div>
+                </div>
+
+                <div class="section-title">SKUs</div>
+                <div class="card">
+                    <div class="sor-toolbar">
+                        <input type="search" id="sor-search" class="sor-search" placeholder="Search SKU, product, brand, category&hellip;"
+                               aria-label="Search SKUs" autocomplete="off" />
+                        <div class="sor-chips" id="sor-chips" role="group" aria-label="Filter">
+                            <button type="button" class="sor-chip is-on" data-filter="all">All</button>
+                            <button type="button" class="sor-chip" data-filter="firstClosed">First offer closed</button>
+                            <button type="button" class="sor-chip" data-filter="noActive">No active offer</button>
+                            <button type="button" class="sor-chip" data-filter="hasTraffic">With traffic</button>
+                            <button type="button" class="sor-chip" data-filter="noTraffic">No traffic data</button>
+                        </div>
+                        <button type="button" class="btn btn-ghost" id="sor-download">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Download .xlsx</span>
+                        </button>
+                    </div>
+
+                    <div class="table-scroll">
+                        <table class="sor-table" id="sor-table">
+                            <thead id="sor-thead"></thead>
+                            <tbody id="sor-tbody"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="sor-pager">
+                        <span id="sor-count" class="sor-count"></span>
+                        <span class="sor-pager-btns">
+                            <button type="button" class="btn btn-ghost" id="sor-prev">&larr; Prev</button>
+                            <span id="sor-page-label" class="sor-page-label"></span>
+                            <button type="button" class="btn btn-ghost" id="sor-next">Next &rarr;</button>
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <footer class="page-foot">Marketplace Reporting &middot; SKU Offer &amp; Traffic</footer>
         </section>
 
         @* ================= POS RECONCILIATION ================= *@
@@ -4143,15 +4272,27 @@
 
                 <div class="st-threshold card">
                     <div class="field">
-                        <label for="st-threshold">Forecast threshold (%)</label>
+                        <label for="st-threshold">Commission — forecast threshold (%)</label>
                         <input type="number" id="st-threshold" min="0" max="1000" step="0.1" value="100" />
                     </div>
                     <p class="note">
-                        Sellers whose projected month-end completion is <strong>below</strong> this get the
-                        “below threshold” text (check your prices); everyone at or above it gets the
-                        “on track” text. Edit both under Message templates.
+                        Sellers whose support type is <strong>Komisyon</strong> and whose projected month-end completion is
+                        <strong>below</strong> this get the “below threshold” text (check your prices); everyone at or above it
+                        gets the “on track” text. Edit both under Message templates.
                     </p>
                     <div class="st-threshold-split" id="st-threshold-split" aria-live="polite"></div>
+                </div>
+
+                <div class="st-threshold card">
+                    <div class="field">
+                        <label for="st-kb-threshold">Kickback — forecast threshold (%)</label>
+                        <input type="number" id="st-kb-threshold" min="0" max="1000" step="0.1" value="100" />
+                    </div>
+                    <p class="note">
+                        The same rule for sellers whose support type is <strong>Kickback</strong>, with their own texts
+                        (they mention the invoicing right earned at target).
+                    </p>
+                    <div class="st-threshold-split" id="st-kb-threshold-split" aria-live="polite"></div>
                 </div>
 
                 <div class="st-toolbar">
@@ -4309,13 +4450,26 @@
                             <label for="st-tpl-subject">Mail subject</label>
                             <input type="text" id="st-tpl-subject" spellcheck="false" />
                         </div>
+                        <div class="st-emoji-wrap">
+                            <button type="button" class="btn btn-ghost btn-sm" id="st-emoji-toggle" aria-expanded="false" aria-controls="st-emoji-grid">Insert emoji</button>
+                            <span class="note">Inserts at the cursor of the field you last clicked.</span>
+                            <div class="st-emoji-grid" id="st-emoji-grid" hidden></div>
+                        </div>
                         <div class="field">
-                            <label for="st-tpl-below"><span class="status-dot is-error"></span> Below threshold — mail and WhatsApp text</label>
+                            <label for="st-tpl-below"><span class="status-dot is-error"></span> Commission, below threshold — mail and WhatsApp text</label>
                             <textarea id="st-tpl-below" spellcheck="false"></textarea>
                         </div>
                         <div class="field">
-                            <label for="st-tpl-above"><span class="status-dot is-live"></span> At or above threshold — mail and WhatsApp text</label>
+                            <label for="st-tpl-above"><span class="status-dot is-live"></span> Commission, at or above threshold — mail and WhatsApp text</label>
                             <textarea id="st-tpl-above" spellcheck="false"></textarea>
+                        </div>
+                        <div class="field">
+                            <label for="st-tpl-kb-below"><span class="status-dot is-error"></span> Kickback, below threshold — mail and WhatsApp text</label>
+                            <textarea id="st-tpl-kb-below" spellcheck="false"></textarea>
+                        </div>
+                        <div class="field">
+                            <label for="st-tpl-kb-above"><span class="status-dot is-live"></span> Kickback, at or above threshold — mail and WhatsApp text</label>
+                            <textarea id="st-tpl-kb-above" spellcheck="false"></textarea>
                         </div>
                     </div>
                     <div class="modal-foot">
@@ -4919,6 +5073,7 @@
                             <label for="gmv-mode">Frequency</label>
                             <select id="gmv-mode">
                                 <option value="times">At specific times</option>
+                                <option value="interval">Every N minutes</option>
                                 <option value="hourly">Every hour</option>
                                 <option value="manual">Manual only</option>
                             </select>
@@ -4927,8 +5082,12 @@
                             <label for="gmv-times">Times (HH:mm, comma separated)</label>
                             <input type="text" id="gmv-times" placeholder="10:00, 14:00, 18:00" autocomplete="off" />
                         </div>
+                        <div class="field" id="gmv-interval-field" hidden>
+                            <label for="gmv-interval">Every (minutes)</label>
+                            <input type="number" id="gmv-interval" min="5" max="120" step="1" />
+                        </div>
                         <div class="field" id="gmv-window-field" hidden>
-                            <label for="gmv-from">Hourly window (from hour &ndash; to hour)</label>
+                            <label for="gmv-from">Window (from hour &ndash; to hour)</label>
                             <div class="gmv-pair">
                                 <input type="number" id="gmv-from" min="0" max="23" step="1" aria-label="From hour" />
                                 <input type="number" id="gmv-to" min="0" max="23" step="1" aria-label="To hour" />
@@ -4938,6 +5097,10 @@
                             <label for="gmv-target">Daily GMV target (EUR, optional)</label>
                             <input type="number" id="gmv-target" min="0" step="any" placeholder="e.g. 100000" />
                         </div>
+                        <label class="gmv-check">
+                            <input type="checkbox" id="gmv-compare" />
+                            <span>Add yesterday's figure at this time</span>
+                        </label>
                         <label class="gmv-check">
                             <input type="checkbox" id="gmv-enabled" />
                             <span>Notifications on</span>
@@ -5015,6 +5178,56 @@
                                 </tr>
                             </thead>
                             <tbody id="gmv-history-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="panel" id="panel-jobs" role="tabpanel" aria-labelledby="tab-jobs" hidden>
+
+            <header class="page-head">
+                @PageIcon("jobs")
+                <h1>Jobs</h1>
+                <span class="stamp">Background</span>
+            </header>
+
+            <div class="results">
+
+                <div class="section-title">Scheduled jobs</div>
+
+                <div class="card">
+                    <p class="sub">
+                        Background jobs run only while this app is open. A saved change applies at the
+                        next check (within about 30 seconds); no restart is needed. Turning a job on needs
+                        the Telegram token and chat ID saved in GMV Notification.
+                    </p>
+
+                    <div class="alert" id="jobs-error" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                    <div class="alert is-success" id="jobs-success" role="status">
+                        <strong>Done</strong>
+                        <span class="msg"></span>
+                    </div>
+
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Job</th>
+                                    <th>On</th>
+                                    <th>Every (min)</th>
+                                    <th>Window (hours)</th>
+                                    <th>Last run</th>
+                                    <th>Next run</th>
+                                    <th>Status</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="jobs-body"></tbody>
                         </table>
                     </div>
                 </div>
@@ -5110,6 +5323,7 @@
     <script src="~/js/ticket-seller.js" asp-append-version="true"></script>
     <script src="~/js/title-cleaner.js" asp-append-version="true"></script>
     <script src="~/js/cargo-seller-report.js" asp-append-version="true"></script>
+    <script src="~/js/sku-offer-report.js" asp-append-version="true"></script>
     <script src="~/js/pos-reconciliation.js" asp-append-version="true"></script>
     <script src="~/js/create-return.js" asp-append-version="true"></script>
     <script src="~/js/mark-received.js" asp-append-version="true"></script>
@@ -5123,5 +5337,6 @@
     <script src="~/js/custom-mail.js" asp-append-version="true"></script>
     <script src="~/js/seller-targets.js" asp-append-version="true"></script>
     <script src="~/js/gmv-notification.js" asp-append-version="true"></script>
+    <script src="~/js/jobs.js" asp-append-version="true"></script>
     <script src="~/js/settings.js" asp-append-version="true"></script>
 }

@@ -10,7 +10,14 @@ public sealed record SellerTargetRow(
     [property: JsonPropertyName("target")] double Target,
     [property: JsonPropertyName("current")] double? Current,
     [property: JsonPropertyName("days")] int? Days = null,
-    [property: JsonPropertyName("daysInMonth")] int DaysInMonth = 30);
+    [property: JsonPropertyName("daysInMonth")] int DaysInMonth = 30,
+    [property: JsonPropertyName("supportType")] string? SupportType = null)
+{
+    public const string Commission = "komisyon";
+    public const string Kickback = "kickback";
+
+    public bool IsKickback => string.Equals(SupportType, Kickback, StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>What the reader found in the workbook.</summary>
 public sealed record SellerTargetSheet(string Month, string MonthName, IReadOnlyList<SellerTargetRow> Rows);

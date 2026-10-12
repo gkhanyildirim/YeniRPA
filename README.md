@@ -1,4 +1,4 @@
-# Marketplace Reporting
+﻿# Marketplace Reporting
 
 ASP.NET Core MVC app hosting the Mirakl marketplace reports and automation modules on a single page,
 with tab navigation between them and results rendered in place.
@@ -1129,7 +1129,7 @@ default, it is a second write to Mirakl per order) and picking a template saved 
 return is created. `start-list` takes `notifyTemplateId`; the controller resolves the template and
 rejects a missing or empty one with `400` before anything is written. The send happens inside the
 Create Return run, on the same page, through `SellerNotificationSender` — a second run could not be
-started, because the run slot is already held. It uses Mirakl's *Return / Cancel the order* topic,
+started, because the run slot is already held. It uses Mirakl's *Return the order* topic,
 like the Seller Notification return tab. A failed message does **not** turn the row into a failed
 return (the return exists; re-running the list would file a duplicate): it is logged as
 `Notification failed`, screenshotted, and listed at the end of the log so it can be sent from Seller

@@ -22,15 +22,24 @@ public class GmvNotificationTests
         public void Dispose() => _database.Dispose();
     }
 
-    sealed class FakeReader(Func<GmvReading> read) : IGmvReader
+    sealed class FakeReader(Func<GmvReading> read, Func<DateTimeOffset, DateTimeOffset, GmvReading>? readRange = null) : IGmvReader
     {
         public int Reads { get; private set; }
+        public List<(DateTimeOffset From, DateTimeOffset To)> Ranges { get; } = [];
         public GmvSessionStatus Status => new("valid", null);
 
         public Task<GmvReading> ReadAsync(CancellationToken cancellationToken)
         {
             Reads++;
             return Task.FromResult(read());
+        }
+
+        public Task<GmvReading> ReadRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken)
+        {
+            Ranges.Add((from, to));
+            return Task.FromResult(readRange is null
+                ? throw new GmvUnavailableException("No earlier figure.")
+                : readRange(from, to));
         }
     }
 
@@ -57,12 +66,17 @@ public class GmvNotificationTests
         public FakeReader Reader { get; }
         public GmvNotifier Notifier { get; }
 
-        public Rig(Func<GmvReading> read, double? target = null)
+        public Rig(
+            Func<GmvReading> read,
+            double? target = null,
+            Func<DateTimeOffset, DateTimeOffset, GmvReading>? readRange = null,
+            bool compare = false)
         {
             Settings = new GmvSettingsStore(Context, new EphemeralDataProtectionProvider());
-            Settings.Save(new GmvSettingsUpdate(true, GmvMode.Times, ["14:00"], 9, 19, "123", "token-abc", target));
+            Settings.Save(new GmvSettingsUpdate(true, GmvMode.Times, ["14:00"], 9, 19, "123", "token-abc", target,
+                IncludeComparison: compare));
             History = new GmvHistoryStore(Context);
-            Reader = new FakeReader(read);
+            Reader = new FakeReader(read, readRange);
             Notifier = new GmvNotifier(Settings, History, Reader, Telegram);
         }
 
@@ -356,6 +370,363 @@ public class GmvNotificationTests
         Assert.Equal(GmvStatus.Skipped, late.Status);
         Assert.Empty(rig.Telegram.Messages);
         Assert.Equal(GmvStatus.Missed, Assert.Single(rig.History.Recent(10)).Status);
+    }
+
+    // -----------------------------------------------------------------
+    // Interval mode, the Jobs screen and the keep-alive warning
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void IntervalModeMeansEveryNMinutesFromTheFirstWindowHourToTheEndOfTheLast()
+    {
+        var settings = new GmvSettings { Mode = GmvMode.Interval, IntervalMinutes = 15, WindowStartHour = 9, WindowEndHour = 10 };
+
+        Assert.Equal(["09:00", "09:15", "09:30", "09:45", "10:00", "10:15", "10:30", "10:45"],
+            GmvSchedule.SlotTimes(settings).Select(t => t.ToString("HH:mm")));
+        Assert.Equal("2026-10-07 09:15", GmvSchedule.Due(settings, new DateTime(2026, 10, 7, 9, 16, 0))?.Key);
+        Assert.Null(GmvSchedule.Due(settings, new DateTime(2026, 10, 7, 11, 0, 0)));
+        Assert.Empty(GmvSchedule.PassedToday(settings, new DateTime(2026, 10, 7, 10, 0, 0), 6));
+    }
+
+    [Fact]
+    public void TheNextTimeRollsOverToTomorrowAfterTheLastOne()
+    {
+        var settings = new GmvSettings { Mode = GmvMode.Interval, IntervalMinutes = 30, WindowStartHour = 9, WindowEndHour = 9 };
+
+        Assert.Equal(new DateTime(2026, 10, 7, 9, 30, 0), GmvSchedule.Next(settings, new DateTime(2026, 10, 7, 9, 5, 0)));
+        Assert.Equal(new DateTime(2026, 10, 8, 9, 0, 0), GmvSchedule.Next(settings, new DateTime(2026, 10, 7, 12, 0, 0)));
+        Assert.Null(GmvSchedule.Next(new GmvSettings { Mode = GmvMode.Manual }, DateTime.Now));
+    }
+
+    [Fact]
+    public void TheIntervalAndTheKeepAliveAreRangeChecked()
+    {
+        using var context = new MemoryContext();
+        var store = new GmvSettingsStore(context, new EphemeralDataProtectionProvider());
+
+        Assert.Throws<InvalidOperationException>(() => store.UpdateSchedule(new GmvScheduleUpdate(IntervalMinutes: 4)));
+        Assert.Throws<InvalidOperationException>(() => store.UpdateSchedule(new GmvScheduleUpdate(IntervalMinutes: 121)));
+        Assert.Throws<InvalidOperationException>(() => store.UpdateSchedule(new GmvScheduleUpdate(KeepAliveMinutes: 26)));
+        Assert.Throws<InvalidOperationException>(() => store.UpdateSchedule(new GmvScheduleUpdate(KeepAliveMinutes: 0)));
+    }
+
+    [Fact]
+    public void ChangingTheScheduleLeavesTheTelegramSettingsAlone()
+    {
+        using var rig = new Rig(() => Reading(1), target: 90000);
+
+        var saved = rig.Settings.UpdateSchedule(new GmvScheduleUpdate(Mode: GmvMode.Interval, IntervalMinutes: 20, KeepAliveMinutes: 8));
+
+        Assert.Equal(GmvMode.Interval, saved.Mode);
+        Assert.Equal(20, rig.Settings.Load().IntervalMinutes);
+        Assert.Equal(8, rig.Settings.Load().KeepAliveMinutes);
+        Assert.Equal("123", rig.Settings.Load().ChatId);
+        Assert.Equal("token-abc", rig.Settings.ReadToken());
+        Assert.Equal(90000, rig.Settings.Load().DailyTarget);
+        Assert.Equal(["14:00"], rig.Settings.Load().Times);
+    }
+
+    [Fact]
+    public void AJobCannotBeSwitchedOnWithoutTelegramSettings()
+    {
+        using var context = new MemoryContext();
+        var store = new GmvSettingsStore(context, new EphemeralDataProtectionProvider());
+
+        Assert.Throws<InvalidOperationException>(() => store.UpdateSchedule(new GmvScheduleUpdate(Enabled: true)));
+    }
+
+    [Fact]
+    public async Task TheKeepAliveFindingTheLoginGoneWarnsOnceUntilItWorksAgain()
+    {
+        var expired = true;
+        using var rig = new Rig(() => expired ? throw new GmvSessionExpiredException("expired") : Reading(5000));
+
+        await rig.Notifier.NotifySessionLostAsync(default);
+        await rig.Notifier.NotifySessionLostAsync(default);
+        Assert.Equal(GmvMessageComposer.SessionExpired, Assert.Single(rig.Telegram.Messages));
+        // The repeats between keep-alives leave no history rows behind.
+        Assert.Single(rig.History.Recent(10));
+
+        expired = false;
+        rig.Notifier.NoteSessionWorking(5000);
+        await rig.Notifier.NotifySessionLostAsync(default);
+
+        Assert.Equal(2, rig.Telegram.Messages.Count(m => m == GmvMessageComposer.SessionExpired));
+    }
+
+    [Fact]
+    public void AWorkingKeepAliveWithoutAnEarlierWarningWritesNothing()
+    {
+        using var rig = new Rig(() => Reading(1));
+
+        rig.Notifier.NoteSessionWorking(1);
+
+        Assert.Empty(rig.History.Recent(10));
+    }
+
+    // -----------------------------------------------------------------
+    // Telegram commands
+    // -----------------------------------------------------------------
+
+    [Theory]
+    [InlineData("/gmv", "/gmv")]
+    [InlineData("  /GMV  ", "/gmv")]
+    [InlineData("/gmv@my_bot", "/gmv")]
+    [InlineData("/gmv şimdi", "/gmv")]
+    [InlineData("/baska", "/baska")]
+    [InlineData("gmv", null)]
+    [InlineData("", null)]
+    public void TheCommandWordIsTheFirstWordWithoutTheBotName(string text, string? expected)
+    {
+        Assert.Equal(expected, GmvCommandHandler.Command(text));
+    }
+
+    [Fact]
+    public async Task TheGmvCommandAnswersTheSavedChatWithTheCurrentFigure()
+    {
+        using var rig = new Rig(() => Reading(58790), target: 100000);
+        var handler = new GmvCommandHandler(rig.Settings, rig.Notifier, rig.Telegram);
+
+        await handler.HandleAsync(new TelegramUpdate(1, "123", "/gmv"), default);
+
+        var reply = Assert.Single(rig.Telegram.Messages);
+        Assert.Contains("€58.790", reply);
+        Assert.Contains("%59", reply);
+    }
+
+    [Fact]
+    public async Task AnotherChatGetsNoAnswerAndNoReading()
+    {
+        using var rig = new Rig(() => Reading(58790));
+        var handler = new GmvCommandHandler(rig.Settings, rig.Notifier, rig.Telegram);
+
+        await handler.HandleAsync(new TelegramUpdate(1, "999", "/gmv"), default);
+
+        Assert.Empty(rig.Telegram.Messages);
+        Assert.Equal(0, rig.Reader.Reads);
+    }
+
+    [Fact]
+    public async Task ACommandOnAnExpiredSessionSaysSoInsteadOfAFigure()
+    {
+        using var rig = new Rig(() => throw new GmvSessionExpiredException("The Marketplace session has expired. Sign in again."));
+        var handler = new GmvCommandHandler(rig.Settings, rig.Notifier, rig.Telegram);
+
+        await handler.HandleAsync(new TelegramUpdate(1, "123", "/gmv"), default);
+
+        var reply = Assert.Single(rig.Telegram.Messages);
+        Assert.StartsWith("GMV şu an okunamadı", reply);
+        Assert.DoesNotContain("€", reply);
+    }
+
+    [Fact]
+    public async Task AnUnknownCommandGetsAHintAndPlainTextGetsNothing()
+    {
+        using var rig = new Rig(() => Reading(1));
+        var handler = new GmvCommandHandler(rig.Settings, rig.Notifier, rig.Telegram);
+
+        await handler.HandleAsync(new TelegramUpdate(1, "123", "/baska"), default);
+        await handler.HandleAsync(new TelegramUpdate(2, "123", "merhaba"), default);
+        await handler.HandleAsync(new TelegramUpdate(3, "123", null), default);
+
+        Assert.Equal(GmvMessageComposer.UnknownCommand, Assert.Single(rig.Telegram.Messages));
+        Assert.Equal(0, rig.Reader.Reads);
+    }
+
+    [Fact]
+    public void TelegramUpdatesAreReadWithTheirChatAndText()
+    {
+        var updates = TelegramReceiver.Parse("""
+            {"ok":true,"result":[
+              {"update_id":10,"message":{"chat":{"id":-100123},"text":"/gmv","date":1}},
+              {"update_id":11,"message":{"chat":{"id":5},"photo":[]}},
+              {"update_id":12,"edited_message":{}}
+            ]}
+            """);
+
+        Assert.Equal([10L, 11L, 12L], updates.Select(u => u.UpdateId));
+        Assert.Equal(("-100123", "/gmv"), (updates[0].ChatId, updates[0].Text));
+        Assert.Equal(("5", null), (updates[1].ChatId, updates[1].Text));
+        Assert.Null(updates[2].ChatId);
+    }
+
+    // -----------------------------------------------------------------
+    // Comparison: yesterday / last week at this time
+    // -----------------------------------------------------------------
+
+    static readonly TimeZoneInfo Berlin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+
+    static DateTimeOffset Berlin_(int y, int m, int d, int h, int min) =>
+        new(new DateTime(y, m, d, h, min, 0), Berlin.GetUtcOffset(new DateTime(y, m, d, h, min, 0)));
+
+    [Fact]
+    public void YesterdayAtThisTimeRunsFromYesterdaysMidnightToTheSameTimeOfDay()
+    {
+        var (from, to) = GmvDashboard.ComparisonRange(Berlin_(2026, 10, 12, 14, 15), 1, Berlin);
+
+        Assert.Equal(Berlin_(2026, 10, 11, 0, 0), from);
+        Assert.Equal(Berlin_(2026, 10, 11, 14, 15), to);
+    }
+
+    [Fact]
+    public void LastWeekIsTheSameWeekdaySevenCalendarDaysBack()
+    {
+        var (from, to) = GmvDashboard.ComparisonRange(Berlin_(2026, 10, 12, 9, 30), 7, Berlin);
+
+        Assert.Equal(Berlin_(2026, 10, 5, 0, 0), from);
+        Assert.Equal(Berlin_(2026, 10, 5, 9, 30), to);
+        Assert.Equal(DayOfWeek.Monday, to.DayOfWeek);
+    }
+
+    [Fact]
+    public void ADayAcrossTheClockChangeStillStartsAtItsOwnMidnight()
+    {
+        // Clocks went back on 2026-10-25: the 24th is on summer time (+02:00), the 26th on winter time (+01:00).
+        var (from, to) = GmvDashboard.ComparisonRange(Berlin_(2026, 10, 26, 12, 0), 2, Berlin);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 24, 0, 0, 0, TimeSpan.FromHours(2)), from);
+        Assert.Equal(new DateTimeOffset(2026, 10, 24, 12, 0, 0, TimeSpan.FromHours(2)), to);
+    }
+
+    [Fact]
+    public void TheWholeDayEndsAtTheNextMidnight()
+    {
+        var (from, to) = GmvDashboard.FullDay(Berlin_(2026, 10, 12, 14, 15), 1, Berlin);
+
+        Assert.Equal(Berlin_(2026, 10, 11, 0, 0), from);
+        Assert.Equal(Berlin_(2026, 10, 12, 0, 0), to);
+    }
+
+    [Fact]
+    public void TheSalesUrlCarriesTheRequestedStretch()
+    {
+        var url = GmvDashboard.SalesUrl(Berlin_(2026, 10, 11, 0, 0), Berlin_(2026, 10, 11, 14, 15));
+
+        Assert.Contains("startDate=2026-10-11T00%3A00%3A00.000%2B02%3A00", url);
+        Assert.Contains("endDate=2026-10-11T14%3A15%3A00.000%2B02%3A00", url);
+        Assert.Contains("showShipped=ALL", url);
+    }
+
+    [Fact]
+    public void AnIncreaseShowsAnUpArrowTheAmountAndThePercentage()
+    {
+        Assert.Equal("Dün bu saatte: €54.200 (▲ €4.590, %8).", GmvMessageComposer.ComparisonLine(new GmvComparison(58790, 54200, 1)));
+    }
+
+    [Fact]
+    public void ADecreaseShowsADownArrow()
+    {
+        Assert.Equal("Geçen hafta bu saatte: €60.000 (▼ €1.210, %2).", GmvMessageComposer.ComparisonLine(new GmvComparison(58790, 60000, 7)));
+    }
+
+    [Fact]
+    public void NoChangeAndAnEarlierZeroAreWrittenWithoutAMeaninglessPercentage()
+    {
+        Assert.Equal("Dün bu saatte: €1.000 (değişim yok).", GmvMessageComposer.ComparisonLine(new GmvComparison(1000.2, 1000, 1)));
+        Assert.Equal("Dün bu saatte: €0 (▲ €500).", GmvMessageComposer.ComparisonLine(new GmvComparison(500, 0, 1)));
+    }
+
+    [Fact]
+    public void AnEarlierFigureThatCouldNotBeReadSaysSoInsteadOfShowingZero()
+    {
+        var line = GmvMessageComposer.ComparisonLine(new GmvComparison(58790, null, 1));
+
+        Assert.Equal("Dün bu saatte: veri alınamadı.", line);
+        Assert.DoesNotContain("€", line);
+    }
+
+    [Fact]
+    public void TheComparisonSitsBetweenTheFigureAndTheTarget()
+    {
+        var text = GmvMessageComposer.Report(72000, new DateTime(2026, 10, 7, 14, 0, 0), 100000, new GmvComparison(72000, 60000, 1));
+
+        Assert.Equal("07 Ekim 2026, 14:00 itibarıyla güncel GMV: €72.000. Dün bu saatte: €60.000 (▲ €12.000, %20). Günlük hedefe göre %72 seviyesinde.", text);
+    }
+
+    [Fact]
+    public async Task AScheduledMessageCarriesYesterdaysFigureWhenTheSettingIsOn()
+    {
+        using var rig = new Rig(() => Reading(58790), readRange: (_, _) => Reading(54200), compare: true);
+
+        await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        Assert.Contains("Dün bu saatte: €54.200 (▲ €4.590, %8).", Assert.Single(rig.Telegram.Messages));
+        Assert.Single(rig.Reader.Ranges);
+        // Only today's figure goes into the history.
+        Assert.Equal(58790, Assert.Single(rig.History.Recent(10)).Gmv);
+    }
+
+    [Fact]
+    public async Task TheSettingOffKeepsTheMessageAsItWas()
+    {
+        using var rig = new Rig(() => Reading(58790), readRange: (_, _) => Reading(54200), compare: false);
+
+        await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        Assert.DoesNotContain("Dün", Assert.Single(rig.Telegram.Messages));
+        Assert.Empty(rig.Reader.Ranges);
+    }
+
+    [Fact]
+    public async Task AnEarlierFigureThatFailsStillSendsTodaysWithoutInventingOne()
+    {
+        using var rig = new Rig(() => Reading(58790), readRange: null, compare: true);
+
+        var outcome = await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        Assert.True(outcome.Success);
+        var message = Assert.Single(rig.Telegram.Messages);
+        Assert.Contains("€58.790", message);
+        Assert.Contains("Dün bu saatte: veri alınamadı.", message);
+    }
+
+    [Fact]
+    public async Task AnExpiredLoginWithTheComparisonOnStillSendsTheWarningOnce()
+    {
+        using var rig = new Rig(() => throw new GmvSessionExpiredException("expired"), readRange: (_, _) => Reading(1), compare: true);
+
+        await rig.Notifier.RunSlotAsync(Slot("14:00"), default);
+
+        Assert.Equal(GmvMessageComposer.SessionExpired, Assert.Single(rig.Telegram.Messages));
+        Assert.Empty(rig.Reader.Ranges);
+    }
+
+    [Fact]
+    public async Task TheWeekCommandComparesWithTheSameTimeLastWeekEvenWhenYesterdayIsSwitchedOff()
+    {
+        using var rig = new Rig(() => Reading(58790), readRange: (_, _) => Reading(60000), compare: false);
+        var handler = new GmvCommandHandler(rig.Settings, rig.Notifier, rig.Telegram);
+
+        await handler.HandleAsync(new TelegramUpdate(1, "123", "/weekgmv"), default);
+
+        var reply = Assert.Single(rig.Telegram.Messages);
+        Assert.Contains("Geçen hafta bu saatte: €60.000 (▼ €1.210, %2).", reply);
+
+        var range = Assert.Single(rig.Reader.Ranges);
+        Assert.Equal(GmvDashboard.PlatformNow().Date.AddDays(-7), range.From.Date);
+        Assert.Equal(range.From.Date, range.To.Date);
+    }
+
+    [Fact]
+    public async Task TheGmvCommandAddsYesterdayOnlyWhenTheSettingIsOn()
+    {
+        using var on = new Rig(() => Reading(58790), readRange: (_, _) => Reading(54200), compare: true);
+        await new GmvCommandHandler(on.Settings, on.Notifier, on.Telegram).HandleAsync(new TelegramUpdate(1, "123", "/gmv"), default);
+        Assert.Contains("Dün bu saatte", Assert.Single(on.Telegram.Messages));
+
+        using var off = new Rig(() => Reading(58790), readRange: (_, _) => Reading(54200), compare: false);
+        await new GmvCommandHandler(off.Settings, off.Notifier, off.Telegram).HandleAsync(new TelegramUpdate(1, "123", "/gmv"), default);
+        Assert.DoesNotContain("Dün", Assert.Single(off.Telegram.Messages));
+    }
+
+    [Fact]
+    public void ChangingTheScheduleKeepsTheComparisonSetting()
+    {
+        using var rig = new Rig(() => Reading(1), compare: false);
+
+        rig.Settings.UpdateSchedule(new GmvScheduleUpdate(IntervalMinutes: 20));
+
+        Assert.False(rig.Settings.Load().IncludeComparison);
     }
 
     [Fact]

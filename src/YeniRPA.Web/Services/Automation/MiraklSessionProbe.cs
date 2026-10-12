@@ -200,6 +200,65 @@ public sealed class MiraklSessionProbe : IAsyncDisposable
         return lines;
     }
 
+    /// <summary>
+    /// Settles whether the sales endpoint honours a time of day. For yesterday and for the same weekday
+    /// last week it reads the whole day and the stretch up to the current time; if the second is smaller
+    /// than the first, "yesterday at this time" can be asked for directly. If they come out equal, the
+    /// endpoint only counts whole days and the comparison has to be built from saved readings instead.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> RangeCheckAsync()
+    {
+        await using var context = await _browser.CreateAuthApiContextAsync();
+        var lines = new List<string>();
+        var now = GmvDashboard.PlatformNow();
+        var honoured = new List<bool>();
+
+        var (todayFrom, todayTo) = GmvDashboard.FullDay(now, 0);
+        var today = await ReadGmvAsync(context, todayFrom, todayTo);
+        lines.Add($"today so far ({todayFrom:HH:mm}-{todayTo:HH:mm}): {Show(today)}");
+
+        foreach (var (label, daysBack) in new[] { ("yesterday", 1), ("same weekday last week", 7) })
+        {
+            var (fullFrom, fullTo) = GmvDashboard.FullDay(now, daysBack);
+            var (partFrom, partTo) = GmvDashboard.ComparisonRange(now, daysBack);
+
+            var full = await ReadGmvAsync(context, fullFrom, fullTo);
+            var part = await ReadGmvAsync(context, partFrom, partTo);
+
+            lines.Add($"{label}, whole day ({fullFrom:yyyy-MM-dd}): {Show(full)}");
+            lines.Add($"{label}, up to {partTo:HH:mm}: {Show(part)}");
+
+            if (full is { } f && part is { } p)
+                honoured.Add(p < f);
+        }
+
+        lines.Add(honoured.Count == 0
+            ? "verdict: could not read the figures."
+            : honoured.All(x => x)
+                ? "verdict: the time of day is honoured; 'up to this time' can be asked for directly."
+                : "verdict: the partial figure equals the whole day somewhere; the time of day is NOT honoured for every case (a quiet early hour can also cause this - run again later in the day).");
+        return lines;
+
+        static string Show(double? value) => value is null ? "unreadable" : value.Value.ToString("N2", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    static async Task<double?> ReadGmvAsync(IAPIRequestContext context, DateTimeOffset from, DateTimeOffset to)
+    {
+        var response = await context.GetAsync(GmvDashboard.SalesUrl(from, to), new APIRequestContextOptions { Timeout = 30_000 });
+        if (!response.Ok)
+            return null;
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(await response.BodyAsync());
+            return document.RootElement.TryGetProperty("gmv", out var gmv) && gmv.TryGetDouble(out var value) ? value : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
     static void Walk(System.Text.Json.JsonElement element, string at, string endpoint, List<string> lines, int depth)
     {
         if (depth > 8 || lines.Count > 60)

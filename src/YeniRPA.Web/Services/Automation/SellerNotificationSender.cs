@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 
 namespace YeniRPA.Web.Services.Automation;
 
@@ -13,12 +13,12 @@ namespace YeniRPA.Web.Services.Automation;
 /// <para>Ported from the RPA project's <c>RpaService.SendSellerNotificationAsync</c> /
 /// <c>FillConversationTopicAsync</c> / <c>SelectComboboxOptionAsync</c> — those selectors already
 /// work against the live Mirakl UI, so they are carried over as-is. A null free topic picks Mirakl's
-/// own "Return / Cancel the order" topic; a value picks "Other reason" and fills it in.</para>
+/// own "Return the order" topic; a value picks "Other reason" and fills it in.</para>
 /// </summary>
 public sealed class SellerNotificationSender
 {
     /// <summary>Mirakl Topic option used by the return and undelivered kinds.</summary>
-    const string MiraklReturnTopic = "Return / Cancel the order";
+    const string MiraklReturnTopic = "Return the order";
 
     /// <summary>Mirakl Topic option used by the custom kind, which then needs the free-text topic.</summary>
     const string MiraklOtherReasonTopic = "Other reason";
@@ -76,7 +76,16 @@ public sealed class SellerNotificationSender
             await combobox.PressAsync("ArrowDown");
         }
 
-        var option = page.GetByRole(AriaRole.Option, new() { Name = topicOption, Exact = true }).First;
+        // The topic list is a searchable dropdown whose search box takes focus on open; typing the
+        // option name narrows the long list to it, so it is rendered and on screen to click.
+        await page.Keyboard.TypeAsync(topicOption);
+        await page.WaitForTimeoutAsync(300);
+
+        // Mirakl does not always expose the entries as role=option, so fall back to the visible text.
+        var option = page.GetByRole(AriaRole.Option, new() { Name = topicOption, Exact = true })
+            .Or(page.GetByText(topicOption, new() { Exact = true }))
+            .Filter(new() { Visible = true })
+            .Last;
         await option.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
         await option.ScrollIntoViewIfNeededAsync();
         await option.ClickAsync();

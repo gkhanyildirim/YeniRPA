@@ -76,7 +76,10 @@ public sealed class SellerTargetsController : ControllerBase
         [property: JsonPropertyName("subject")] string? Subject,
         [property: JsonPropertyName("belowBody")] string? BelowBody,
         [property: JsonPropertyName("aboveBody")] string? AboveBody,
-        [property: JsonPropertyName("threshold")] double? Threshold);
+        [property: JsonPropertyName("threshold")] double? Threshold,
+        [property: JsonPropertyName("kickbackBelowBody")] string? KickbackBelowBody = null,
+        [property: JsonPropertyName("kickbackAboveBody")] string? KickbackAboveBody = null,
+        [property: JsonPropertyName("kickbackThreshold")] double? KickbackThreshold = null);
 
     public sealed record ContactEntry(
         [property: JsonPropertyName("sellerId")] string? SellerId,
@@ -149,6 +152,9 @@ public sealed class SellerTargetsController : ControllerBase
         belowBody = SellerTargetMessageBuilder.DefaultBelowBody,
         aboveBody = SellerTargetMessageBuilder.DefaultAboveBody,
         threshold = SellerTargetMessageBuilder.DefaultThreshold,
+        kickbackBelowBody = SellerTargetMessageBuilder.DefaultKickbackBelowBody,
+        kickbackAboveBody = SellerTargetMessageBuilder.DefaultKickbackAboveBody,
+        kickbackThreshold = SellerTargetMessageBuilder.DefaultKickbackThreshold,
         placeholders = SellerTargetMessageBuilder.KnownPlaceholders,
     });
 
@@ -212,6 +218,7 @@ public sealed class SellerTargetsController : ControllerBase
                 current = row.Current,
                 days = row.Days,
                 daysInMonth = row.DaysInMonth,
+                supportType = row.SupportType,
                 hasData = row.Current.HasValue && row.Target > 0,
                 forecastPercent = row.Current.HasValue ? SellerTargetMessageBuilder.ForecastPercent(row) : (double?)null,
                 percent = row.Current.HasValue ? SellerTargetMessageBuilder.Percent(row.Target, row.Current.Value) : (double?)null,
@@ -248,7 +255,9 @@ public sealed class SellerTargetsController : ControllerBase
         var rendered = rows
             .Select(row => SellerTargetMessageBuilder.Render(
                 row, request?.Month ?? "", request?.Subject, request?.BelowBody, request?.AboveBody,
-                Math.Clamp(request?.Threshold ?? SellerTargetMessageBuilder.DefaultThreshold, 0, 1000)))
+                Math.Clamp(request?.Threshold ?? SellerTargetMessageBuilder.DefaultThreshold, 0, 1000),
+                request?.KickbackBelowBody, request?.KickbackAboveBody,
+                Math.Clamp(request?.KickbackThreshold ?? SellerTargetMessageBuilder.DefaultKickbackThreshold, 0, 1000)))
             .ToList();
 
         var warnings = rendered

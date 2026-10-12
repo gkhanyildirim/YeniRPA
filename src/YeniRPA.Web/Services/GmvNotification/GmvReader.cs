@@ -11,7 +11,39 @@ public interface IGmvReader
     /// <exception cref="GmvUnavailableException">The dashboard answered but no usable figure came out.</exception>
     Task<GmvReading> ReadAsync(CancellationToken cancellationToken);
 
+    /// <summary>Reads the GMV over a past stretch of time ("yesterday up to this time"). Same errors as <see cref="ReadAsync"/>.</summary>
+    Task<GmvReading> ReadRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken);
+
     GmvSessionStatus Status { get; }
+}
+
+public static class GmvReaderComparison
+{
+    /// <summary>
+    /// Today's GMV together with the GMV of the same stretch of the day <paramref name="daysBack"/> days
+    /// earlier. Both are measured against one <c>now</c>, so they cover the same time of day.
+    ///
+    /// <para>The figure for today is what matters: when the earlier one cannot be read, the result
+    /// carries <c>Past = null</c> and the message says so, rather than a made-up or zero number. A login
+    /// that expires between the two reads is left for the next read to report.</para>
+    /// </summary>
+    public static async Task<GmvComparison> ReadComparedAsync(
+        this IGmvReader reader, int daysBack, CancellationToken cancellationToken)
+    {
+        var now = GmvDashboard.PlatformNow();
+        var current = await reader.ReadAsync(cancellationToken);
+        var (from, to) = GmvDashboard.ComparisonRange(now, daysBack);
+
+        try
+        {
+            var past = await reader.ReadRangeAsync(from, to, cancellationToken);
+            return new GmvComparison(current.Gmv, past.Gmv, daysBack);
+        }
+        catch (Exception ex) when (ex is GmvUnavailableException or GmvSessionExpiredException)
+        {
+            return new GmvComparison(current.Gmv, null, daysBack);
+        }
+    }
 }
 
 /// <summary>
@@ -45,7 +77,13 @@ public sealed class GmvReader(MiraklBrowser browser) : IGmvReader, IAsyncDisposa
         }
     }
 
-    public async Task<GmvReading> ReadAsync(CancellationToken cancellationToken)
+    public Task<GmvReading> ReadAsync(CancellationToken cancellationToken) =>
+        ReadUrlAsync(GmvDashboard.SalesUrl(), cancellationToken);
+
+    public Task<GmvReading> ReadRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
+        ReadUrlAsync(GmvDashboard.SalesUrl(from, to), cancellationToken);
+
+    async Task<GmvReading> ReadUrlAsync(string url, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -62,7 +100,7 @@ public sealed class GmvReader(MiraklBrowser browser) : IGmvReader, IAsyncDisposa
             IAPIResponse response;
             try
             {
-                response = await context.GetAsync(GmvDashboard.SalesUrl(), new APIRequestContextOptions { Timeout = 30_000 });
+                response = await context.GetAsync(url, new APIRequestContextOptions { Timeout = 30_000 });
             }
             catch (PlaywrightException ex)
             {

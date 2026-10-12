@@ -69,19 +69,6 @@ public sealed class ProductStatusController : ControllerBase
             });
         }
 
-        if (sellerNames.Count > ProductStatusRunner.MaxSellersPerRun)
-        {
-            // Says both figures: the limit is checked after de-duplication, so "765 rows" and
-            // "512 sellers" are different numbers and quoting only the second one reads as a
-            // miscount to whoever is looking at the spreadsheet.
-            return BadRequest(new
-            {
-                error = $"{intake.FileRows + intake.PastedLines} submitted line(s) came to {sellerNames.Count} " +
-                        $"distinct sellers, over the {ProductStatusRunner.MaxSellersPerRun}-seller limit for " +
-                        "one run. Narrow the list and run it in batches."
-            });
-        }
-
         if (!_runner.TryStart(sellerNames, intake))
             return BadRequest(new { error = "An automation run is already in progress. Wait for it to finish." });
 

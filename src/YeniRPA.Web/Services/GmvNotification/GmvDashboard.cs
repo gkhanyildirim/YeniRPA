@@ -14,14 +14,51 @@ public static class GmvDashboard
     /// </summary>
     public static (DateTimeOffset From, DateTimeOffset To) PlatformToday()
     {
-        TimeZoneInfo zone;
-        try { zone = TimeZoneInfo.FindSystemTimeZoneById("W. Europe Standard Time"); }
-        catch (TimeZoneNotFoundException) { zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin"); }
-
+        var zone = PlatformZone();
         var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
-        var start = new DateTimeOffset(now.Date, zone.GetUtcOffset(now.Date));
-        var nextDay = now.Date.AddDays(1);
-        return (start, new DateTimeOffset(nextDay, zone.GetUtcOffset(nextDay)));
+        return FullDay(now, 0, zone);
+    }
+
+    static TimeZoneInfo PlatformZone()
+    {
+        try { return TimeZoneInfo.FindSystemTimeZoneById("W. Europe Standard Time"); }
+        catch (TimeZoneNotFoundException) { return TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin"); }
+    }
+
+    /// <summary>The current moment, to be passed to <see cref="ComparisonRange"/> for every read of one message.</summary>
+    public static DateTimeOffset PlatformNow() => TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, PlatformZone());
+
+    /// <summary>
+    /// The whole marketplace day <paramref name="daysBack"/> calendar days before <paramref name="now"/>:
+    /// midnight to the next midnight. Counted in calendar days, not 24-hour blocks, so a day with a
+    /// clock change still starts at its own midnight.
+    /// </summary>
+    public static (DateTimeOffset From, DateTimeOffset To) FullDay(DateTimeOffset now, int daysBack, TimeZoneInfo? zone = null)
+    {
+        zone ??= PlatformZone();
+        var local = TimeZoneInfo.ConvertTime(now, zone);
+        var day = local.Date.AddDays(-daysBack);
+        var nextDay = day.AddDays(1);
+        return (new DateTimeOffset(day, zone.GetUtcOffset(day)), new DateTimeOffset(nextDay, zone.GetUtcOffset(nextDay)));
+    }
+
+    /// <summary>
+    /// The same stretch of the day <paramref name="daysBack"/> days earlier: that day's midnight up to
+    /// the time of day <paramref name="now"/> has reached. This is what "yesterday at this time" and
+    /// "last week at this time" are measured over.
+    /// </summary>
+    public static (DateTimeOffset From, DateTimeOffset To) ComparisonRange(DateTimeOffset now, int daysBack, TimeZoneInfo? zone = null)
+    {
+        zone ??= PlatformZone();
+        var local = TimeZoneInfo.ConvertTime(now, zone);
+        var day = local.Date.AddDays(-daysBack);
+
+        var until = day + local.TimeOfDay;
+        // A time that does not exist on a spring-forward day: use the hour after it.
+        if (zone.IsInvalidTime(until))
+            until = until.AddHours(1);
+
+        return (new DateTimeOffset(day, zone.GetUtcOffset(day)), new DateTimeOffset(until, zone.GetUtcOffset(until)));
     }
 
     /// <summary>
@@ -34,7 +71,12 @@ public static class GmvDashboard
     public static string SalesUrl()
     {
         var (from, to) = PlatformToday();
+        return SalesUrl(from, to);
+    }
 
+    /// <summary>The same request over any stretch of time, for the "yesterday / last week at this time" comparisons.</summary>
+    public static string SalesUrl(DateTimeOffset from, DateTimeOffset to)
+    {
         static string Stamp(DateTimeOffset value) =>
             Uri.EscapeDataString(value.ToString("yyyy-MM-dd'T'HH:mm:ss.fffzzz", CultureInfo.InvariantCulture));
 

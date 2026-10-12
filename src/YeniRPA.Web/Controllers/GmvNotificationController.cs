@@ -23,6 +23,9 @@ public sealed class GmvNotificationController(
         public List<string>? Times { get; set; }
         public int WindowStartHour { get; set; } = 9;
         public int WindowEndHour { get; set; } = 19;
+        public int? IntervalMinutes { get; set; }
+        public int? KeepAliveMinutes { get; set; }
+        public bool? IncludeComparison { get; set; }
         public string? ChatId { get; set; }
         public string? Token { get; set; }
         public double? DailyTarget { get; set; }
@@ -43,7 +46,8 @@ public sealed class GmvNotificationController(
         {
             settings.Save(new GmvSettingsUpdate(
                 request.Enabled, request.Mode, request.Times, request.WindowStartHour,
-                request.WindowEndHour, request.ChatId, request.Token, request.DailyTarget));
+                request.WindowEndHour, request.ChatId, request.Token, request.DailyTarget,
+                request.IntervalMinutes, request.KeepAliveMinutes, request.IncludeComparison));
         }
         catch (InvalidOperationException ex)
         {
@@ -91,10 +95,12 @@ public sealed class GmvNotificationController(
             times = current.Times,
             windowStartHour = current.WindowStartHour,
             windowEndHour = current.WindowEndHour,
+            intervalMinutes = current.IntervalMinutes,
+            includeComparison = current.IncludeComparison,
             chatId = current.ChatId,
             hasToken = current.ProtectedToken is not null,
             dailyTarget = current.DailyTarget,
-            keepAliveMinutes = GmvNotificationWorker.KeepAliveMinutes,
+            keepAliveMinutes = current.KeepAliveMinutes,
             session = new { state = session.State, checkedUtc = session.CheckedUtc },
         };
     }

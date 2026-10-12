@@ -6,17 +6,21 @@ namespace YeniRPA.Web.Services.GmvNotification;
 /// meanwhile is recorded as missed when the app starts again.
 ///
 /// <para>While notifications are on, it also makes one light request every
-/// <see cref="KeepAliveMinutes"/> minutes. The Marketplace ends a login after 30 minutes without
-/// activity, so without this the login would be gone by the next scheduled time.</para>
+/// <see cref="GmvSettings.KeepAliveMinutes"/> minutes. The Marketplace ends a login after 30 minutes
+/// without activity, so without this the login would be gone by the next scheduled time. If that
+/// request finds the login gone, the operator is told right away.</para>
+///
+/// <para>The settings are read at every 30-second tick, so a change made on the Jobs screen applies at
+/// the next tick without a restart.</para>
 /// </summary>
 public sealed class GmvNotificationWorker(
     IGmvSettingsStore settings,
     IGmvHistoryStore history,
     IGmvReader reader,
     GmvNotifier notifier,
+    JobStatusTracker jobs,
     ILogger<GmvNotificationWorker> logger) : BackgroundService
 {
-    public const int KeepAliveMinutes = 10;
     const int MissedLookbackHours = 6;
 
     DateTime _lastKeepAlive = DateTime.MinValue;
@@ -69,12 +73,15 @@ public sealed class GmvNotificationWorker(
         var due = GmvSchedule.Due(config, now);
         if (due is not null && !history.HasSlot(due.Key))
         {
-            await notifier.RunSlotAsync(due, cancellationToken);
+            var outcome = await notifier.RunSlotAsync(due, cancellationToken);
+            jobs.Record(JobIds.GmvReport, outcome.Success, outcome.Message);
+
+            // A scheduled read is activity on the login too.
             _lastKeepAlive = DateTime.Now;
             return;
         }
 
-        if ((now - _lastKeepAlive).TotalMinutes >= KeepAliveMinutes)
+        if ((now - _lastKeepAlive).TotalMinutes >= config.KeepAliveMinutes)
         {
             _lastKeepAlive = now;
             await KeepAliveAsync(cancellationToken);
@@ -85,14 +92,18 @@ public sealed class GmvNotificationWorker(
     {
         try
         {
-            await reader.ReadAsync(cancellationToken);
+            var reading = await reader.ReadAsync(cancellationToken);
+            notifier.NoteSessionWorking(reading.Gmv);
+            jobs.Record(JobIds.SessionKeepAlive, true, "The login is valid.");
         }
-        catch (GmvSessionExpiredException)
+        catch (GmvSessionExpiredException ex)
         {
-            // Shown on the page; the operator is told by Telegram at the next scheduled time.
+            jobs.Record(JobIds.SessionKeepAlive, false, ex.Message);
+            await notifier.NotifySessionLostAsync(cancellationToken);
         }
         catch (GmvUnavailableException ex)
         {
+            jobs.Record(JobIds.SessionKeepAlive, false, ex.Message);
             logger.LogWarning("GMV keep-alive could not read the dashboard: {Message}", ex.Message);
         }
     }

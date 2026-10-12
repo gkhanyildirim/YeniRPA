@@ -17,6 +17,11 @@
   const MODULE = 'seller-targets';
   const TEMPLATE_KEY = 'seller-targets.templates.v3';
   const THRESHOLD_KEY = 'seller-targets.threshold';
+  const KB_THRESHOLD_KEY = 'seller-targets.kickback-threshold';
+
+  // A small, hand-picked set — enough for a business notification, not the full Unicode catalogue.
+  const EMOJI = ['👏', '🎉', '🎯', '✅', '📈', '📊', '🏆', '🥇', '⭐', '🌟', '🔥', '💪', '🚀', '👍', '🙌', '🤝', '🙏', '😊', '😀', '🥳',
+    '💰', '💵', '🛒', '📦', '🚚', '🏷️', '📣', '📌', '📅', '⏰', '⚠️', '❗', '❓', '💡', '📝', '📩', '☎️', '👋', '❤️', '✨'];
 
   let activated = false;
   let stream = null;
@@ -35,9 +40,11 @@
   let sellers = [];
   let texts = {};
   let picked = {};
-  let defaults = { subject: '', below: '', above: '', threshold: 100 };
-  let templates = { subject: '', below: '', above: '' };
+  let defaults = { subject: '', below: '', above: '', kbBelow: '', kbAbove: '', threshold: 100, kbThreshold: 100 };
+  let templates = { subject: '', below: '', above: '', kbBelow: '', kbAbove: '' };
   let threshold = 100;
+  let kbThreshold = 100;
+  let emojiTarget = null;   // the template field the picker inserts into
 
   let previewIndex = -1;
 
@@ -250,7 +257,10 @@
   async function loadTemplates() {
     try {
       const data = await stJson('GET', '/api/seller-targets/templates');
-      defaults = { subject: data.subject, below: data.belowBody, above: data.aboveBody, threshold: data.threshold };
+      defaults = {
+        subject: data.subject, below: data.belowBody, above: data.aboveBody, threshold: data.threshold,
+        kbBelow: data.kickbackBelowBody, kbAbove: data.kickbackAboveBody, kbThreshold: data.kickbackThreshold
+      };
       el('st-placeholders').innerHTML = data.placeholders.map(p => '<code>' + RPA.escapeHtml(p) + '</code>').join(' ');
     } catch (err) {
       RPA.showError('st-prepare-alert', err.message);
@@ -262,27 +272,65 @@
     templates = {
       subject: (saved && saved.subject) || defaults.subject,
       below: (saved && saved.below) || defaults.below,
-      above: (saved && saved.above) || defaults.above
+      above: (saved && saved.above) || defaults.above,
+      kbBelow: (saved && saved.kbBelow) || defaults.kbBelow,
+      kbAbove: (saved && saved.kbAbove) || defaults.kbAbove
     };
 
     let savedThreshold = NaN;
     try { savedThreshold = parseFloat(localStorage.getItem(THRESHOLD_KEY)); } catch (e) { savedThreshold = NaN; }
     threshold = isFinite(savedThreshold) ? savedThreshold : defaults.threshold;
     el('st-threshold').value = threshold;
+
+    let savedKb = NaN;
+    try { savedKb = parseFloat(localStorage.getItem(KB_THRESHOLD_KEY)); } catch (e) { savedKb = NaN; }
+    kbThreshold = isFinite(savedKb) ? savedKb : defaults.kbThreshold;
+    el('st-kb-threshold').value = kbThreshold;
+  }
+
+  function fillTemplateFields(source) {
+    el('st-tpl-subject').value = source.subject;
+    el('st-tpl-below').value = source.below;
+    el('st-tpl-above').value = source.above;
+    el('st-tpl-kb-below').value = source.kbBelow;
+    el('st-tpl-kb-above').value = source.kbAbove;
   }
 
   function openTemplates() {
-    el('st-tpl-subject').value = templates.subject;
-    el('st-tpl-below').value = templates.below;
-    el('st-tpl-above').value = templates.above;
+    fillTemplateFields(templates);
     el('st-templates-dialog').showModal();
+  }
+
+  /** Builds the emoji grid once and wires the toggle; a click inserts at the caret of the last template field. */
+  function initEmojiPicker() {
+    const grid = el('st-emoji-grid');
+    grid.innerHTML = EMOJI.map(e => '<button type="button" aria-label="' + e + '">' + e + '</button>').join('');
+
+    ['st-tpl-subject', 'st-tpl-below', 'st-tpl-above', 'st-tpl-kb-below', 'st-tpl-kb-above'].forEach(function (id) {
+      el(id).addEventListener('focus', function () { emojiTarget = el(id); });
+    });
+
+    el('st-emoji-toggle').addEventListener('click', function () {
+      grid.hidden = !grid.hidden;
+      el('st-emoji-toggle').setAttribute('aria-expanded', String(!grid.hidden));
+    });
+
+    grid.addEventListener('click', function (event) {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const field = emojiTarget || el('st-tpl-below');
+      field.focus();
+      field.setRangeText(button.textContent, field.selectionStart, field.selectionEnd, 'end');
+    });
   }
 
   async function applyTemplates() {
     templates = {
       subject: el('st-tpl-subject').value,
       below: el('st-tpl-below').value,
-      above: el('st-tpl-above').value
+      above: el('st-tpl-above').value,
+      kbBelow: el('st-tpl-kb-below').value,
+      kbAbove: el('st-tpl-kb-above').value
     };
     try { localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates)); } catch (e) { /* private window */ }
 
@@ -337,13 +385,16 @@
       const result = await stJson('POST', '/api/seller-targets/messages', {
         rows: withData.map(x => ({
           sellerId: x.s.sellerId, sellerName: x.s.sellerName, target: x.s.target, current: x.s.current,
-          days: x.s.days, daysInMonth: x.s.daysInMonth
+          days: x.s.days, daysInMonth: x.s.daysInMonth, supportType: x.s.supportType
         })),
         month: month,
         subject: templates.subject,
         belowBody: templates.below,
         aboveBody: templates.above,
-        threshold: threshold
+        threshold: threshold,
+        kickbackBelowBody: templates.kbBelow,
+        kickbackAboveBody: templates.kbAbove,
+        kickbackThreshold: kbThreshold
       });
 
       texts = {};
@@ -372,12 +423,26 @@
     renderMessages();
   }
 
+  /** The Kickback twin of setThreshold. */
+  function setKickbackThreshold() {
+    const value = parseFloat(el('st-kb-threshold').value);
+    if (!isFinite(value) || value < 0) return;
+    kbThreshold = value;
+    try { localStorage.setItem(KB_THRESHOLD_KEY, String(value)); } catch (e) { /* private window */ }
+    renderMessages();
+  }
+
+  function isKickback(s) { return s.supportType === 'kickback'; }
+
   function renderSplit() {
+    function badges(group, limit) {
+      const below = group.filter(s => s.below).length;
+      return '<span class=\"badge red\">' + below + ' below ' + pf.format(limit) + '%</span> ' +
+        '<span class=\"badge green\">' + (group.length - below) + ' at or above</span>';
+    }
     const withData = sellers.filter(s => s.hasData);
-    const below = withData.filter(s => s.below).length;
-    el('st-threshold-split').innerHTML =
-      '<span class=\"badge red\">' + below + ' below ' + pf.format(threshold) + '%</span> ' +
-      '<span class=\"badge green\">' + (withData.length - below) + ' at or above</span>';
+    el('st-threshold-split').innerHTML = badges(withData.filter(s => !isKickback(s)), threshold);
+    el('st-kb-threshold-split').innerHTML = badges(withData.filter(isKickback), kbThreshold);
   }
 
   // ---------------------------------------------------------------------------
@@ -436,7 +501,8 @@
 
     return '<div class="st-card' + (s.hasData ? '' : ' is-nodata') + '" data-index="' + i + '">' +
       '<div class="st-card-head"><div><div class="st-name">' + RPA.escapeHtml(s.sellerName) + '</div>' +
-      '<div class="st-id">' + (s.sellerId ? 'ID ' + RPA.escapeHtml(s.sellerId) : 'no ID') + '</div></div>' +
+      '<div class="st-id">' + (s.sellerId ? 'ID ' + RPA.escapeHtml(s.sellerId) : 'no ID') +
+      ' · ' + (isKickback(s) ? 'Kickback' : 'Komisyon') + '</div></div>' +
       (s.hasData ? '<div class="st-percent' + (s.percent >= 100 ? ' is-done' : '') + '">%' + pf.format(s.percent) + '</div>' : '') +
       '</div>' + top +
       '<div class="st-channels">' +
@@ -712,11 +778,9 @@
     el('st-templates-open').addEventListener('click', openTemplates);
     el('st-threshold').addEventListener('change', setThreshold);
     el('st-tpl-apply').addEventListener('click', applyTemplates);
-    el('st-tpl-reset').addEventListener('click', function () {
-      el('st-tpl-subject').value = defaults.subject;
-      el('st-tpl-below').value = defaults.below;
-      el('st-tpl-above').value = defaults.above;
-    });
+    el('st-kb-threshold').addEventListener('change', setKickbackThreshold);
+    el('st-tpl-reset').addEventListener('click', function () { fillTemplateFields(defaults); });
+    initEmojiPicker();
 
     el('st-preview-save').addEventListener('click', savePreview);
     el('st-tab-mail').addEventListener('click', () => showPane('mail'));

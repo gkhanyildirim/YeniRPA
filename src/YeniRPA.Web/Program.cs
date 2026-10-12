@@ -79,8 +79,14 @@ builder.Services.AddSingleton<IGmvHistoryStore, GmvHistoryStore>();
 builder.Services.AddSingleton<GmvReader>();
 builder.Services.AddSingleton<IGmvReader>(sp => sp.GetRequiredService<GmvReader>());
 builder.Services.AddSingleton<ITelegramSender, TelegramSender>();
+builder.Services.AddSingleton<JobStatusTracker>();
 builder.Services.AddSingleton<GmvNotifier>();
 builder.Services.AddHostedService<GmvNotificationWorker>();
+// "/gmv" typed to the bot answers with the current GMV. Same outbound-only HTTP as the sender, so no
+// open port is needed; only the saved chat is answered.
+builder.Services.AddSingleton<ITelegramReceiver, TelegramReceiver>();
+builder.Services.AddSingleton<GmvCommandHandler>();
+builder.Services.AddHostedService<GmvCommandWorker>();
 builder.Services.AddSingleton<CreateReturnRunner>();
 builder.Services.AddSingleton<MarkAsReceivedRunner>();
 // Shared by SellerNotificationRunner and CreateReturnRunner, so the return notification can be sent
@@ -115,6 +121,10 @@ builder.Services.AddSingleton<CargoSellerReportStore>();
 // No / authCode, then pivots by POS Banka x Taksit. Same in-memory, single-batch shape as
 // CargoSellerReportStore, for the same reason.
 builder.Services.AddSingleton<PosReconciliationStore>();
+
+// SKU Offer & Traffic Report: joins the offers export with the Offer KPIs export per product. Same
+// in-memory, single-batch shape as CargoSellerReportStore, so paging and download need no re-upload.
+builder.Services.AddSingleton<SkuOfferReportStore>();
 
 // Sales Analysis (the Order Report's second view). The store holds the last loaded orders export
 // and the cached runs on it — in memory only, for the same restart-invalidates-it reason as above.

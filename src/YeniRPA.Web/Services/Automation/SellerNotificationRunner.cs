@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using YeniRPA.Web.Models;
 
 namespace YeniRPA.Web.Services.Automation;
@@ -9,7 +9,7 @@ namespace YeniRPA.Web.Services.Automation;
 ///
 /// <para>The per-order Mirakl dialog steps live in <see cref="SellerNotificationSender"/>, shared with
 /// <see cref="CreateReturnRunner"/>. Like the source feature, the return and undelivered kinds use
-/// Mirakl's own "Return / Cancel the order" topic and fill no free-text topic; the custom kind uses
+/// Mirakl's own "Return the order" topic and fill no free-text topic; the custom kind uses
 /// "Other reason" and fills the operator's own topic.</para>
 /// </summary>
 public sealed class SellerNotificationRunner

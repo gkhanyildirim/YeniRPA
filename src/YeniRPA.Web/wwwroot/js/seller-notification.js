@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
    Seller Notification — Mirakl browser automation.
 
    Opens every order's own Mirakl conversation dialog and sends a topic/message
@@ -218,8 +218,8 @@
   // ---------------------------------------------------------------------------
 
   const KIND_HINTS = {
-    'return': 'Sent with Mirakl\'s "Return / Cancel the order" topic. Only the message is editable.',
-    'undelivered': 'Sent with Mirakl\'s "Return / Cancel the order" topic for parcels that came back undelivered.',
+    'return': 'Sent with Mirakl\'s "Return the order" topic. Only the message is editable.',
+    'undelivered': 'Sent with Mirakl\'s "Return the order" topic for parcels that came back undelivered.',
     'custom': 'Sent with Mirakl\'s "Other reason" topic and the free-text topic you enter on the template.'
   };
 
