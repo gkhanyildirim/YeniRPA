@@ -25,6 +25,10 @@ public static class SkuOfferReportBuilder
     const string OffersCreated = "Creation date";
     const string KpiProductId = "Product id";
     const string KpiPdp = "Sessions by Product with PDP (30d)";
+    const string ApprovalCode = "Ürün Kodu";
+    const string ApprovalDate = "Tarih";
+    const string ApprovalBy = "Sorumlu";
+    const string ApprovalStatus = "Durum";
 
     static readonly string[] CreatedFormats =
         ["MM/dd/yyyy hh:mm:ss tt", "M/d/yyyy h:mm:ss tt", "MM/dd/yyyy HH:mm:ss"];
@@ -40,18 +44,30 @@ public static class SkuOfferReportBuilder
 
     sealed record Traffic(double? Pdp, double? AddToCart, double? Impressions, double? Sold, double? Gmv);
 
-    public static SkuOfferReport Build(Stream offers, string offersName, Stream traffic, string trafficName)
+    sealed record Approval(DateTime? Date, string By);
+
+    /// <param name="today">The date product age is measured to; defaults to the server's today. A parameter so tests are deterministic.</param>
+    public static SkuOfferReport Build(
+        Stream offers, string offersName, Stream traffic, string trafficName,
+        Stream approvals, string approvalsName, DateTime? today = null,
+        Stream? stockout = null, string? stockoutName = null)
     {
+        var asOf = (today ?? DateTime.Today).Date;
         var unreadable = 0;
         var accs = ReadOffers(offers, offersName, ref unreadable);
         var kpis = ReadTraffic(traffic, trafficName, out var hasImpressions);
+        var approved = ReadApprovals(approvals, approvalsName);
 
         var rows = new List<SkuOfferRow>(accs.Count);
         var matched = 0;
+        var approvedMatched = 0;
         foreach (var (sku, a) in accs)
         {
             kpis.TryGetValue(sku, out var t);
             if (t is not null) matched++;
+
+            approved.TryGetValue(sku, out var ap);
+            if (ap is not null) approvedMatched++;
 
             string? warning = null, severity = null;
             if (a.First is { } first && !a.FirstActive)
@@ -71,6 +87,9 @@ public static class SkuOfferReportBuilder
                 PdpViews = t?.Pdp, AddToCart = t?.AddToCart, Impressions = t?.Impressions,
                 AtcRate = t is { Pdp: > 0, AddToCart: { } atc } ? atc / t.Pdp : null,
                 Sold30d = t?.Sold, Gmv30d = t?.Gmv,
+                HasApproval = ap is not null, ApprovalDate = ap?.Date, ApprovedBy = ap?.By ?? "",
+                AgeGroup = SkuAgeGroups.For(a.First, asOf),
+                AgeDays = a.First is { } created ? Math.Max(0, (asOf - created.Date).Days) : null,
                 Warning = warning, Severity = severity
             });
         }
@@ -90,9 +109,141 @@ public static class SkuOfferReportBuilder
             TotalPdpViews: rows.Sum(r => r.PdpViews ?? 0),
             TotalAddToCart: rows.Sum(r => r.AddToCart ?? 0),
             HasImpressions: hasImpressions,
-            TotalImpressions: rows.Sum(r => r.Impressions ?? 0));
+            TotalImpressions: rows.Sum(r => r.Impressions ?? 0),
+            ApprovedSkus: approvedMatched,
+            NotApprovedSkus: rows.Count - approvedMatched,
+            ApprovalProductsNotInOffers: approved.Count - approvedMatched);
 
-        return new SkuOfferReport { Rows = rows, Summary = summary, Charts = BuildCharts(rows) };
+        var stockoutReport = stockout is null
+            ? null
+            : BuildStockout(ReadStockout(stockout, stockoutName ?? "stockout"), rows, kpis);
+
+        return new SkuOfferReport
+        {
+            Rows = rows, Summary = summary, Charts = BuildCharts(rows), Stockout = stockoutReport
+        };
+    }
+
+    sealed class StockAcc
+    {
+        public string Product = "", Brand = "", Category = "";
+        public readonly List<string> Sellers = [];
+        public bool? RetailBuyable;
+        public double Sold, Gmv;
+    }
+
+    /// <summary>
+    /// Products Unavailable export: one row per product, but a product repeated per seller is summed
+    /// rather than dropped (the figures are last-7-day sales). Only <c>Product id</c> is required.
+    /// </summary>
+    static Dictionary<string, StockAcc> ReadStockout(Stream stream, string fileName)
+    {
+        var map = new Dictionary<string, StockAcc>(StringComparer.Ordinal);
+        var cId = -1;
+        int? cProduct = null, cBrand = null, cCategory = null, cSeller = null, cRetail = null, cGmv = null, cSold = null;
+        var headerSeen = false;
+
+        foreach (var row in SkuOfferReader.Read(stream, fileName))
+        {
+            if (!headerSeen)
+            {
+                headerSeen = true;
+                var idx = TabularFile.BuildHeaderIndex(row);
+                RequireColumns(idx, "stockout (Products Unavailable)", fileName, KpiProductId);
+                cId = idx[KpiProductId];
+                cProduct = Optional(idx, "Product Name"); cBrand = Optional(idx, "Brand");
+                cCategory = Optional(idx, "Focus Category Name"); cSeller = Optional(idx, "Seller Name");
+                cRetail = Optional(idx, "Retail buyable");
+                cGmv = Optional(idx, "GMV with shipping accepted");
+                cSold = Optional(idx, "Sold items accepted");
+                continue;
+            }
+
+            var id = NormalizeId(TabularFile.GetCell(row, cId));
+            if (id.Length == 0) continue;
+
+            if (!map.TryGetValue(id, out var acc))
+            {
+                acc = new StockAcc
+                {
+                    Product = TabularFile.GetCell(row, cProduct).Trim(),
+                    Brand = TabularFile.GetCell(row, cBrand).Trim(),
+                    Category = TabularFile.GetCell(row, cCategory).Trim()
+                };
+                map[id] = acc;
+            }
+
+            var seller = TabularFile.GetCell(row, cSeller).Trim();
+            if (seller.Length > 0 && !acc.Sellers.Contains(seller)) acc.Sellers.Add(seller);
+
+            var retail = TabularFile.GetCell(row, cRetail).Trim();
+            if (retail.Equals("true", StringComparison.OrdinalIgnoreCase)) acc.RetailBuyable = true;
+            else if (retail.Equals("false", StringComparison.OrdinalIgnoreCase)) acc.RetailBuyable ??= false;
+
+            acc.Gmv += Number(row, cGmv) ?? 0;
+            acc.Sold += Number(row, cSold) ?? 0;
+        }
+
+        if (!headerSeen)
+            throw new InvalidOperationException($"The stockout file '{fileName}' is empty.");
+
+        return map;
+    }
+
+    static StockoutReport BuildStockout(
+        Dictionary<string, StockAcc> stock, List<SkuOfferRow> offerRows, Dictionary<string, Traffic> kpis)
+    {
+        var bySku = offerRows.ToDictionary(r => r.Sku, StringComparer.Ordinal);
+        var rows = new List<StockoutRow>(stock.Count);
+
+        foreach (var (id, s) in stock)
+        {
+            kpis.TryGetValue(id, out var t);
+            bySku.TryGetValue(id, out var offer);
+
+            rows.Add(new StockoutRow
+            {
+                ProductId = id,
+                Product = s.Product.Length > 0 ? s.Product : offer?.Product ?? "",
+                Brand = s.Brand.Length > 0 ? s.Brand : offer?.Brand ?? "",
+                Category = s.Category.Length > 0 ? s.Category : offer?.Category ?? "",
+                Sellers = string.Join(", ", s.Sellers),
+                RetailBuyable = s.RetailBuyable,
+                Sold7d = s.Sold, Gmv7d = s.Gmv,
+                HasTraffic = t is not null,
+                PdpViews = t?.Pdp, AddToCart = t?.AddToCart,
+                AtcRate = t is { Pdp: > 0, AddToCart: { } atc } ? atc / t.Pdp : null,
+                InOffers = offer is not null,
+                TotalOffers = offer?.TotalOffers ?? 0, ActiveOffers = offer?.ActiveOffers ?? 0,
+                FirstOfferDate = offer?.FirstOfferDate,
+                FirstOfferClosed = offer?.Warning is not null,
+                AgeGroup = offer?.AgeGroup,
+                ApprovalDate = offer?.ApprovalDate, ApprovedBy = offer?.ApprovedBy ?? ""
+            });
+        }
+
+        rows.Sort((x, y) => (y.PdpViews ?? -1).CompareTo(x.PdpViews ?? -1));
+
+        var allPdp = kpis.Values.Sum(k => k.Pdp ?? 0);
+        var stockPdp = rows.Sum(r => r.PdpViews ?? 0);
+        var withTraffic = rows.Count(r => r.HasTraffic);
+
+        var summary = new StockoutSummary(
+            Products: rows.Count,
+            WithTraffic: withTraffic,
+            WithoutTraffic: rows.Count - withTraffic,
+            NotInOffers: rows.Count(r => !r.InOffers),
+            TotalPdpViews: stockPdp,
+            SharePctOfAllPdp: allPdp > 0 ? stockPdp / allPdp * 100 : 0,
+            TotalAddToCart: rows.Sum(r => r.AddToCart ?? 0),
+            Gmv7d: rows.Sum(r => r.Gmv7d),
+            Sold7d: rows.Sum(r => r.Sold7d));
+
+        var top = rows.Where(r => r.PdpViews > 0).Take(10)
+            .Select(r => new StockoutTopPoint(r.ProductId, r.Product, r.PdpViews!.Value))
+            .ToList();
+
+        return new StockoutReport { Rows = rows, Summary = summary, TopPdp = top };
     }
 
     static Dictionary<string, Acc> ReadOffers(Stream stream, string fileName, ref int unreadable)
@@ -201,8 +352,127 @@ public static class SkuOfferReportBuilder
         return map;
     }
 
+    /// <summary>
+    /// Product code -> earliest approval (date, approver) across every sheet that carries the three
+    /// columns. The workbook keeps one tab per year, so a product can show up on more than one; the
+    /// earliest approval is the one that made it live. A tab without the columns is skipped, but a
+    /// workbook where no tab has them is an error that names what is missing.
+    /// </summary>
+    static Dictionary<string, Approval> ReadApprovals(Stream stream, string fileName)
+    {
+        var map = new Dictionary<string, Approval>(StringComparer.Ordinal);
+        var sawSheet = false;
+        var usable = false;
+        string[]? missingOnFirst = null;
+
+        foreach (var sheet in SkuOfferReader.ReadSheets(stream, fileName))
+        {
+            int cCode = -1, cDate = -1, cBy = -1;
+            int? cStatus = null;
+            var headerSeen = false;
+            var skip = false;
+
+            foreach (var row in sheet)
+            {
+                if (!headerSeen)
+                {
+                    headerSeen = true;
+                    sawSheet = true;
+                    var idx = TabularFile.BuildHeaderIndex(row);
+                    var missing = new[] { ApprovalCode, ApprovalDate, ApprovalBy }.Where(c => !idx.ContainsKey(c)).ToArray();
+                    if (missing.Length > 0)
+                    {
+                        missingOnFirst ??= missing;
+                        skip = true;
+                        break; // not an approvals tab (a notes or pivot sheet, say)
+                    }
+
+                    usable = true;
+                    cCode = idx[ApprovalCode]; cDate = idx[ApprovalDate]; cBy = idx[ApprovalBy];
+                    cStatus = Optional(idx, ApprovalStatus);
+                    continue;
+                }
+
+                if (!IsApprovedStatus(TabularFile.GetCell(row, cStatus)))
+                    continue;
+
+                var code = NormalizeId(TabularFile.GetCell(row, cCode));
+                if (code.Length == 0) continue;
+
+                var date = ParseApprovalDate(TabularFile.GetCell(row, cDate));
+                var by = NormalizePerson(TabularFile.GetCell(row, cBy));
+
+                if (!map.TryGetValue(code, out var existing) ||
+                    (date is not null && (existing.Date is null || date < existing.Date)))
+                {
+                    map[code] = new Approval(date, by);
+                }
+            }
+
+            if (skip) continue;
+        }
+
+        if (!sawSheet)
+            throw new InvalidOperationException($"The approvals file '{fileName}' is empty.");
+        if (!usable)
+        {
+            throw new InvalidOperationException(
+                $"The approvals file '{fileName}' has no " +
+                string.Join(", ", (missingOnFirst ?? []).Select(m => $"'{m}'")) +
+                " column. Check the files were uploaded in the right boxes.");
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// Whether an approvals row counts. The file is a list of approved products, so a blank status is
+    /// taken as approved; a status that is filled in must be one of the approved spellings.
+    /// </summary>
+    static bool IsApprovedStatus(string status)
+    {
+        var s = status.Trim();
+        return s.Length == 0 ||
+               s.Equals("ACCEPTED", StringComparison.OrdinalIgnoreCase) ||
+               s.Equals("APPROVED", StringComparison.OrdinalIgnoreCase) ||
+               s.Equals("ONAYLI", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static readonly CultureInfo Turkish = new("tr-TR");
+
+    /// <summary>
+    /// The approver column is typed by hand: the real file spells the same person "zeynep" and "Zeynep",
+    /// "hamdi", "Hamdi" and "Hamdi ", "ALİ" and "Ali". Trimmed and title-cased in Turkish rules (so "ALİ"
+    /// becomes "Ali", not "Ali" with a dotted-I mismatch) they collapse to one name for filtering and search.
+    /// </summary>
+    static string NormalizePerson(string raw)
+    {
+        var name = raw.Trim();
+        return name.Length == 0 ? "" : Turkish.TextInfo.ToTitleCase(name.ToLower(Turkish));
+    }
+
+    /// <summary>The approvals tabs store dates as Excel serial numbers ("46055"); a text date is read day-first.</summary>
+    static DateTime? ParseApprovalDate(string text)
+    {
+        text = text.Trim();
+        if (text.Length == 0) return null;
+
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var serial) &&
+            serial is > 20000 and < 80000)
+            return DateTime.FromOADate(serial);
+
+        return TabularFile.ParseDayFirstDate(text);
+    }
+
     static SkuOfferCharts BuildCharts(List<SkuOfferRow> rows)
     {
+        var byAge = SkuAgeGroups.All
+            .Select(g => new SkuAgePoint(
+                g.Key, g.Label,
+                rows.Count(r => r.AgeGroup == g.Key),
+                rows.Count(r => r.AgeGroup == g.Key && r.Warning is not null)))
+            .ToList();
+
         var byMonth = rows
             .Where(r => r.FirstOfferDate is not null)
             .GroupBy(r => r.FirstOfferDate!.Value.ToString("yyyy-MM", CultureInfo.InvariantCulture))
@@ -226,7 +496,7 @@ public static class SkuOfferReportBuilder
             .Select(r => new SkuTopTrafficPoint(r.Sku, r.Product, r.PdpViews!.Value, r.Warning is not null))
             .ToList();
 
-        return new SkuOfferCharts(byMonth, byCategory, topTraffic);
+        return new SkuOfferCharts(byMonth, byCategory, topTraffic, byAge);
     }
 
     public static IReadOnlyList<SkuOfferRow> Query(IReadOnlyList<SkuOfferRow> rows, SkuOfferQuery query)
@@ -239,8 +509,13 @@ public static class SkuOfferReportBuilder
             "noActive" => result.Where(r => r.ActiveOffers == 0),
             "noTraffic" => result.Where(r => !r.HasTraffic),
             "hasTraffic" => result.Where(r => r.HasTraffic),
+            "noApproval" => result.Where(r => !r.HasApproval),
             _ => result
         };
+
+        var age = (query.AgeGroup ?? "").Trim();
+        if (age.Length > 0 && !age.Equals("all", StringComparison.OrdinalIgnoreCase))
+            result = result.Where(r => string.Equals(r.AgeGroup, age, StringComparison.OrdinalIgnoreCase));
 
         var search = (query.Search ?? "").Trim();
         if (search.Length > 0)
@@ -249,7 +524,8 @@ public static class SkuOfferReportBuilder
                 r.Sku.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                 r.Product.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                 r.Brand.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                r.Category.Contains(search, StringComparison.OrdinalIgnoreCase));
+                r.Category.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                r.ApprovedBy.Contains(search, StringComparison.OrdinalIgnoreCase));
         }
 
         var d = query.Descending;
@@ -262,6 +538,9 @@ public static class SkuOfferReportBuilder
             "pdp" => Order(result, r => r.PdpViews ?? -1, d),
             "atc" => Order(result, r => r.AddToCart ?? -1, d),
             "atcRate" => Order(result, r => r.AtcRate ?? -1, d),
+            "approvalDate" => Order(result, r => r.ApprovalDate ?? DateTime.MaxValue, d),
+            "approvedBy" => Order(result, r => r.ApprovedBy, d),
+            "age" => Order(result, r => r.AgeDays ?? -1, d),
             "sku" => Order(result, r => r.Sku, d),
             _ => result
         };

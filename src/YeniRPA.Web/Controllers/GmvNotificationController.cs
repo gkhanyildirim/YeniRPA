@@ -26,6 +26,8 @@ public sealed class GmvNotificationController(
         public int? IntervalMinutes { get; set; }
         public int? KeepAliveMinutes { get; set; }
         public bool? IncludeComparison { get; set; }
+        public bool? TeamsEnabled { get; set; }
+        public string? TeamsUrl { get; set; }
         public string? ChatId { get; set; }
         public string? Token { get; set; }
         public double? DailyTarget { get; set; }
@@ -47,7 +49,8 @@ public sealed class GmvNotificationController(
             settings.Save(new GmvSettingsUpdate(
                 request.Enabled, request.Mode, request.Times, request.WindowStartHour,
                 request.WindowEndHour, request.ChatId, request.Token, request.DailyTarget,
-                request.IntervalMinutes, request.KeepAliveMinutes, request.IncludeComparison));
+                request.IntervalMinutes, request.KeepAliveMinutes, request.IncludeComparison,
+                request.TeamsUrl, request.TeamsEnabled));
         }
         catch (InvalidOperationException ex)
         {
@@ -62,6 +65,13 @@ public sealed class GmvNotificationController(
     {
         settings.ClearToken();
         return Success("The bot token was removed and notifications were switched off.", SettingsView());
+    }
+
+    [HttpPost("clear-teams-url")]
+    public IActionResult ClearTeamsUrl()
+    {
+        settings.ClearTeamsUrl();
+        return Success("The Teams webhook address was removed and the Teams copy was switched off.", SettingsView());
     }
 
     [HttpPost("test")]
@@ -97,6 +107,8 @@ public sealed class GmvNotificationController(
             windowEndHour = current.WindowEndHour,
             intervalMinutes = current.IntervalMinutes,
             includeComparison = current.IncludeComparison,
+            teamsEnabled = current.TeamsEnabled,
+            hasTeamsUrl = current.ProtectedTeamsUrl is not null,
             chatId = current.ChatId,
             hasToken = current.ProtectedToken is not null,
             dailyTarget = current.DailyTarget,

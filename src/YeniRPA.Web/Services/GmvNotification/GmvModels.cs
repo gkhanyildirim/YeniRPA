@@ -63,6 +63,12 @@ public sealed class GmvSettings
 
     /// <summary>Adds "yesterday at this time" to every message. Documents saved before this existed read as on.</summary>
     public bool IncludeComparison { get; set; } = true;
+
+    /// <summary>Also posts every message to a Teams chat through a Power Automate workflow's webhook.</summary>
+    public bool TeamsEnabled { get; set; }
+
+    /// <summary>The workflow's webhook address, encrypted. Whoever holds it can post to the chat, so it is a secret like the bot token.</summary>
+    public string? ProtectedTeamsUrl { get; set; }
 }
 
 public static class GmvLimits
@@ -89,7 +95,9 @@ public sealed record GmvSettingsUpdate(
     double? DailyTarget,
     int? IntervalMinutes = null,
     int? KeepAliveMinutes = null,
-    bool? IncludeComparison = null);
+    bool? IncludeComparison = null,
+    string? TeamsUrl = null,
+    bool? TeamsEnabled = null);
 
 /// <summary>The schedule-only part of the settings, edited from the Jobs screen. Null keeps the stored value.</summary>
 public sealed record GmvScheduleUpdate(

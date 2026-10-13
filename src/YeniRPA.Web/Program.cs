@@ -80,6 +80,8 @@ builder.Services.AddSingleton<IGmvHistoryStore, GmvHistoryStore>();
 builder.Services.AddSingleton<GmvReader>();
 builder.Services.AddSingleton<IGmvReader>(sp => sp.GetRequiredService<GmvReader>());
 builder.Services.AddSingleton<ITelegramSender, TelegramSender>();
+// The same messages can also go to a Teams chat through a Power Automate workflow's webhook.
+builder.Services.AddSingleton<ITeamsSender, TeamsSender>();
 builder.Services.AddSingleton<JobStatusTracker>();
 builder.Services.AddSingleton<GmvNotifier>();
 builder.Services.AddHostedService<GmvNotificationWorker>();

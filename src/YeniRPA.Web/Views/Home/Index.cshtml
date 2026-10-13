@@ -1937,6 +1937,22 @@
                             <input type="file" id="sor-traffic-file" accept=".csv,.xlsx,.xls"
                                    aria-label="Offer KPIs traffic export (.csv or .xlsx)" />
                         </label>
+
+                        <label class="drop" id="sor-approvals-drop">
+                            <span class="drop-title">Approved products (Onaylı Ürünler)</span>
+                            <span class="drop-hint">.xlsx &mdash; "Ürün Kodu", "Tarih", "Sorumlu"; every sheet is read</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="sor-approvals-file" accept=".csv,.xlsx,.xls"
+                                   aria-label="Approved products export (.xlsx)" />
+                        </label>
+
+                        <label class="drop" id="sor-stockout-drop">
+                            <span class="drop-title">Stockout products <em class="sor-optional">optional</em></span>
+                            <span class="drop-hint">.csv / .xlsx &mdash; "Products Unavailable L7D": "Product id"; adds the Stockout PDP report</span>
+                            <span class="drop-file"><span class="name"></span><span class="size"></span></span>
+                            <input type="file" id="sor-stockout-file" accept=".csv,.xlsx,.xls"
+                                   aria-label="Stockout products export (optional, .csv or .xlsx)" />
+                        </label>
                     </div>
 
                     <div class="alert" id="sor-alert" role="alert">
@@ -1954,6 +1970,54 @@
             </div>
 
             <div class="results" id="sor-results" hidden>
+                <div class="sor-views" id="sor-views" role="tablist" aria-label="Report view" hidden>
+                    <button type="button" class="sor-view is-on" role="tab" aria-selected="true" data-view="skus">SKU report</button>
+                    <button type="button" class="sor-view" role="tab" aria-selected="false" data-view="stockout">Stockout PDP</button>
+                </div>
+
+                <div id="sor-view-stockout" role="tabpanel" hidden>
+                    <div class="section-title">Stockout products &mdash; PDP sessions</div>
+                    <div class="card">
+                        <div class="kpi-grid" id="sor-so-kpis"></div>
+                        <p class="note" id="sor-so-notes"></p>
+                        <p class="note">PDP sessions and add to cart are the last 30 days (Offer KPIs file); sold items and GMV are the last 7 days (stockout file).</p>
+                    </div>
+
+                    <div class="section-title">Most viewed while unavailable</div>
+                    <div class="card">
+                        <div class="sor-chart-title">Top 10 stockout products by PDP sessions (30d)</div>
+                        <div class="sor-chart-sub">Visitors landing on a product that cannot be bought</div>
+                        <div class="chart-box"><canvas id="sor-chart-stockout"></canvas></div>
+                    </div>
+
+                    <div class="section-title">Products</div>
+                    <div class="card">
+                        <div class="sor-toolbar">
+                            <input type="search" id="sor-so-search" class="sor-search" placeholder="Search product id, product, brand, category, seller&hellip;"
+                                   aria-label="Search stockout products" autocomplete="off" />
+                            <div class="sor-chips" id="sor-so-chips" role="group" aria-label="Stockout filter">
+                                <button type="button" class="sor-chip is-on" data-sofilter="all">All</button>
+                                <button type="button" class="sor-chip" data-sofilter="hasTraffic">With PDP data</button>
+                                <button type="button" class="sor-chip" data-sofilter="noTraffic">No PDP data</button>
+                                <button type="button" class="sor-chip" data-sofilter="noActive">No active offer</button>
+                                <button type="button" class="sor-chip" data-sofilter="retail">Retail buyable</button>
+                            </div>
+                            <button type="button" class="btn btn-ghost" id="sor-so-download">
+                                <span class="spinner" aria-hidden="true"></span>
+                                <span class="btn-text">Download .xlsx</span>
+                            </button>
+                        </div>
+                        <div class="table-scroll">
+                            <table class="sor-table" id="sor-so-table">
+                                <thead id="sor-so-thead"></thead>
+                                <tbody id="sor-so-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="sor-pager"><span id="sor-so-count" class="sor-count"></span></div>
+                    </div>
+                </div>
+
+                <div id="sor-view-skus">
                 <div class="section-title">Overview</div>
                 <div class="card">
                     <div class="kpi-grid" id="sor-kpis"></div>
@@ -1978,7 +2042,12 @@
                         <div class="sor-chart-sub">Top 10 categories by SKUs whose first offer is closed</div>
                         <div class="chart-box"><canvas id="sor-chart-category"></canvas></div>
                     </div>
-                    <div class="card sor-chart-wide">
+                    <div class="card">
+                        <div class="sor-chart-title">Product age (first offer to today)</div>
+                        <div class="sor-chart-sub">Baby 0-1 mo &middot; Young 1-3 mo &middot; Adult 3-6 mo &middot; Mature 6+ mo &middot; closed first offers highlighted</div>
+                        <div class="chart-box"><canvas id="sor-chart-age"></canvas></div>
+                    </div>
+                    <div class="card">
                         <div class="sor-chart-title">Top 10 SKUs by PDP views (30d)</div>
                         <div class="sor-chart-sub">Red bars: the SKU's first offer is closed</div>
                         <div class="chart-box"><canvas id="sor-chart-top"></canvas></div>
@@ -1996,6 +2065,15 @@
                             <button type="button" class="sor-chip" data-filter="noActive">No active offer</button>
                             <button type="button" class="sor-chip" data-filter="hasTraffic">With traffic</button>
                             <button type="button" class="sor-chip" data-filter="noTraffic">No traffic data</button>
+                            <button type="button" class="sor-chip" data-filter="noApproval">Not approved</button>
+                        </div>
+                        <div class="sor-chips sor-age-chips" id="sor-age-chips" role="group" aria-label="Product age">
+                            <span class="sor-chips-label">Age</span>
+                            <button type="button" class="sor-chip is-on" data-age="all">Any</button>
+                            <button type="button" class="sor-chip" data-age="baby">Baby 0-1 mo</button>
+                            <button type="button" class="sor-chip" data-age="young">Young 1-3 mo</button>
+                            <button type="button" class="sor-chip" data-age="adult">Adult 3-6 mo</button>
+                            <button type="button" class="sor-chip" data-age="mature">Mature 6+ mo</button>
                         </div>
                         <button type="button" class="btn btn-ghost" id="sor-download">
                             <span class="spinner" aria-hidden="true"></span>
@@ -2018,6 +2096,7 @@
                             <button type="button" class="btn btn-ghost" id="sor-next">Next &rarr;</button>
                         </span>
                     </div>
+                </div>
                 </div>
             </div>
 
@@ -5104,6 +5183,15 @@
                             <label for="gmv-target">Daily GMV target (EUR, optional)</label>
                             <input type="number" id="gmv-target" min="0" step="any" placeholder="e.g. 100000" />
                         </div>
+                        <div class="field">
+                            <label for="gmv-teams-url">Teams webhook address (optional)</label>
+                            <input type="password" id="gmv-teams-url" autocomplete="off" spellcheck="false" />
+                            <span class="gmv-hint" id="gmv-teams-hint"></span>
+                        </div>
+                        <label class="gmv-check">
+                            <input type="checkbox" id="gmv-teams-enabled" />
+                            <span>Also send to Teams</span>
+                        </label>
                         <label class="gmv-check">
                             <input type="checkbox" id="gmv-compare" />
                             <span>Add DoD / WoW comparison (yesterday and last week, same time)</span>
@@ -5125,6 +5213,9 @@
                         </button>
                         <button type="button" class="btn btn-ghost" id="gmv-clear-token" hidden>
                             <span class="btn-text">Remove token</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="gmv-clear-teams" hidden>
+                            <span class="btn-text">Remove Teams address</span>
                         </button>
                     </div>
 
@@ -5154,7 +5245,7 @@
                     <p class="sub">Reads today's GMV right away, with the same settings the schedule uses.</p>
                     <label class="gmv-check">
                         <input type="checkbox" id="gmv-check-send" />
-                        <span>Also send it to Telegram</span>
+                        <span>Also send it to Telegram (and Teams, when switched on)</span>
                     </label>
                     <div class="actions">
                         <button type="button" class="btn btn-primary" id="gmv-check">

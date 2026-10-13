@@ -17,6 +17,10 @@ internal static class SkuOfferReader
     public static IEnumerable<List<string>> Read(Stream stream, string fileName) =>
         TabularFile.IsXlsx(fileName) ? OfferExportReader.Read(stream, fileName) : ReadCsv(stream);
 
+    /// <summary>Every sheet of a workbook as its own sequence; a CSV is one sequence. See <see cref="OfferExportReader.ReadAllSheets"/>.</summary>
+    public static IEnumerable<IEnumerable<List<string>>> ReadSheets(Stream stream, string fileName) =>
+        TabularFile.IsXlsx(fileName) ? OfferExportReader.ReadAllSheets(stream, fileName) : [ReadCsv(stream)];
+
     static IEnumerable<List<string>> ReadCsv(Stream stream)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, 1 << 16, leaveOpen: true);

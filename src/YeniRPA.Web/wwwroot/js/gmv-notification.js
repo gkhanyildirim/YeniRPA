@@ -107,6 +107,14 @@
       : 'Create a bot with @BotFather and paste its token here.';
     el('gmv-clear-token').hidden = !data.hasToken;
 
+    // Same rule for the Teams address: it is a secret, so it is reported as saved and never echoed.
+    el('gmv-teams-url').value = '';
+    el('gmv-teams-enabled').checked = !!data.teamsEnabled;
+    el('gmv-teams-hint').textContent = data.hasTeamsUrl
+      ? 'An address is saved. Leave this empty to keep it.'
+      : 'From the Power Automate workflow "When a Teams webhook request is received".';
+    el('gmv-clear-teams').hidden = !data.hasTeamsUrl;
+
     const session = SESSION[data.session.state] || SESSION.unknown;
     const sessionBadge = el('gmv-session-badge');
     sessionBadge.className = 'badge ' + session.tone;
@@ -123,6 +131,8 @@
     return {
       enabled: el('gmv-enabled').checked,
       includeComparison: el('gmv-compare').checked,
+      teamsEnabled: el('gmv-teams-enabled').checked,
+      teamsUrl: el('gmv-teams-url').value.trim(),
       mode: el('gmv-mode').value,
       times: el('gmv-times').value.split(',').map(function (t) { return t.trim(); }).filter(Boolean),
       windowStartHour: parseInt(el('gmv-from').value, 10),
@@ -219,6 +229,15 @@
       if (!window.confirm('Remove the saved bot token? Notifications will be switched off.')) return;
       run(el('gmv-clear-token'), 'Removing…', async function () {
         const body = await api('POST', '/api/gmv/clear-token');
+        applySettings(body.data);
+        showSuccess(body.message);
+      });
+    });
+
+    el('gmv-clear-teams').addEventListener('click', function () {
+      if (!window.confirm('Remove the saved Teams address? The Teams copy will be switched off.')) return;
+      run(el('gmv-clear-teams'), 'Removing…', async function () {
+        const body = await api('POST', '/api/gmv/clear-teams-url');
         applySettings(body.data);
         showSuccess(body.message);
       });

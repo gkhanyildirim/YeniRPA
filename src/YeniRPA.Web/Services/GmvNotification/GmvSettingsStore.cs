@@ -24,6 +24,12 @@ public interface IGmvSettingsStore
     string? ReadToken();
 
     void ClearToken();
+
+    /// <summary>The decrypted Teams webhook address, or null when none is saved or it can no longer be decrypted.</summary>
+    string? ReadTeamsUrl();
+
+    /// <summary>Forgets the Teams webhook address and switches the Teams copy off.</summary>
+    void ClearTeamsUrl();
 }
 
 /// <summary>
@@ -47,6 +53,7 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
 
     readonly ILiteCollection<Document> _collection;
     readonly IDataProtector _protector;
+    readonly IDataProtector _teamsProtector;
 
     /// <summary>Serialises load-modify-save, which LiteDB does not make atomic across two calls.</summary>
     readonly object _sync = new();
@@ -59,6 +66,7 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
         _collection = context.GetCollection<Document>("gmvSettings");
         _collection.EnsureIndex(x => x.Id, unique: true);
         _protector = dataProtection.CreateProtector("YeniRPA.Gmv.TelegramToken");
+        _teamsProtector = dataProtection.CreateProtector("YeniRPA.Gmv.TeamsWebhook");
     }
 
     public GmvSettings Load() => _collection.FindById(DocumentId)?.Data ?? new GmvSettings();
@@ -87,6 +95,10 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
         if (update.DailyTarget is <= 0 || update.DailyTarget is { } t && !double.IsFinite(t))
             throw new InvalidOperationException("The daily GMV target must be a positive number.");
 
+        var newTeamsUrl = update.TeamsUrl?.Trim();
+        if (!string.IsNullOrEmpty(newTeamsUrl) && TeamsSender.Validate(newTeamsUrl) is { } teamsProblem)
+            throw new InvalidOperationException(teamsProblem);
+
         lock (_sync)
         {
             var current = Load();
@@ -96,6 +108,11 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
 
             if (update.Enabled && (chatId.Length == 0 || protectedToken is null))
                 throw new InvalidOperationException("Enter the bot token and the chat ID before turning notifications on.");
+
+            var protectedTeamsUrl = string.IsNullOrEmpty(newTeamsUrl) ? current.ProtectedTeamsUrl : _teamsProtector.Protect(newTeamsUrl);
+            var teamsEnabled = update.TeamsEnabled ?? current.TeamsEnabled;
+            if (teamsEnabled && protectedTeamsUrl is null)
+                throw new InvalidOperationException("Enter the Teams webhook address before turning the Teams copy on.");
 
             _collection.Upsert(new Document
             {
@@ -113,6 +130,8 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
                     ProtectedToken = protectedToken,
                     DailyTarget = update.DailyTarget,
                     IncludeComparison = update.IncludeComparison ?? current.IncludeComparison,
+                    TeamsEnabled = teamsEnabled,
+                    ProtectedTeamsUrl = protectedTeamsUrl,
                 },
             });
         }
@@ -149,6 +168,8 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
                 ProtectedToken = current.ProtectedToken,
                 DailyTarget = current.DailyTarget,
                 IncludeComparison = current.IncludeComparison,
+                TeamsEnabled = current.TeamsEnabled,
+                ProtectedTeamsUrl = current.ProtectedTeamsUrl,
             };
 
             if (next.Mode is GmvMode.Hourly or GmvMode.Interval)
@@ -193,6 +214,27 @@ public sealed class GmvSettingsStore : IGmvSettingsStore
 
         try { return _protector.Unprotect(stored); }
         catch (CryptographicException) { return null; }
+    }
+
+    public string? ReadTeamsUrl()
+    {
+        var stored = Load().ProtectedTeamsUrl;
+        if (stored is null)
+            return null;
+
+        try { return _teamsProtector.Unprotect(stored); }
+        catch (CryptographicException) { return null; }
+    }
+
+    public void ClearTeamsUrl()
+    {
+        lock (_sync)
+        {
+            var current = Load();
+            current.ProtectedTeamsUrl = null;
+            current.TeamsEnabled = false;
+            _collection.Upsert(new Document { Id = DocumentId, Data = current });
+        }
     }
 
     public void ClearToken()

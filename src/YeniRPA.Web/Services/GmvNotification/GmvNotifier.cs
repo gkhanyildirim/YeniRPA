@@ -21,7 +21,8 @@ public sealed class GmvNotifier(
     IGmvSettingsStore settings,
     IGmvHistoryStore history,
     IGmvReader reader,
-    ITelegramSender telegram)
+    ITelegramSender telegram,
+    ITeamsSender? teams = null)
 {
     const string MissingTelegram = "Enter the Telegram bot token and chat ID first.";
     const string ExpiredReason = "The Marketplace session has expired. Sign in again.";
@@ -36,10 +37,11 @@ public sealed class GmvNotifier(
             if (!TryCredentials(out var token, out var chatId))
                 return Record(GmvTrigger.Test, null, null, GmvStatus.Failed, MissingTelegram);
 
-            try { await telegram.SendAsync(token, chatId, GmvMessageComposer.Test, cancellationToken); }
-            catch (GmvSendException ex) { return Record(GmvTrigger.Test, null, null, GmvStatus.Failed, ex.Message); }
+            var delivery = await DeliverAsync(token, chatId, GmvMessageComposer.Test, cancellationToken);
+            if (delivery.TelegramError is not null)
+                return Record(GmvTrigger.Test, null, null, GmvStatus.Failed, delivery.FailureText());
 
-            return Record(GmvTrigger.Test, null, null, GmvStatus.Test, null);
+            return Record(GmvTrigger.Test, null, null, GmvStatus.Test, delivery.TeamsError);
         }
         finally
         {
@@ -109,10 +111,13 @@ public sealed class GmvNotifier(
                 return Record(trigger, slotKey, reading.Gmv, GmvStatus.Failed, MissingTelegram);
 
             var text = GmvMessageComposer.Report(reading.Gmv, slot?.At ?? DateTime.Now, settings.Load().DailyTarget, comparison);
-            try { await telegram.SendAsync(token, chatId, text, cancellationToken); }
-            catch (GmvSendException ex) { return Record(trigger, slotKey, reading.Gmv, GmvStatus.Failed, ex.Message); }
+            var delivery = await DeliverAsync(token, chatId, text, cancellationToken);
+            if (delivery.TelegramError is not null)
+                return Record(trigger, slotKey, reading.Gmv, GmvStatus.Failed, delivery.FailureText());
 
-            return Record(trigger, slotKey, reading.Gmv, GmvStatus.Sent, null);
+            // Telegram is the channel the operator relies on; a Teams hiccup is noted in the history
+            // row but does not turn a delivered notification into a failed one.
+            return Record(trigger, slotKey, reading.Gmv, GmvStatus.Sent, delivery.TeamsError);
         }
         finally
         {
@@ -176,13 +181,49 @@ public sealed class GmvNotifier(
         if (!TryCredentials(out var token, out var chatId))
             return Record(trigger, slotKey, null, GmvStatus.Failed, MissingTelegram);
 
-        try { await telegram.SendAsync(token, chatId, GmvMessageComposer.SessionExpired, cancellationToken); }
-        catch (GmvSendException ex)
+        var delivery = await DeliverAsync(token, chatId, GmvMessageComposer.SessionExpired, cancellationToken);
+        if (delivery.TelegramError is not null)
+            return Record(trigger, slotKey, null, GmvStatus.Failed, $"{ExpiredReason} The warning could not be sent: {delivery.FailureText()}");
+
+        return Record(trigger, slotKey, null, GmvStatus.Session,
+            delivery.TeamsError is null ? ExpiredReason : $"{ExpiredReason} {delivery.TeamsError}");
+    }
+
+    /// <summary>What happened to one message on each channel. A null error means it went out (or the channel is off).</summary>
+    sealed record Delivery(string? TelegramError, string? TeamsError, bool TeamsSent)
+    {
+        public string FailureText() =>
+            TelegramError + (TeamsSent ? " The Teams copy was sent." : "");
+    }
+
+    /// <summary>
+    /// Sends <paramref name="text"/> to Telegram and, when it is switched on, to Teams. The two do not
+    /// depend on each other: one being down never keeps the message from the other.
+    /// </summary>
+    async Task<Delivery> DeliverAsync(string token, string chatId, string text, CancellationToken cancellationToken)
+    {
+        string? telegramError = null;
+        try { await telegram.SendAsync(token, chatId, text, cancellationToken); }
+        catch (GmvSendException ex) { telegramError = ex.Message; }
+
+        string? teamsError = null;
+        var teamsSent = false;
+        var url = teams is not null && settings.Load().TeamsEnabled ? settings.ReadTeamsUrl() : null;
+
+        if (url is not null)
         {
-            return Record(trigger, slotKey, null, GmvStatus.Failed, $"{ExpiredReason} The warning could not be sent: {ex.Message}");
+            try
+            {
+                await teams!.SendAsync(url, text, cancellationToken);
+                teamsSent = true;
+            }
+            catch (GmvSendException ex)
+            {
+                teamsError = $"Teams: {ex.Message}";
+            }
         }
 
-        return Record(trigger, slotKey, null, GmvStatus.Session, ExpiredReason);
+        return new Delivery(telegramError, teamsError, teamsSent);
     }
 
     bool TryCredentials(out string token, out string chatId)

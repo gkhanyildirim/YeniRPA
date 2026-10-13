@@ -57,12 +57,29 @@ public class GmvNotificationTests
         }
     }
 
+    sealed class FakeTeams : ITeamsSender
+    {
+        public List<(string Url, string Text)> Messages { get; } = [];
+        public bool Fail { get; set; }
+
+        public Task SendAsync(string webhookUrl, string text, CancellationToken cancellationToken)
+        {
+            if (Fail)
+                throw new GmvSendException("The Teams workflow refused the message (400).");
+            Messages.Add((webhookUrl, text));
+            return Task.CompletedTask;
+        }
+    }
+
+    const string WorkflowUrl = "https://default1234.48.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/abc/triggers/manual/paths/invoke?api-version=1&sig=SECRETKEY";
+
     sealed class Rig : IDisposable
     {
         public MemoryContext Context { get; } = new();
         public GmvSettingsStore Settings { get; }
         public GmvHistoryStore History { get; }
         public FakeTelegram Telegram { get; } = new();
+        public FakeTeams Teams { get; } = new();
         public FakeReader Reader { get; }
         public GmvNotifier Notifier { get; }
 
@@ -70,14 +87,15 @@ public class GmvNotificationTests
             Func<GmvReading> read,
             double? target = null,
             Func<DateTimeOffset, DateTimeOffset, GmvReading>? readRange = null,
-            bool compare = false)
+            bool compare = false,
+            bool teams = false)
         {
             Settings = new GmvSettingsStore(Context, new EphemeralDataProtectionProvider());
             Settings.Save(new GmvSettingsUpdate(true, GmvMode.Times, ["14:00"], 9, 19, "123", "token-abc", target,
-                IncludeComparison: compare));
+                IncludeComparison: compare, TeamsUrl: teams ? WorkflowUrl : null, TeamsEnabled: teams));
             History = new GmvHistoryStore(Context);
             Reader = new FakeReader(read, readRange);
-            Notifier = new GmvNotifier(Settings, History, Reader, Telegram);
+            Notifier = new GmvNotifier(Settings, History, Reader, Telegram, Teams);
         }
 
         public void Dispose() => Context.Dispose();
@@ -727,6 +745,166 @@ public class GmvNotificationTests
         rig.Settings.UpdateSchedule(new GmvScheduleUpdate(IntervalMinutes: 20));
 
         Assert.False(rig.Settings.Load().IncludeComparison);
+    }
+
+    // -----------------------------------------------------------------
+    // Teams copy
+    // -----------------------------------------------------------------
+
+    [Theory]
+    [InlineData("https://default1.48.environment.api.powerplatform.com:443/x?sig=a", true)]
+    [InlineData("https://prod-12.westeurope.logic.azure.com:443/workflows/x?sig=a", true)]
+    [InlineData("http://default1.48.environment.api.powerplatform.com/x", false)]
+    [InlineData("https://example.com/hook", false)]
+    [InlineData("https://evilpowerplatform.com/x", false)]
+    [InlineData("not a url", false)]
+    [InlineData("", false)]
+    public void OnlyAPowerAutomateWebhookAddressIsAccepted(string url, bool valid)
+    {
+        Assert.Equal(valid, TeamsSender.Validate(url) is null);
+    }
+
+    [Fact]
+    public void ThePayloadCarriesTheCardAsAStringAndAsAnObjectWithOneBlockPerLine()
+    {
+        var payload = TeamsSender.BuildPayload("12 Ekim 2026;\nGMV (11:45): €18,233");
+
+        var card = System.Text.Json.Nodes.JsonNode.Parse(payload["card"]!.GetValue<string>())!;
+        Assert.Equal("AdaptiveCard", card["type"]!.GetValue<string>());
+        Assert.Equal("http://adaptivecards.io/schemas/adaptive-card.json", card["$schema"]!.GetValue<string>());
+        Assert.Equal(["12 Ekim 2026;", "GMV (11:45): €18,233"], card["body"]!.AsArray().Select(b => b!["text"]!.GetValue<string>()));
+
+        var content = payload["attachments"]![0]!["content"]!;
+        Assert.Equal("AdaptiveCard", content["type"]!.GetValue<string>());
+        Assert.Equal(2, content["body"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public void TheTeamsAddressIsStoredEncryptedAndKeptWhenLeftEmpty()
+    {
+        using var context = new MemoryContext();
+        var store = new GmvSettingsStore(context, new EphemeralDataProtectionProvider());
+        store.Save(new GmvSettingsUpdate(false, GmvMode.Manual, [], 9, 19, "123", "token", null, TeamsUrl: WorkflowUrl, TeamsEnabled: true));
+
+        var raw = context.Raw("gmvSettings").FindAll().Single().ToString();
+        Assert.DoesNotContain("SECRETKEY", raw);
+        Assert.Equal(WorkflowUrl, store.ReadTeamsUrl());
+
+        store.Save(new GmvSettingsUpdate(false, GmvMode.Manual, [], 9, 19, "123", "", null, TeamsUrl: ""));
+        Assert.Equal(WorkflowUrl, store.ReadTeamsUrl());
+        Assert.True(store.Load().TeamsEnabled);
+    }
+
+    [Fact]
+    public void TheTeamsCopyNeedsAnAddressAndARealOne()
+    {
+        using var context = new MemoryContext();
+        var store = new GmvSettingsStore(context, new EphemeralDataProtectionProvider());
+
+        Assert.Throws<InvalidOperationException>(() =>
+            store.Save(new GmvSettingsUpdate(false, GmvMode.Manual, [], 9, 19, "123", "token", null, TeamsEnabled: true)));
+        Assert.Throws<InvalidOperationException>(() =>
+            store.Save(new GmvSettingsUpdate(false, GmvMode.Manual, [], 9, 19, "123", "token", null, TeamsUrl: "https://example.com/x")));
+    }
+
+    [Fact]
+    public void RemovingTheTeamsAddressSwitchesTheCopyOff()
+    {
+        using var rig = new Rig(() => Reading(1), teams: true);
+
+        rig.Settings.ClearTeamsUrl();
+
+        Assert.Null(rig.Settings.ReadTeamsUrl());
+        Assert.False(rig.Settings.Load().TeamsEnabled);
+    }
+
+    [Fact]
+    public void ChangingTheScheduleKeepsTheTeamsSettings()
+    {
+        using var rig = new Rig(() => Reading(1), teams: true);
+
+        rig.Settings.UpdateSchedule(new GmvScheduleUpdate(IntervalMinutes: 20));
+
+        Assert.Equal(WorkflowUrl, rig.Settings.ReadTeamsUrl());
+        Assert.True(rig.Settings.Load().TeamsEnabled);
+    }
+
+    [Fact]
+    public async Task AScheduledMessageGoesToTelegramAndTeamsAlike()
+    {
+        using var rig = new Rig(() => Reading(58790), teams: true);
+
+        await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        var telegram = Assert.Single(rig.Telegram.Messages);
+        var (url, text) = Assert.Single(rig.Teams.Messages);
+        Assert.Equal(telegram, text);
+        Assert.Equal(WorkflowUrl, url);
+        Assert.Null(Assert.Single(rig.History.Recent(10)).Error);
+    }
+
+    [Fact]
+    public async Task WithTheTeamsCopyOffNothingIsPostedThere()
+    {
+        using var rig = new Rig(() => Reading(58790), teams: false);
+
+        await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        Assert.Empty(rig.Teams.Messages);
+        Assert.Single(rig.Telegram.Messages);
+    }
+
+    [Fact]
+    public async Task ATeamsFailureIsNotedButTheNotificationStillCountsAsSent()
+    {
+        using var rig = new Rig(() => Reading(58790), teams: true);
+        rig.Teams.Fail = true;
+
+        var outcome = await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        Assert.True(outcome.Success);
+        Assert.Single(rig.Telegram.Messages);
+        var entry = Assert.Single(rig.History.Recent(10));
+        Assert.Equal(GmvStatus.Sent, entry.Status);
+        Assert.StartsWith("Teams:", entry.Error);
+        Assert.DoesNotContain("SECRETKEY", entry.Error);
+    }
+
+    [Fact]
+    public async Task ATelegramFailureStillSendsTheTeamsCopyAndSaysSo()
+    {
+        using var rig = new Rig(() => Reading(58790), teams: true);
+        rig.Telegram.Fail = true;
+
+        var outcome = await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        Assert.False(outcome.Success);
+        Assert.Single(rig.Teams.Messages);
+        var entry = Assert.Single(rig.History.Recent(10));
+        Assert.Equal(GmvStatus.Failed, entry.Status);
+        Assert.EndsWith("The Teams copy was sent.", entry.Error);
+    }
+
+    [Fact]
+    public async Task TheSessionWarningGoesToTeamsToo()
+    {
+        using var rig = new Rig(() => throw new GmvSessionExpiredException("expired"), teams: true);
+
+        await rig.Notifier.RunSlotAsync(Slot(), default);
+
+        Assert.Equal(GmvMessageComposer.SessionExpired, Assert.Single(rig.Teams.Messages).Text);
+    }
+
+    [Fact]
+    public async Task TheTestMessageReachesBothChannels()
+    {
+        using var rig = new Rig(() => Reading(1), teams: true);
+
+        var outcome = await rig.Notifier.SendTestAsync(default);
+
+        Assert.True(outcome.Success);
+        Assert.Equal(GmvMessageComposer.Test, Assert.Single(rig.Telegram.Messages));
+        Assert.Equal(GmvMessageComposer.Test, Assert.Single(rig.Teams.Messages).Text);
     }
 
     [Fact]

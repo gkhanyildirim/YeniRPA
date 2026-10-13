@@ -40,6 +40,43 @@ internal static class OfferExportReader
         return isXlsx ? ReadXlsx(stream, sheetName) : TabularFile.Read(stream, fileName);
     }
 
+    /// <summary>
+    /// Every sheet of a workbook as its own row sequence (header first), for an upload whose data is
+    /// split across tabs — the approvals workbook keeps one tab per year. CSV has one table, so it comes
+    /// back as a single sequence. Lazy: enumerate the outer sequence once and each inner sequence fully
+    /// before moving to the next, all inside the <c>using</c> that owns <paramref name="stream"/>.
+    /// </summary>
+    public static IEnumerable<IEnumerable<List<string>>> ReadAllSheets(Stream stream, string fileName)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+
+        if (!TabularFile.IsXlsx(fileName))
+            return [TabularFile.Read(stream, fileName)];
+
+        return ReadXlsxAllSheets(stream);
+    }
+
+    static IEnumerable<IEnumerable<List<string>>> ReadXlsxAllSheets(Stream stream)
+    {
+        using var document = SpreadsheetDocument.Open(stream, isEditable: false);
+
+        var workbookPart = document.WorkbookPart
+            ?? throw new InvalidOperationException("The uploaded file is not a readable Excel workbook.");
+
+        var sharedStrings = ReadSharedStrings(workbookPart);
+        var sheets = workbookPart.Workbook.Sheets?.Elements<Sheet>().ToList() ?? [];
+        if (sheets.Count == 0)
+            throw new InvalidOperationException("The uploaded workbook holds no sheets.");
+
+        foreach (var sheet in sheets)
+        {
+            if (sheet.Id?.Value is not { } id)
+                continue;
+
+            yield return ReadSheetRows((WorksheetPart)workbookPart.GetPartById(id), sharedStrings);
+        }
+    }
+
     static IEnumerable<List<string>> ReadXlsx(Stream stream, string? sheetName)
     {
         using var document = SpreadsheetDocument.Open(stream, isEditable: false);
@@ -50,6 +87,12 @@ internal static class OfferExportReader
         var sharedStrings = ReadSharedStrings(workbookPart);
         var worksheetPart = FindSheet(workbookPart, sheetName);
 
+        foreach (var row in ReadSheetRows(worksheetPart, sharedStrings))
+            yield return row;
+    }
+
+    static IEnumerable<List<string>> ReadSheetRows(WorksheetPart worksheetPart, string[] sharedStrings)
+    {
         using var reader = OpenXmlReader.Create(worksheetPart);
 
         while (reader.Read())

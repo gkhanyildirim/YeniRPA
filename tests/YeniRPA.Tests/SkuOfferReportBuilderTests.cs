@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using YeniRPA.Web.Models;
 using YeniRPA.Web.Services;
 
@@ -16,11 +16,16 @@ public class SkuOfferReportBuilderTests
     static MemoryStream Csv(params string[] lines) =>
         new(new UTF8Encoding(true).GetPreamble().Concat(Encoding.UTF8.GetBytes(string.Join("\n", lines))).ToArray());
 
-    static SkuOfferReport Build(string[] offers, string[] kpis)
+    const string ApprovalsHeader = "Durum,Ürün Kodu,Tarih,Marka ID,Marka,Kategori ID,Kategori,Barkod,Sorumlu";
+
+    static readonly DateTime Today = new(2026, 10, 13);
+
+    static SkuOfferReport Build(string[] offers, string[] kpis, string[]? approvals = null, DateTime? today = null)
     {
         using var o = Csv(offers);
         using var k = Csv(kpis);
-        return SkuOfferReportBuilder.Build(o, "offers.csv", k, "kpi.csv");
+        using var a = Csv(approvals ?? [ApprovalsHeader]);
+        return SkuOfferReportBuilder.Build(o, "offers.csv", k, "kpi.csv", a, "approved.csv", today ?? Today);
     }
 
     static SkuOfferRow Row(SkuOfferReport report, string sku) => report.Rows.Single(r => r.Sku == sku);
@@ -158,9 +163,10 @@ public class SkuOfferReportBuilderTests
     {
         using var offers = Csv(KpiHeader, "1,100,2,48,1,1,1");
         using var kpi = Csv(OffersHeader);
+        using var approvals = Csv(ApprovalsHeader);
 
         var ex = Assert.Throws<InvalidOperationException>(() =>
-            SkuOfferReportBuilder.Build(offers, "a.csv", kpi, "b.csv"));
+            SkuOfferReportBuilder.Build(offers, "a.csv", kpi, "b.csv", approvals, "c.csv", Today));
         Assert.Contains("'Product SKU'", ex.Message);
     }
 
@@ -177,5 +183,207 @@ public class SkuOfferReportBuilderTests
         Assert.Equal(["100"], SkuOfferReportBuilder.Query(report.Rows, new SkuOfferQuery { Filter = "noTraffic" }).Select(r => r.Sku));
         Assert.Equal(["200"], SkuOfferReportBuilder.Query(report.Rows, new SkuOfferQuery { Search = "canon" }).Select(r => r.Sku));
         Assert.Equal(["200", "100"], SkuOfferReportBuilder.Query(report.Rows, new SkuOfferQuery { Sort = "pdp", Descending = true }).Select(r => r.Sku));
+    }
+
+    [Fact]
+    public void Approval_date_and_approver_are_joined_per_product_and_the_earliest_wins()
+    {
+        var report = Build(
+            [OffersHeader,
+             "A;1;S1;100;Cam;Sony;Cam X;yes;;01/27/2026 10:00:00 AM",
+             "A;1;S2;200;Cam;Sony;Cam Y;yes;;01/28/2026 10:00:00 AM"],
+            ["Product id,Sessions by Product with PDP (30d)", "100,10"],
+            [ApprovalsHeader,
+             "ACCEPTED,100,15.03.2026,1,Sony,2,Cam,111,Aysu",
+             "ACCEPTED,100,2026-02-01,1,Sony,2,Cam,111,Bora"]);
+
+        var seen = Row(report, "100");
+        Assert.True(seen.HasApproval);
+        Assert.Equal(new DateTime(2026, 2, 1), seen.ApprovalDate);
+        Assert.Equal("Bora", seen.ApprovedBy);
+
+        Assert.False(Row(report, "200").HasApproval);
+        Assert.Equal(1, report.Summary.ApprovedSkus);
+        Assert.Equal(1, report.Summary.NotApprovedSkus);
+    }
+
+    [Fact]
+    public void Approvals_without_the_columns_name_what_is_missing()
+    {
+        using var offers = Csv(OffersHeader);
+        using var kpi = Csv("Product id,Sessions by Product with PDP (30d)");
+        using var approvals = Csv(OffersHeader);
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            SkuOfferReportBuilder.Build(offers, "a.csv", kpi, "b.csv", approvals, "c.csv", Today));
+        Assert.Contains("'Ürün Kodu'", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("10/13/2026 09:00:00 AM", "baby")]   // same day
+    [InlineData("09/14/2026 09:00:00 AM", "baby")]   // just under one month
+    [InlineData("09/13/2026 09:00:00 AM", "young")]  // exactly one month
+    [InlineData("07/14/2026 09:00:00 AM", "young")]  // just under three months
+    [InlineData("07/13/2026 09:00:00 AM", "adult")]  // exactly three months
+    [InlineData("04/14/2026 09:00:00 AM", "adult")]  // just under six months
+    [InlineData("04/13/2026 09:00:00 AM", "mature")] // exactly six months
+    [InlineData("01/01/2025 09:00:00 AM", "mature")]
+    public void Age_group_follows_calendar_months_from_the_first_offer(string created, string expected)
+    {
+        var report = Build(
+            [OffersHeader, $"A;1;S1;100;Cam;Sony;Cam X;yes;;{created}"],
+            ["Product id,Sessions by Product with PDP (30d)", "100,10"]);
+
+        Assert.Equal(expected, Row(report, "100").AgeGroup);
+    }
+
+    [Fact]
+    public void Age_is_measured_from_the_first_offer_not_a_later_one()
+    {
+        var report = Build(
+            [OffersHeader,
+             "A;1;S1;100;Cam;Sony;Cam X;no;x;01/01/2026 10:00:00 AM",
+             "A;1;S2;100;Cam;Sony;Cam X;yes;;10/10/2026 10:00:00 AM"],
+            ["Product id,Sessions by Product with PDP (30d)", "100,10"]);
+
+        Assert.Equal("mature", Row(report, "100").AgeGroup);
+        Assert.Equal(1, report.Charts.ByAge.Single(a => a.Group == "mature").Skus);
+        Assert.Equal(1, report.Charts.ByAge.Single(a => a.Group == "mature").Closed);
+    }
+
+    [Fact]
+    public void Age_filter_combines_with_the_other_filters_and_unreadable_dates_have_no_group()
+    {
+        var report = Build(
+            [OffersHeader,
+             "A;1;S1;100;Cam;Sony;Old closed;no;x;01/01/2026 10:00:00 AM",
+             "A;1;S2;200;Cam;Sony;Old open;yes;;01/01/2026 10:00:00 AM",
+             "A;1;S3;300;Cam;Sony;New open;yes;;10/10/2026 10:00:00 AM",
+             "A;1;S4;400;Cam;Sony;No date;yes;;not a date"],
+            ["Product id,Sessions by Product with PDP (30d)", "100,10"]);
+
+        Assert.Equal(["100"], SkuOfferReportBuilder.Query(report.Rows, new SkuOfferQuery { AgeGroup = "mature", Filter = "firstClosed" }).Select(r => r.Sku));
+        Assert.Equal(["300"], SkuOfferReportBuilder.Query(report.Rows, new SkuOfferQuery { AgeGroup = "baby" }).Select(r => r.Sku));
+        Assert.Null(Row(report, "400").AgeGroup);
+    }
+
+    [Fact]
+    public void Approver_spellings_collapse_to_one_name_and_only_accepted_rows_count()
+    {
+        var report = Build(
+            [OffersHeader,
+             "A;1;S1;100;Cam;Sony;Cam X;yes;;01/27/2026 10:00:00 AM",
+             "A;1;S2;200;Cam;Sony;Cam Y;yes;;01/28/2026 10:00:00 AM",
+             "A;1;S3;300;Cam;Sony;Cam Z;yes;;01/28/2026 10:00:00 AM"],
+            ["Product id,Sessions by Product with PDP (30d)", "100,10"],
+            [ApprovalsHeader,
+             "ACCEPTED,100,15.03.2026,1,Sony,2,Cam,111,ALİ ",
+             "ACCEPTED,200,15.03.2026,1,Sony,2,Cam,111,zeynep",
+             "CHANGES_REQUESTED,300,15.03.2026,1,Sony,2,Cam,111,Ali"]);
+
+        Assert.Equal("Ali", Row(report, "100").ApprovedBy);
+        Assert.Equal("Zeynep", Row(report, "200").ApprovedBy);
+        Assert.False(Row(report, "300").HasApproval);
+    }
+
+    const string StockoutHeader =
+        "gtin,Product id,Focus Category Name,Brand,Product Name,Offer condition,Backfilled,Retail buyable,Seller Name,GMV with shipping accepted,Sold items accepted";
+
+    static SkuOfferReport BuildWithStockout(string[] offers, string[] kpis, string[] stockout)
+    {
+        using var o = Csv(offers);
+        using var k = Csv(kpis);
+        using var a = Csv(ApprovalsHeader);
+        using var s = Csv(stockout);
+        return SkuOfferReportBuilder.Build(o, "offers.csv", k, "kpi.csv", a, "approved.csv", Today, s, "stockout.csv");
+    }
+
+    [Fact]
+    public void Without_a_stockout_file_the_report_has_no_stockout_section()
+    {
+        var report = Build(
+            [OffersHeader, "A;1;S1;100;Cam;Sony;Cam X;yes;;01/27/2026 10:00:00 AM"],
+            ["Product id,Sessions by Product with PDP (30d)", "100,10"]);
+
+        Assert.Null(report.Stockout);
+    }
+
+    [Fact]
+    public void Stockout_products_are_joined_to_pdp_and_the_offers_file()
+    {
+        var report = BuildWithStockout(
+            [OffersHeader,
+             "A;1;S1;100;Cam;Sony;Cam X;no;x;01/01/2026 10:00:00 AM",
+             "A;1;S2;100;Cam;Sony;Cam X;yes;;03/01/2026 10:00:00 AM",
+             "A;1;S3;300;Cam;Sony;Cam Z;yes;;10/10/2026 10:00:00 AM"],
+            ["Product id,Sessions by Product with PDP (30d),Sessions by Product with Add to Cart in pdp (30d)",
+             "100,800,40", "300,200,10", "999,1000,5"],
+            [StockoutHeader,
+             "g1,100,IT HW,SONY,Cam X,NEW,false,true,Alpha,1000.5,2",
+             "g2,200,IT HW,CANON,Cam Y,NEW,,false,Beta,500,1",
+             "g3,300,Photo,SONY,Cam Z,NEW,,,Gamma,0,0"]);
+
+        var stock = report.Stockout!;
+        Assert.Equal(3, stock.Summary.Products);
+
+        var joined = stock.Rows.Single(r => r.ProductId == "100");
+        Assert.Equal(800, joined.PdpViews);
+        Assert.Equal(40, joined.AddToCart);
+        Assert.Equal(0.05, joined.AtcRate!.Value, 6);
+        Assert.True(joined.InOffers);
+        Assert.Equal(2, joined.TotalOffers);
+        Assert.Equal(1, joined.ActiveOffers);
+        Assert.True(joined.FirstOfferClosed);
+        Assert.Equal("mature", joined.AgeGroup);
+        Assert.Equal(true, joined.RetailBuyable);
+        Assert.Equal(1000.5, joined.Gmv7d);
+        Assert.Equal(2, joined.Sold7d);
+
+        // Not in the KPI file and not in the offers file: unknown, never zero.
+        var missing = stock.Rows.Single(r => r.ProductId == "200");
+        Assert.False(missing.HasTraffic);
+        Assert.Null(missing.PdpViews);
+        Assert.False(missing.InOffers);
+        Assert.Equal(false, missing.RetailBuyable);
+
+        Assert.Null(stock.Rows.Single(r => r.ProductId == "300").RetailBuyable);
+
+        Assert.Equal(2, stock.Summary.WithTraffic);
+        Assert.Equal(1, stock.Summary.WithoutTraffic);
+        Assert.Equal(1, stock.Summary.NotInOffers);
+        Assert.Equal(1000, stock.Summary.TotalPdpViews);
+        Assert.Equal(1000d / 2000d * 100, stock.Summary.SharePctOfAllPdp, 6); // 999 is in KPI, not stockout
+        Assert.Equal(["100", "300"], stock.TopPdp.Select(t => t.ProductId));
+        Assert.Equal("100", stock.Rows[0].ProductId); // most PDP first
+    }
+
+    [Fact]
+    public void A_repeated_stockout_product_is_summed_and_its_sellers_listed_once()
+    {
+        var report = BuildWithStockout(
+            [OffersHeader, "A;1;S1;100;Cam;Sony;Cam X;yes;;01/27/2026 10:00:00 AM"],
+            ["Product id,Sessions by Product with PDP (30d)", "100,10"],
+            [StockoutHeader,
+             "g,100,IT HW,SONY,Cam X,NEW,,true,Alpha,100,1",
+             "g,100,IT HW,SONY,Cam X,NEW,,true,Beta,50,2",
+             "g,100,IT HW,SONY,Cam X,NEW,,true,Alpha,25,1"]);
+
+        var row = report.Stockout!.Rows.Single();
+        Assert.Equal(175, row.Gmv7d);
+        Assert.Equal(4, row.Sold7d);
+        Assert.Equal("Alpha, Beta", row.Sellers);
+    }
+
+    [Fact]
+    public void A_stockout_file_without_product_id_names_the_missing_column()
+    {
+        using var offers = Csv(OffersHeader);
+        using var kpi = Csv("Product id,Sessions by Product with PDP (30d)");
+        using var approvals = Csv(ApprovalsHeader);
+        using var stockout = Csv(OffersHeader);
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            SkuOfferReportBuilder.Build(offers, "a.csv", kpi, "b.csv", approvals, "c.csv", Today, stockout, "d.csv"));
+        Assert.Contains("'Product id'", ex.Message);
     }
 }
