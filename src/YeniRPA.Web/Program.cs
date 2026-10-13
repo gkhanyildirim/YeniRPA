@@ -5,6 +5,7 @@ using YeniRPA.Web.Infrastructure;
 using YeniRPA.Web.Services;
 using YeniRPA.Web.Services.Automation;
 using YeniRPA.Web.Services.GmvNotification;
+using YeniRPA.Web.Services.PaymentCheck;
 using YeniRPA.Web.Services.SalesAnalysis;
 using YeniRPA.Web.Services.SalesAnalysis.Country;
 using YeniRPA.Web.Services.SalesAnalysis.Providers;
@@ -87,6 +88,16 @@ builder.Services.AddHostedService<GmvNotificationWorker>();
 builder.Services.AddSingleton<ITelegramReceiver, TelegramReceiver>();
 builder.Services.AddSingleton<GmvCommandHandler>();
 builder.Services.AddHostedService<GmvCommandWorker>();
+// Payment Check: walks the storefront checkout (Google login saved once, encrypted) up to the card-entry
+// page and reports to the same Telegram chat as GMV Notification. Its own browser — the storefront keeps
+// its login differently from Mirakl and WhatsApp — and no AutomationJobBus slot, so it never blocks or
+// clears the log of a Create Return run.
+builder.Services.AddSingleton<IPaymentCheckSettingsStore, PaymentCheckSettingsStore>();
+builder.Services.AddSingleton<IPaymentCheckHistoryStore, PaymentCheckHistoryStore>();
+builder.Services.AddSingleton<StorefrontBrowser>();
+builder.Services.AddSingleton<PaymentCheckRunner>();
+builder.Services.AddSingleton<PaymentCheckNotifier>();
+builder.Services.AddHostedService<PaymentCheckWorker>();
 builder.Services.AddSingleton<CreateReturnRunner>();
 builder.Services.AddSingleton<MarkAsReceivedRunner>();
 // Shared by SellerNotificationRunner and CreateReturnRunner, so the return notification can be sent

@@ -1199,6 +1199,8 @@ window.RPA = window.RPA || {};
     'pos-reconciliation': { tab: 'tab-pos-reconciliation', panel: 'panel-pos-reconciliation' },
     // Reads today's GMV from the Mirakl dashboard with the saved login and sends it to Telegram.
     'gmv-notification': { tab: 'tab-gmv-notification', panel: 'panel-gmv-notification' },
+    // Walks the storefront checkout to the card-entry page and reports to Telegram whether it opened.
+    'payment-check': { tab: 'tab-payment-check', panel: 'panel-payment-check' },
     // Reference page: static content, no upload and no dashboard of its own.
     'methodology': { tab: 'tab-methodology', panel: 'panel-methodology' },
     // Moves this install's LiteDB-backed settings to and from a backup file. No upload feeds a

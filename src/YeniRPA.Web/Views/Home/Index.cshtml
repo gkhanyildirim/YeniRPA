@@ -32,7 +32,8 @@
         ["seller-targets"] = "<circle cx='12' cy='12' r='9'/><circle cx='12' cy='12' r='5'/><circle cx='12' cy='12' r='1.4'/>",
         ["methodology"]    = "<path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z'/><path d='M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5'/>",
         ["gmv-notification"] = "<path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.9 1.9 0 0 0 3.4 0'/>",
-        ["jobs"]           = "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/><path d='M4 4l2.5 2.5M20 4l-2.5 2.5'/>",
+        ["payment-check"]  = "<rect x='2.5' y='5.5' width='19' height='13' rx='2'/><path d='M2.5 10h19'/><path d='m14.5 15 1.8 1.8 3.2-3.4'/>",
+        ["jobs"]           ="<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/><path d='M4 4l2.5 2.5M20 4l-2.5 2.5'/>",
         ["settings"]       = "<circle cx='12' cy='12' r='3'/><path d='M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1'/>",
         ["health"]         = "<path d='M21 8 12 3 3 8v8l9 5 9-5z'/><path d='m3 8 9 5 9-5M12 13v8'/>"
     };
@@ -183,6 +184,12 @@
                     aria-controls="panel-gmv-notification" aria-selected="false" data-module="gmv-notification" tabindex="-1">
                 @NavIcon("gmv-notification")
                 <span class="nav-text">GMV Notification</span>
+            </button>
+
+            <button type="button" class="nav-item" role="tab" id="tab-payment-check"
+                    aria-controls="panel-payment-check" aria-selected="false" data-module="payment-check" tabindex="-1">
+                @NavIcon("payment-check")
+                <span class="nav-text">Payment Check</span>
             </button>
 
             <div class="nav-label">Reference</div>
@@ -5099,7 +5106,7 @@
                         </div>
                         <label class="gmv-check">
                             <input type="checkbox" id="gmv-compare" />
-                            <span>Add yesterday's figure at this time</span>
+                            <span>Add DoD / WoW comparison (yesterday and last week, same time)</span>
                         </label>
                         <label class="gmv-check">
                             <input type="checkbox" id="gmv-enabled" />
@@ -5178,6 +5185,126 @@
                                 </tr>
                             </thead>
                             <tbody id="gmv-history-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="panel" id="panel-payment-check" role="tabpanel" aria-labelledby="tab-payment-check" hidden>
+
+            <header class="page-head">
+                @PageIcon("payment-check")
+                <h1>Payment Check</h1>
+                <span class="stamp">Storefront</span>
+            </header>
+
+            <div class="results">
+
+                <div class="section-title">Settings</div>
+
+                <div class="card">
+                    <h3>Schedule</h3>
+                    <p class="sub">
+                        Opens the storefront checkout with the test account and reports to the GMV
+                        Notification Telegram chat whether the card-entry page opened. It stops there:
+                        no card is entered and no order is placed. Runs only while this app is open, in
+                        a visible browser window. Keep one item in the test account's cart.
+                    </p>
+
+                    <div class="gmv-form">
+                        <div class="field">
+                            <label for="pc-interval">Every (minutes)</label>
+                            <input type="number" id="pc-interval" min="5" max="240" step="1" />
+                        </div>
+                        <div class="field">
+                            <label for="pc-from">Window (from hour &ndash; to hour)</label>
+                            <div class="gmv-pair">
+                                <input type="number" id="pc-from" min="0" max="23" step="1" aria-label="From hour" />
+                                <input type="number" id="pc-to" min="0" max="23" step="1" aria-label="To hour" />
+                            </div>
+                        </div>
+                        <label class="gmv-check">
+                            <input type="checkbox" id="pc-enabled" />
+                            <span>Scheduled checks on</span>
+                        </label>
+                    </div>
+                    <p class="gmv-hint" id="pc-telegram-hint"></p>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="pc-save">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Save settings</span>
+                        </button>
+                    </div>
+
+                    <div class="alert" id="pc-error" role="alert">
+                        <strong>Error</strong>
+                        <span class="msg"></span>
+                    </div>
+                    <div class="alert is-success" id="pc-success" role="status">
+                        <strong>Done</strong>
+                        <span class="msg"></span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Storefront session</h3>
+                    <p class="sub">
+                        Sign in once with Google in the window that opens, then save the session. It is
+                        stored encrypted. If it expires, a "sign in again" message is sent once.
+                    </p>
+                    <p><span class="badge" id="pc-session-badge">Unknown</span>
+                        <span class="gmv-hint" id="pc-session-saved"></span></p>
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost" id="pc-login-start">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Open login window</span>
+                        </button>
+                        <button type="button" class="btn btn-primary" id="pc-login-save">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Save session</span>
+                        </button>
+                        <button type="button" class="btn btn-ghost" id="pc-login-clear" hidden>
+                            <span class="btn-text">Remove session</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Run now</h3>
+                    <p class="sub">Runs one check right away and sends its result to Telegram. Takes up to a minute.</p>
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" id="pc-run">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="btn-text">Check payment page now</span>
+                        </button>
+                    </div>
+                    <p class="gmv-result" id="pc-run-result" role="status"></p>
+                </div>
+
+                <div class="section-title">History</div>
+
+                <div class="card">
+                    <div class="actions">
+                        <button type="button" class="btn btn-ghost btn-sm" id="pc-history-refresh">
+                            <span class="btn-text">Refresh</span>
+                        </button>
+                    </div>
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date &amp; time</th>
+                                    <th>Source</th>
+                                    <th>Result</th>
+                                    <th>Step</th>
+                                    <th>Detail</th>
+                                    <th>Telegram</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pc-history-body"></tbody>
                         </table>
                     </div>
                 </div>
@@ -5337,6 +5464,7 @@
     <script src="~/js/custom-mail.js" asp-append-version="true"></script>
     <script src="~/js/seller-targets.js" asp-append-version="true"></script>
     <script src="~/js/gmv-notification.js" asp-append-version="true"></script>
+    <script src="~/js/payment-check.js" asp-append-version="true"></script>
     <script src="~/js/jobs.js" asp-append-version="true"></script>
     <script src="~/js/settings.js" asp-append-version="true"></script>
 }

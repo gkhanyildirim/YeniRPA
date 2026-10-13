@@ -119,10 +119,10 @@ public sealed record GmvSlot(string Key, string Label, DateTime At);
 public sealed record GmvReading(double Gmv, DateTimeOffset At);
 
 /// <summary>
-/// Today's GMV next to the GMV of the same stretch of the day <see cref="DaysBack"/> days earlier
-/// (1 = yesterday, 7 = the same weekday last week). <see cref="Past"/> is null when it could not be read.
+/// Today's GMV next to the GMV of the same stretch of the day yesterday (<see cref="DayAgo"/>) and on
+/// the same weekday last week (<see cref="WeekAgo"/>). Either is null when it could not be read.
 /// </summary>
-public sealed record GmvComparison(double Current, double? Past, int DaysBack);
+public sealed record GmvComparison(double Current, double? DayAgo, double? WeekAgo);
 
 /// <summary>"none" (no saved session), "unknown" (not checked yet), "valid" or "expired".</summary>
 public sealed record GmvSessionStatus(string State, DateTime? CheckedUtc);

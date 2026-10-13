@@ -1,4 +1,4 @@
-using LiteDB;
+﻿using LiteDB;
 using Microsoft.AspNetCore.DataProtection;
 using YeniRPA.Web.Services;
 using YeniRPA.Web.Services.GmvNotification;
@@ -96,14 +96,14 @@ public class GmvNotificationTests
     public void TheReportNamesTheDateTheTimeAndTheAmount()
     {
         var text = GmvMessageComposer.Report(58790, new DateTime(2026, 10, 7, 14, 0, 0), null);
-        Assert.Equal("07 Ekim 2026, 14:00 itibarıyla güncel GMV: €58.790.", text);
+        Assert.Equal("7 Ekim 2026;\nGMV (14:00): €58,790", text);
     }
 
     [Fact]
     public void ATargetAddsHowFarTheDayHasGot()
     {
         var text = GmvMessageComposer.Report(72000, new DateTime(2026, 10, 7, 14, 0, 0), 100000);
-        Assert.EndsWith("Günlük hedefe göre %72 seviyesinde.", text);
+        Assert.EndsWith(" | Hedef %72", text);
     }
 
     [Fact]
@@ -255,7 +255,7 @@ public class GmvNotificationTests
         var outcome = await rig.Notifier.RunSlotAsync(Slot(), default);
 
         Assert.True(outcome.Success);
-        Assert.Equal("07 Ekim 2026, 14:00 itibarıyla güncel GMV: €58.790. Günlük hedefe göre %59 seviyesinde.", Assert.Single(rig.Telegram.Messages));
+        Assert.Equal("7 Ekim 2026;\nGMV (14:00): €58,790 | Hedef %59", Assert.Single(rig.Telegram.Messages));
 
         var entry = Assert.Single(rig.History.Recent(10));
         Assert.Equal(GmvStatus.Sent, entry.Status);
@@ -490,8 +490,8 @@ public class GmvNotificationTests
         await handler.HandleAsync(new TelegramUpdate(1, "123", "/gmv"), default);
 
         var reply = Assert.Single(rig.Telegram.Messages);
-        Assert.Contains("€58.790", reply);
-        Assert.Contains("%59", reply);
+        Assert.Contains("€58,790", reply);
+        Assert.Contains("Hedef %59", reply);
     }
 
     [Fact]
@@ -607,51 +607,51 @@ public class GmvNotificationTests
         Assert.Contains("showShipped=ALL", url);
     }
 
-    [Fact]
-    public void AnIncreaseShowsAnUpArrowTheAmountAndThePercentage()
+    [Theory]
+    [InlineData(10700, 10000, "▲ +7% (Y €10,000, +€700)")]
+    [InlineData(9700, 10000, "▼ -3% (Y €10,000, -€300)")]
+    [InlineData(10004, 10000, "0% (Y €10,000, +€4)")]
+    [InlineData(10000.3, 10000, "0% (Y €10,000, €0)")]
+    [InlineData(500, 0, "— (Y €0, +€500)")]
+    public void TheChangeShowsAnArrowThePercentageTheEarlierFigureAndTheEuroChange(double current, double earlier, string expected)
     {
-        Assert.Equal("Dün bu saatte: €54.200 (▲ €4.590, %8).", GmvMessageComposer.ComparisonLine(new GmvComparison(58790, 54200, 1)));
-    }
-
-    [Fact]
-    public void ADecreaseShowsADownArrow()
-    {
-        Assert.Equal("Geçen hafta bu saatte: €60.000 (▼ €1.210, %2).", GmvMessageComposer.ComparisonLine(new GmvComparison(58790, 60000, 7)));
-    }
-
-    [Fact]
-    public void NoChangeAndAnEarlierZeroAreWrittenWithoutAMeaninglessPercentage()
-    {
-        Assert.Equal("Dün bu saatte: €1.000 (değişim yok).", GmvMessageComposer.ComparisonLine(new GmvComparison(1000.2, 1000, 1)));
-        Assert.Equal("Dün bu saatte: €0 (▲ €500).", GmvMessageComposer.ComparisonLine(new GmvComparison(500, 0, 1)));
+        Assert.Equal(expected, GmvMessageComposer.Change(current, earlier, "Y"));
     }
 
     [Fact]
     public void AnEarlierFigureThatCouldNotBeReadSaysSoInsteadOfShowingZero()
     {
-        var line = GmvMessageComposer.ComparisonLine(new GmvComparison(58790, null, 1));
-
-        Assert.Equal("Dün bu saatte: veri alınamadı.", line);
-        Assert.DoesNotContain("€", line);
+        Assert.Equal("veri yok", GmvMessageComposer.Change(58790, null, "Y"));
     }
 
     [Fact]
-    public void TheComparisonSitsBetweenTheFigureAndTheTarget()
+    public void TheReportIsADateLineAndOneFigureLineWithDodAndWow()
     {
-        var text = GmvMessageComposer.Report(72000, new DateTime(2026, 10, 7, 14, 0, 0), 100000, new GmvComparison(72000, 60000, 1));
+        var text = GmvMessageComposer.Report(18233, new DateTime(2026, 10, 12, 11, 45, 0), null, new GmvComparison(18233, 17040, 19500));
 
-        Assert.Equal("07 Ekim 2026, 14:00 itibarıyla güncel GMV: €72.000. Dün bu saatte: €60.000 (▲ €12.000, %20). Günlük hedefe göre %72 seviyesinde.", text);
+        Assert.Equal("12 Ekim 2026;\nGMV (11:45): €18,233 | DoD ▲ +7% (Y €17,040, +€1,193) | WoW ▼ -6% (LW €19,500, -€1,267)", text);
     }
 
     [Fact]
-    public async Task AScheduledMessageCarriesYesterdaysFigureWhenTheSettingIsOn()
+    public void TheTargetComesLastAndAMissingFigureIsNamed()
     {
-        using var rig = new Rig(() => Reading(58790), readRange: (_, _) => Reading(54200), compare: true);
+        var text = GmvMessageComposer.Report(72000, new DateTime(2026, 10, 12, 14, 0, 0), 100000, new GmvComparison(72000, 60000, null));
+
+        Assert.Equal("12 Ekim 2026;\nGMV (14:00): €72,000 | DoD ▲ +20% (Y €60,000, +€12,000) | WoW veri yok | Hedef %72", text);
+    }
+
+    static GmvReading EarlierFigure(DateTimeOffset from, double yesterday, double lastWeek) =>
+        Reading(from.Date == GmvDashboard.PlatformNow().Date.AddDays(-1) ? yesterday : lastWeek);
+
+    [Fact]
+    public async Task AScheduledMessageCarriesDodAndWowWhenTheSettingIsOn()
+    {
+        using var rig = new Rig(() => Reading(58790), readRange: (from, _) => EarlierFigure(from, 54200, 60000), compare: true);
 
         await rig.Notifier.RunSlotAsync(Slot(), default);
 
-        Assert.Contains("Dün bu saatte: €54.200 (▲ €4.590, %8).", Assert.Single(rig.Telegram.Messages));
-        Assert.Single(rig.Reader.Ranges);
+        Assert.EndsWith("GMV (14:00): €58,790 | DoD ▲ +8% (Y €54,200, +€4,590) | WoW ▼ -2% (LW €60,000, -€1,210)", Assert.Single(rig.Telegram.Messages));
+        Assert.Equal(2, rig.Reader.Ranges.Count);
         // Only today's figure goes into the history.
         Assert.Equal(58790, Assert.Single(rig.History.Recent(10)).Gmv);
     }
@@ -663,7 +663,7 @@ public class GmvNotificationTests
 
         await rig.Notifier.RunSlotAsync(Slot(), default);
 
-        Assert.DoesNotContain("Dün", Assert.Single(rig.Telegram.Messages));
+        Assert.DoesNotContain("DoD", Assert.Single(rig.Telegram.Messages));
         Assert.Empty(rig.Reader.Ranges);
     }
 
@@ -676,8 +676,8 @@ public class GmvNotificationTests
 
         Assert.True(outcome.Success);
         var message = Assert.Single(rig.Telegram.Messages);
-        Assert.Contains("€58.790", message);
-        Assert.Contains("Dün bu saatte: veri alınamadı.", message);
+        Assert.Contains("€58,790", message);
+        Assert.EndsWith("DoD veri yok | WoW veri yok", message);
     }
 
     [Fact]
@@ -692,31 +692,31 @@ public class GmvNotificationTests
     }
 
     [Fact]
-    public async Task TheWeekCommandComparesWithTheSameTimeLastWeekEvenWhenYesterdayIsSwitchedOff()
+    public async Task TheWeekCommandComparesEvenWhenTheScheduleHasItSwitchedOff()
     {
-        using var rig = new Rig(() => Reading(58790), readRange: (_, _) => Reading(60000), compare: false);
+        using var rig = new Rig(() => Reading(58790), readRange: (from, _) => EarlierFigure(from, 54200, 60000), compare: false);
         var handler = new GmvCommandHandler(rig.Settings, rig.Notifier, rig.Telegram);
 
         await handler.HandleAsync(new TelegramUpdate(1, "123", "/weekgmv"), default);
 
-        var reply = Assert.Single(rig.Telegram.Messages);
-        Assert.Contains("Geçen hafta bu saatte: €60.000 (▼ €1.210, %2).", reply);
+        Assert.EndsWith("GMV (" + DateTime.Now.ToString("HH:mm") + "): €58,790 | DoD ▲ +8% (Y €54,200, +€4,590) | WoW ▼ -2% (LW €60,000, -€1,210)", Assert.Single(rig.Telegram.Messages));
 
-        var range = Assert.Single(rig.Reader.Ranges);
-        Assert.Equal(GmvDashboard.PlatformNow().Date.AddDays(-7), range.From.Date);
-        Assert.Equal(range.From.Date, range.To.Date);
+        // One stretch starts yesterday's midnight, the other the midnight seven days back; each ends the same day.
+        var today = GmvDashboard.PlatformNow().Date;
+        Assert.Equal([today.AddDays(-1), today.AddDays(-7)], rig.Reader.Ranges.Select(r => r.From.Date));
+        Assert.All(rig.Reader.Ranges, r => Assert.Equal(r.From.Date, r.To.Date));
     }
 
     [Fact]
-    public async Task TheGmvCommandAddsYesterdayOnlyWhenTheSettingIsOn()
+    public async Task TheGmvCommandAddsTheComparisonOnlyWhenTheSettingIsOn()
     {
         using var on = new Rig(() => Reading(58790), readRange: (_, _) => Reading(54200), compare: true);
         await new GmvCommandHandler(on.Settings, on.Notifier, on.Telegram).HandleAsync(new TelegramUpdate(1, "123", "/gmv"), default);
-        Assert.Contains("Dün bu saatte", Assert.Single(on.Telegram.Messages));
+        Assert.Contains("DoD", Assert.Single(on.Telegram.Messages));
 
         using var off = new Rig(() => Reading(58790), readRange: (_, _) => Reading(54200), compare: false);
         await new GmvCommandHandler(off.Settings, off.Notifier, off.Telegram).HandleAsync(new TelegramUpdate(1, "123", "/gmv"), default);
-        Assert.DoesNotContain("Dün", Assert.Single(off.Telegram.Messages));
+        Assert.DoesNotContain("DoD", Assert.Single(off.Telegram.Messages));
     }
 
     [Fact]

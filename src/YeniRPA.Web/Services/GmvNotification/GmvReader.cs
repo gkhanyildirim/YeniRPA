@@ -20,28 +20,31 @@ public interface IGmvReader
 public static class GmvReaderComparison
 {
     /// <summary>
-    /// Today's GMV together with the GMV of the same stretch of the day <paramref name="daysBack"/> days
-    /// earlier. Both are measured against one <c>now</c>, so they cover the same time of day.
+    /// Today's GMV together with the GMV of the same stretch of the day yesterday and one week ago. All
+    /// three are measured against one <c>now</c>, so they cover the same time of day.
     ///
-    /// <para>The figure for today is what matters: when the earlier one cannot be read, the result
-    /// carries <c>Past = null</c> and the message says so, rather than a made-up or zero number. A login
-    /// that expires between the two reads is left for the next read to report.</para>
+    /// <para>The figure for today is what matters: when an earlier one cannot be read, it comes back
+    /// null and the message says so, rather than a made-up or zero number. A login that expires between
+    /// the reads is left for the next read to report.</para>
     /// </summary>
-    public static async Task<GmvComparison> ReadComparedAsync(
-        this IGmvReader reader, int daysBack, CancellationToken cancellationToken)
+    public static async Task<GmvComparison> ReadComparedAsync(this IGmvReader reader, CancellationToken cancellationToken)
     {
         var now = GmvDashboard.PlatformNow();
         var current = await reader.ReadAsync(cancellationToken);
-        var (from, to) = GmvDashboard.ComparisonRange(now, daysBack);
 
-        try
+        return new GmvComparison(current.Gmv, await ReadEarlierAsync(1), await ReadEarlierAsync(7));
+
+        async Task<double?> ReadEarlierAsync(int daysBack)
         {
-            var past = await reader.ReadRangeAsync(from, to, cancellationToken);
-            return new GmvComparison(current.Gmv, past.Gmv, daysBack);
-        }
-        catch (Exception ex) when (ex is GmvUnavailableException or GmvSessionExpiredException)
-        {
-            return new GmvComparison(current.Gmv, null, daysBack);
+            var (from, to) = GmvDashboard.ComparisonRange(now, daysBack);
+            try
+            {
+                return (await reader.ReadRangeAsync(from, to, cancellationToken)).Gmv;
+            }
+            catch (Exception ex) when (ex is GmvUnavailableException or GmvSessionExpiredException)
+            {
+                return null;
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ public static class JobIds
 {
     public const string GmvReport = "gmv-report";
     public const string SessionKeepAlive = "session-keepalive";
+    public const string PaymentCheck = "payment-check";
 }
 
 /// <summary>What a background job last did. <see cref="Ok"/> is null before its first run.</summary>

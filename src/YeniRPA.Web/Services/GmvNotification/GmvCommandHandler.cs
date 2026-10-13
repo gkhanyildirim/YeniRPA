@@ -25,12 +25,12 @@ public sealed class GmvCommandHandler(IGmvSettingsStore settings, GmvNotifier no
         switch (Command(update.Text))
         {
             case "/gmv":
-                reply = await AnswerAsync(config.IncludeComparison ? 1 : 0, config.DailyTarget, cancellationToken);
+                reply = await AnswerAsync(config.IncludeComparison, config.DailyTarget, cancellationToken);
                 break;
 
             case "/weekgmv":
-                // Asked for by name, so it compares even when yesterday's line is switched off.
-                reply = await AnswerAsync(7, config.DailyTarget, cancellationToken);
+                // Asked for by name, so it compares even when the comparison is switched off for the schedule.
+                reply = await AnswerAsync(true, config.DailyTarget, cancellationToken);
                 break;
 
             case null:
@@ -48,9 +48,9 @@ public sealed class GmvCommandHandler(IGmvSettingsStore settings, GmvNotifier no
         }
     }
 
-    async Task<string> AnswerAsync(int compareDays, double? dailyTarget, CancellationToken cancellationToken)
+    async Task<string> AnswerAsync(bool compare, double? dailyTarget, CancellationToken cancellationToken)
     {
-        var outcome = await notifier.QueryAsync(compareDays, cancellationToken);
+        var outcome = await notifier.QueryAsync(compare, cancellationToken);
         return outcome is { Success: true, Gmv: { } gmv }
             ? GmvMessageComposer.Report(gmv, DateTime.Now, dailyTarget, outcome.Comparison)
             : GmvMessageComposer.CommandFailed(outcome.Message);

@@ -4061,3 +4061,14 @@ select,
 .sor-count, .sor-page-label { font-size: .82rem; color: var(--ink-2); }
 .sor-pager-btns { display: inline-flex; align-items: center; gap: var(--s-3); }
 @media (prefers-reduced-motion: reduce) { .sor-callout, .sor-chip { transition: none; } .sor-callout:hover { transform: none; } }
+
+/* Seller Targets — inline "add address / WhatsApp group" box on a card. */
+.st-add-contact { flex-wrap: wrap; gap: var(--s-2); }
+.st-add-contact input.st-contact-input {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: .75rem;
+}
+.st-add-error { flex-basis: 100%; font-size: .72rem; color: var(--danger); }
+.st-add-error[hidden] { display: none; }

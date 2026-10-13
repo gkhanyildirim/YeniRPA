@@ -495,8 +495,8 @@
         '<input type="checkbox" data-index="' + i + '" data-kind="' + kind + '"' +
         (ready ? '' : ' disabled') + (pick[kind] ? ' checked' : '') + ' />' +
         '<span>' + label + '</span>' +
-        '<span class="st-dest" title="' + RPA.escapeHtml(ready ? dest : (problem || '')) + '">' +
-        RPA.escapeHtml(ready ? dest : (s.hasData ? (problem || 'Not available') : 'No notification')) + '</span></label>';
+        '<span class="st-dest" title="' + RPA.escapeHtml(dest || problem || '') + '">' +
+        RPA.escapeHtml(dest || (s.hasData ? (problem || 'Not available') : 'No notification')) + '</span></label>';
     }
 
     return '<div class="st-card' + (s.hasData ? '' : ' is-nodata') + '" data-index="' + i + '">' +
@@ -506,14 +506,93 @@
       (s.hasData ? '<div class="st-percent' + (s.percent >= 100 ? ' is-done' : '') + '">%' + pf.format(s.percent) + '</div>' : '') +
       '</div>' + top +
       '<div class="st-channels">' +
-      channel('mail', 'Mail', mailReady(s), s.email || '', s.emailProblem) +
-      channel('wa', 'WhatsApp', waReady(s), s.groupName || '', s.groupProblem) +
+      (canAdd(s, 'mail') ? addBoxHtml(s, i, 'mail') : channel('mail', 'Mail', mailReady(s), s.email || '', s.emailProblem)) +
+      (canAdd(s, 'wa') ? addBoxHtml(s, i, 'wa') : channel('wa', 'WhatsApp', waReady(s), s.groupName || '', s.groupProblem)) +
       '</div>' +
       '<div class="st-card-foot">' +
       (s.hasData ? '<button type="button" class="btn btn-ghost btn-sm st-preview" data-index="' + i + '">Preview</button>' : '') +
       '</div></div>';
   }
 
+  /**
+   * A seller with data but no address, or no WhatsApp group, gets an inline box instead of a greyed-out
+   * line: type it, press Add (or Enter), move on. Deliberately no list of existing groups or addresses
+   * here — those tables live in the other modules. A mapping *conflict* (the id or name mapped twice) is
+   * not offered a group box: adding a row there would quietly pick a side, so it has to be cleaned up
+   * where the mapping is kept.
+   */
+  function canAdd(s, kind) {
+    // Offered whether or not the workbook has revenue for the seller: a contact can be filled in ahead
+    // of the month the figures arrive. Without data the seller still gets no notification.
+    if (kind === 'mail') return !s.email;
+    return !s.groupName && !/^Mapping conflict/i.test(s.groupProblem || '');
+  }
+
+  function addBoxHtml(s, i, kind) {
+    const mail = kind === 'mail';
+    return '<div class="st-channel st-add-contact" data-index="' + i + '" data-kind="' + kind + '">' +
+      '<span>' + (mail ? 'Mail' : 'WhatsApp') + '</span>' +
+      '<input type="text" class="st-contact-input" spellcheck="false" autocomplete="off" ' +
+      'placeholder="' + (mail ? 'E-mail address' : 'Group name') + '" ' +
+      'aria-label="' + (mail ? 'E-mail address' : 'WhatsApp group name') + ' for ' + RPA.escapeHtml(s.sellerName) + '" />' +
+      '<button type="button" class="btn btn-ghost btn-sm st-contact-add">Add</button>' +
+      '<span class="st-add-error" role="alert" hidden></span>' +
+      '</div>';
+  }
+
+  function looksLikeEmail(text) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
+  }
+
+  /** Saves what was typed into one box and redraws only that card, so text typed into the other
+   *  cards' boxes survives. Errors are shown in the box's own row — the page-level alert sits above
+   *  the grid and is easily out of sight. */
+  async function addContact(box) {
+    const index = Number(box.dataset.index);
+    const kind = box.dataset.kind;
+    const s = sellers[index];
+    const card = box.closest('.st-card');
+    if (!s || !card) return;
+
+    const input = box.querySelector('.st-contact-input');
+    const button = box.querySelector('.st-contact-add');
+    const error = box.querySelector('.st-add-error');
+    const value = input.value.trim();
+
+    function fail(message) {
+      error.textContent = message;
+      error.hidden = false;
+      input.focus();
+    }
+
+    error.hidden = true;
+    if (!value) return fail(kind === 'mail' ? 'Type an e-mail address.' : 'Type the group name.');
+
+    // An address typed into the group box would be saved as a group name and never work as one.
+    if (kind === 'wa' && looksLikeEmail(value)) return fail('That is an e-mail address — use the Mail box.');
+    if (kind === 'mail' && !looksLikeEmail(value)) return fail('That does not look like an e-mail address.');
+
+    RPA.setBusy(button, true, 'Saving…');
+    try {
+      await stJson('PUT', '/api/seller-targets/contacts', {
+        contacts: [{
+          sellerId: s.sellerId,
+          sellerName: s.sellerName,
+          email: kind === 'mail' ? value : '',
+          groupName: kind === 'wa' ? value : ''
+        }]
+      });
+
+      if (kind === 'mail') { s.email = value; s.emailProblem = null; }
+      else { s.groupName = value; s.groupProblem = null; }
+
+      card.outerHTML = cardHtml(s, index);
+      renderStats();
+    } catch (err) {
+      RPA.setBusy(button, false);
+      fail(err.message);
+    }
+  }
   function visibleIndexes() {
     const term = el('st-search').value.trim().toLowerCase();
     const onlyData = el('st-only-data').checked;
@@ -796,6 +875,17 @@
     });
 
     // Delegated: the grid is re-rendered on every filter keystroke.
+    el('st-grid').addEventListener('click', function (event) {
+      const add = event.target.closest('.st-contact-add');
+      if (add) addContact(add.closest('.st-add-contact'));
+    });
+
+    el('st-grid').addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || !event.target.classList.contains('st-contact-input')) return;
+      event.preventDefault();
+      addContact(event.target.closest('.st-add-contact'));
+    });
+
     el('st-grid').addEventListener('change', function (event) {
       const box = event.target.closest('input[type="checkbox"][data-index]');
       if (!box) return;

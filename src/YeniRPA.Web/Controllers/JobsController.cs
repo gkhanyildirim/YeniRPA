@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using YeniRPA.Web.Services.GmvNotification;
+using YeniRPA.Web.Services.PaymentCheck;
 
 namespace YeniRPA.Web.Controllers;
 
@@ -17,6 +18,8 @@ namespace YeniRPA.Web.Controllers;
 public sealed class JobsController(
     IGmvSettingsStore settings,
     IGmvReader reader,
+    IPaymentCheckSettingsStore paymentSettings,
+    IPaymentCheckHistoryStore paymentHistory,
     JobStatusTracker tracker) : ControllerBase
 {
     public sealed class JobUpdateRequest
@@ -55,6 +58,14 @@ public sealed class JobsController(
                     settings.UpdateSchedule(new GmvScheduleUpdate(KeepAliveMinutes: request.IntervalMinutes));
                     break;
 
+                case JobIds.PaymentCheck:
+                    if (request.Enabled == true && (settings.ReadToken() is null || settings.Load().ChatId.Length == 0))
+                        throw new InvalidOperationException("Enter the bot token and the chat ID in GMV Notification before turning this job on.");
+
+                    paymentSettings.Update(new PaymentCheckSettingsUpdate(
+                        request.Enabled, request.IntervalMinutes, request.WindowStartHour, request.WindowEndHour));
+                    break;
+
                 default:
                     return NotFound(new { success = false, message = "There is no such job.", data = (object?)null });
             }
@@ -79,6 +90,10 @@ public sealed class JobsController(
         var keepAliveNext = config.Enabled && keepAlive.LastRunUtc is { } last
             ? DateTime.SpecifyKind(last, DateTimeKind.Utc).AddMinutes(config.KeepAliveMinutes)
             : (DateTime?)null;
+
+        var payment = paymentSettings.Load();
+        var paymentRun = tracker.Get(JobIds.PaymentCheck);
+        var paymentNext = PaymentCheckSchedule.Next(payment, paymentHistory.Last()?.TimestampUtc.ToLocalTime(), now);
 
         return new[]
         {
@@ -124,6 +139,26 @@ public sealed class JobsController(
                 lastOk = keepAlive.Ok,
                 lastMessage = keepAlive.Message ?? SessionText(session),
                 note = (string?)"Keep it under 25 minutes: the Marketplace ends a login after 30 idle minutes.",
+            },
+            new
+            {
+                id = JobIds.PaymentCheck,
+                name = "Payment page check",
+                description = "Walks the storefront checkout up to the card-entry page and reports to Telegram whether it opened.",
+                enabled = payment.Enabled,
+                canToggle = true,
+                mode = (string?)null,
+                intervalMinutes = (int?)payment.IntervalMinutes,
+                minMinutes = PaymentCheckLimits.MinIntervalMinutes,
+                maxMinutes = PaymentCheckLimits.MaxIntervalMinutes,
+                hasWindow = true,
+                windowStartHour = (int?)payment.WindowStartHour,
+                windowEndHour = (int?)payment.WindowEndHour,
+                lastRunUtc = AsUtc(paymentRun.LastRunUtc),
+                nextRunUtc = paymentNext?.ToUniversalTime(),
+                lastOk = paymentRun.Ok,
+                lastMessage = paymentRun.Message,
+                note = (string?)"Needs a storefront login (Payment Check panel) and an item in the test account's cart.",
             },
         };
     }

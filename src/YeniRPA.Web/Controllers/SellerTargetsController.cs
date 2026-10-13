@@ -309,6 +309,12 @@ public sealed class SellerTargetsController : ControllerBase
                 return Failure($"'{bad}' does not look like an e-mail address ({contact.SellerName}).");
         }
 
+        // An address saved as a WhatsApp group name could never match a chat, and would pass the send
+        // allow-list as if it were a real group.
+        var addressAsGroup = contacts.FirstOrDefault(c => SellerMailStore.LooksLikeEmail(c.GroupName ?? ""));
+        if (addressAsGroup is not null)
+            return Failure($"'{addressAsGroup.GroupName}' is an e-mail address, not a WhatsApp group name ({addressAsGroup.SellerName}).");
+
         int mailSaved = 0, groupsSaved = 0;
         lock (ContactsLock)
         {

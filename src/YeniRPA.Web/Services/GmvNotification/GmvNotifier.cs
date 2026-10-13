@@ -49,21 +49,18 @@ public sealed class GmvNotifier(
 
     /// <summary>"Check GMV now": reads it, and sends it too when <paramref name="send"/> is set.</summary>
     public Task<GmvOutcome> CheckNowAsync(bool send, CancellationToken cancellationToken) =>
-        ExecuteAsync(GmvTrigger.Manual, null, send, send ? DefaultCompareDays() : 0, cancellationToken);
+        ExecuteAsync(GmvTrigger.Manual, null, send, send && settings.Load().IncludeComparison, cancellationToken);
 
     /// <summary>
     /// A Telegram command's read: nothing is sent from here (the handler answers), but the result
-    /// carries the comparison with the same stretch <paramref name="compareDays"/> days earlier (0 = none).
+    /// carries the comparison with yesterday and last week when <paramref name="compare"/> is set.
     /// </summary>
-    public Task<GmvOutcome> QueryAsync(int compareDays, CancellationToken cancellationToken) =>
-        ExecuteAsync(GmvTrigger.Manual, null, false, compareDays, cancellationToken);
+    public Task<GmvOutcome> QueryAsync(bool compare, CancellationToken cancellationToken) =>
+        ExecuteAsync(GmvTrigger.Manual, null, false, compare, cancellationToken);
 
     /// <summary>A scheduled notification. Does nothing when the slot was already handled.</summary>
     public Task<GmvOutcome> RunSlotAsync(GmvSlot slot, CancellationToken cancellationToken) =>
-        ExecuteAsync(GmvTrigger.Scheduled, slot, true, DefaultCompareDays(), cancellationToken);
-
-    /// <summary>Yesterday's comparison for the messages the schedule and the buttons send, unless it was switched off.</summary>
-    int DefaultCompareDays() => settings.Load().IncludeComparison ? 1 : 0;
+        ExecuteAsync(GmvTrigger.Scheduled, slot, true, settings.Load().IncludeComparison, cancellationToken);
 
     /// <summary>Writes down a scheduled time the app was not running for.</summary>
     public void RecordMissed(GmvSlot slot)
@@ -73,7 +70,7 @@ public sealed class GmvNotifier(
     }
 
     async Task<GmvOutcome> ExecuteAsync(
-        string trigger, GmvSlot? slot, bool send, int compareDays, CancellationToken cancellationToken)
+        string trigger, GmvSlot? slot, bool send, bool compare, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -86,9 +83,9 @@ public sealed class GmvNotifier(
             GmvComparison? comparison = null;
             try
             {
-                if (compareDays > 0)
+                if (compare)
                 {
-                    comparison = await reader.ReadComparedAsync(compareDays, cancellationToken);
+                    comparison = await reader.ReadComparedAsync(cancellationToken);
                     reading = new GmvReading(comparison.Current, DateTimeOffset.Now);
                 }
                 else
