@@ -644,6 +644,20 @@ public static class TitleCleanBuilder
             }
 
             var joined = string.Join(", ", said);
+
+            // Başlık Doğru: the title names one value, so it is taken as the truth and the cell is
+            // brought to it. Two different readings stay a conflict — that is not a clear answer.
+            if (rule.TitleWins &&
+                evidence.Select(c => c.Match.Key).Distinct(StringComparer.Ordinal).Count() == 1)
+            {
+                if (rule.Remove)
+                    removals.AddRange(evidence.SelectMany(c => c.Match.Spans));
+
+                return new TitleAttributeResult(
+                    rule.Column, TitleAttributeStatus.Corrected, original, evidence[0].Match.Canonical,
+                    joined);
+            }
+
             var message = $"{rule.Column}: başlıkta \"{joined}\", özellikte \"{original}\"";
             errors.Add(message);
 

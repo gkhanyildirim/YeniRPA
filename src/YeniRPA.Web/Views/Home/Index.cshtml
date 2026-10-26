@@ -1,4 +1,4 @@
-@model YeniRPA.Web.Models.MethodologyViewModel
+﻿@model YeniRPA.Web.Models.MethodologyViewModel
 @{
     ViewData["Title"] = "Reports";
 }
@@ -1930,12 +1930,12 @@
                                    aria-label="Offers export (.csv or .xlsx)" />
                         </label>
 
-                        <label class="drop" id="sor-traffic-drop">
-                            <span class="drop-title">Offer KPIs (traffic) export</span>
-                            <span class="drop-hint">.csv / .xlsx &mdash; "Product id", "Sessions by Product with PDP (30d)"</span>
+                        <label class="drop" id="sor-sales-drop">
+                            <span class="drop-title">Combined sales (Birle&scedil;ik Sat&#305;&scedil;lar)</span>
+                            <span class="drop-hint">.xlsx / .csv &mdash; "Product id", "Sessions by Product with PDP", GMV | Adet per period</span>
                             <span class="drop-file"><span class="name"></span><span class="size"></span></span>
-                            <input type="file" id="sor-traffic-file" accept=".csv,.xlsx,.xls"
-                                   aria-label="Offer KPIs traffic export (.csv or .xlsx)" />
+                            <input type="file" id="sor-sales-file" accept=".csv,.xlsx,.xls"
+                                   aria-label="Combined sales export (.xlsx or .csv)" />
                         </label>
 
                         <label class="drop" id="sor-approvals-drop">
@@ -1953,6 +1953,13 @@
                             <input type="file" id="sor-stockout-file" accept=".csv,.xlsx,.xls"
                                    aria-label="Stockout products export (optional, .csv or .xlsx)" />
                         </label>
+                    </div>
+
+                    <div class="sor-rate">
+                        <label for="sor-rate">EUR &rarr; TRY rate</label>
+                        <input type="text" id="sor-rate" inputmode="decimal" autocomplete="off" placeholder="e.g. 48.5"
+                               aria-describedby="sor-rate-hint" />
+                        <span class="sor-rate-hint" id="sor-rate-hint">Required. The combined sales file is in euro; GMV, AOV and prices are converted to TRY at this rate. Change it and generate again.</span>
                     </div>
 
                     <div class="alert" id="sor-alert" role="alert">
@@ -1980,12 +1987,12 @@
                     <div class="card">
                         <div class="kpi-grid" id="sor-so-kpis"></div>
                         <p class="note" id="sor-so-notes"></p>
-                        <p class="note">PDP sessions and add to cart are the last 30 days (Offer KPIs file); sold items and GMV are the last 7 days (stockout file).</p>
+                        <p class="note" id="sor-so-window"></p>
                     </div>
 
                     <div class="section-title">Most viewed while unavailable</div>
                     <div class="card">
-                        <div class="sor-chart-title">Top 10 stockout products by PDP sessions (30d)</div>
+                        <div class="sor-chart-title">Top 10 stockout products by PDP sessions</div>
                         <div class="sor-chart-sub">Visitors landing on a product that cannot be bought</div>
                         <div class="chart-box"><canvas id="sor-chart-stockout"></canvas></div>
                     </div>
@@ -2043,12 +2050,27 @@
                         <div class="chart-box"><canvas id="sor-chart-category"></canvas></div>
                     </div>
                     <div class="card">
+                        <div class="sor-chart-title">Unique SKUs sold per period</div>
+                        <div class="sor-chart-sub">Different products with at least one sale in each period of the sales file</div>
+                        <div class="chart-box"><canvas id="sor-chart-sold"></canvas></div>
+                    </div>
+                    <div class="card">
+                        <div class="sor-chart-title">GMV per period</div>
+                        <div class="sor-chart-sub">TRY, without shipping, whole sales file</div>
+                        <div class="chart-box"><canvas id="sor-chart-gmv"></canvas></div>
+                    </div>
+                    <div class="card sor-chart-wide">
+                        <div class="sor-chart-title">Conversion funnel</div>
+                        <div class="sor-chart-sub">Sessions across the whole sales file &middot; bars are on a log scale &middot; the % is the step from the stage above</div>
+                        <div class="sor-funnel" id="sor-funnel"></div>
+                    </div>
+                    <div class="card">
                         <div class="sor-chart-title">Product age (first offer to today)</div>
                         <div class="sor-chart-sub">Baby 0-1 mo &middot; Young 1-3 mo &middot; Adult 3-6 mo &middot; Mature 6+ mo &middot; closed first offers highlighted</div>
                         <div class="chart-box"><canvas id="sor-chart-age"></canvas></div>
                     </div>
                     <div class="card">
-                        <div class="sor-chart-title">Top 10 SKUs by PDP views (30d)</div>
+                        <div class="sor-chart-title">Top 10 SKUs by PDP sessions</div>
                         <div class="sor-chart-sub">Red bars: the SKU's first offer is closed</div>
                         <div class="chart-box"><canvas id="sor-chart-top"></canvas></div>
                     </div>
@@ -2066,6 +2088,9 @@
                             <button type="button" class="sor-chip" data-filter="hasTraffic">With traffic</button>
                             <button type="button" class="sor-chip" data-filter="noTraffic">No traffic data</button>
                             <button type="button" class="sor-chip" data-filter="noApproval">Not approved</button>
+                            <button type="button" class="sor-chip" data-filter="sold">Sold</button>
+                            <button type="button" class="sor-chip" data-filter="neverSold">PDP, never sold</button>
+                            <button type="button" class="sor-chip" data-filter="lostTraffic">Traffic, no active offer</button>
                         </div>
                         <div class="sor-chips sor-age-chips" id="sor-age-chips" role="group" aria-label="Product age">
                             <span class="sor-chips-label">Age</span>

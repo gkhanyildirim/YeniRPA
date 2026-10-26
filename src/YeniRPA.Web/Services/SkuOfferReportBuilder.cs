@@ -1,10 +1,10 @@
-using System.Globalization;
+﻿using System.Globalization;
 using YeniRPA.Web.Models;
 
 namespace YeniRPA.Web.Services;
 
 /// <summary>
-/// SKU Offer &amp; Traffic Report. Two fixed-template exports, joined on the product id:
+/// SKU Offer &amp; Traffic Report. Fixed-template exports, joined on the product id:
 /// <list type="bullet">
 /// <item><b>Offers export</b> (<c>Product SKU</c>, <c>Offer SKU</c>, <c>Activated</c>, <c>Creation date</c>…) —
 /// one row per offer, so a product's offer history is the group of rows sharing a Product SKU.</item>
@@ -24,7 +24,7 @@ public static class SkuOfferReportBuilder
     const string OffersActivated = "Activated";
     const string OffersCreated = "Creation date";
     const string KpiProductId = "Product id";
-    const string KpiPdp = "Sessions by Product with PDP (30d)";
+    const string KpiPdp = "Sessions by Product with PDP";
     const string ApprovalCode = "Ürün Kodu";
     const string ApprovalDate = "Tarih";
     const string ApprovalBy = "Sorumlu";
@@ -40,9 +40,16 @@ public static class SkuOfferReportBuilder
         public string FirstOfferSku = "", FirstSeller = "", FirstReason = "";
         public bool FirstActive;
         public int Total, Active;
+        public List<string>? ActiveSellers;
     }
 
-    sealed record Traffic(double? Pdp, double? AddToCart, double? Impressions, double? Sold, double? Gmv);
+    /// <summary>One product's row from the combined sales file. <c>null</c> = the cell was blank (unknown), never 0.</summary>
+    sealed record Traffic(
+        double? Impr, double? Clicks, double? Pdp, double? AddToCart, double? Checkout, double? Orders,
+        double? Remove, double? Sold, double? Gmv, double? AvgPrice, double? Aov,
+        double?[]? PeriodQty, double?[]? PeriodGmv);
+
+    sealed record SalesData(Dictionary<string, Traffic> Map, string[] Periods, string Window, bool HasImpressions);
 
     sealed record Approval(DateTime? Date, string By);
 
@@ -50,12 +57,13 @@ public static class SkuOfferReportBuilder
     public static SkuOfferReport Build(
         Stream offers, string offersName, Stream traffic, string trafficName,
         Stream approvals, string approvalsName, DateTime? today = null,
-        Stream? stockout = null, string? stockoutName = null)
+        Stream? stockout = null, string? stockoutName = null, double eurTryRate = 1)
     {
         var asOf = (today ?? DateTime.Today).Date;
         var unreadable = 0;
         var accs = ReadOffers(offers, offersName, ref unreadable);
-        var kpis = ReadTraffic(traffic, trafficName, out var hasImpressions);
+        var sales = ReadSales(traffic, trafficName, eurTryRate);
+        var kpis = sales.Map;
         var approved = ReadApprovals(approvals, approvalsName);
 
         var rows = new List<SkuOfferRow>(accs.Count);
@@ -82,11 +90,15 @@ public static class SkuOfferReportBuilder
                 Sku = sku, Product = a.Product, Brand = a.Brand, Category = a.Category,
                 FirstOfferDate = a.First, FirstOfferSeller = a.FirstSeller,
                 FirstOfferActive = a.FirstActive, FirstOfferReason = a.FirstReason,
-                TotalOffers = a.Total, ActiveOffers = a.Active,
+                TotalOffers = a.Total, ActiveOffers = a.Active, ActiveSellers = a.ActiveSellers ?? [],
                 HasTraffic = t is not null,
-                PdpViews = t?.Pdp, AddToCart = t?.AddToCart, Impressions = t?.Impressions,
-                AtcRate = t is { Pdp: > 0, AddToCart: { } atc } ? atc / t.Pdp : null,
-                Sold30d = t?.Sold, Gmv30d = t?.Gmv,
+                Impressions = t?.Impr, Clicks = t?.Clicks, Ctr = Ratio(t?.Clicks, t?.Impr),
+                PdpViews = t?.Pdp, AddToCart = t?.AddToCart, AtcRate = Ratio(t?.AddToCart, t?.Pdp),
+                CheckoutSessions = t?.Checkout, OrderSessions = t?.Orders,
+                CrPdp = Ratio(t?.Orders, t?.Pdp), CrCheckout = Ratio(t?.Orders, t?.Checkout),
+                RemoveFromCart = t?.Remove,
+                SoldQty = t?.Sold, Gmv = t?.Gmv, AvgPrice = t?.AvgPrice, Aov = t?.Aov,
+                PeriodQty = t?.PeriodQty, PeriodGmv = t?.PeriodGmv,
                 HasApproval = ap is not null, ApprovalDate = ap?.Date, ApprovedBy = ap?.By ?? "",
                 AgeGroup = SkuAgeGroups.For(a.First, asOf),
                 AgeDays = a.First is { } created ? Math.Max(0, (asOf - created.Date).Days) : null,
@@ -108,11 +120,23 @@ public static class SkuOfferReportBuilder
             UnreadableDates: unreadable,
             TotalPdpViews: rows.Sum(r => r.PdpViews ?? 0),
             TotalAddToCart: rows.Sum(r => r.AddToCart ?? 0),
-            HasImpressions: hasImpressions,
+            HasImpressions: sales.HasImpressions,
             TotalImpressions: rows.Sum(r => r.Impressions ?? 0),
             ApprovedSkus: approvedMatched,
             NotApprovedSkus: rows.Count - approvedMatched,
-            ApprovalProductsNotInOffers: approved.Count - approvedMatched);
+            ApprovalProductsNotInOffers: approved.Count - approvedMatched,
+            SalesWindow: sales.Window,
+            UniqueSkusSold: kpis.Values.Count(k => k.Sold > 0),
+            UniqueSkusSoldInOffers: rows.Count(r => r.SoldQty > 0),
+            TotalSoldQty: kpis.Values.Sum(k => k.Sold ?? 0),
+            TotalGmv: kpis.Values.Sum(k => k.Gmv ?? 0),
+            OverallCtr: Ratio(kpis.Values.Sum(k => k.Clicks ?? 0), kpis.Values.Sum(k => k.Impr ?? 0)) ?? 0,
+            OverallAtcRate: Ratio(kpis.Values.Sum(k => k.AddToCart ?? 0), kpis.Values.Sum(k => k.Pdp ?? 0)) ?? 0,
+            OverallCrPdp: Ratio(kpis.Values.Sum(k => k.Orders ?? 0), kpis.Values.Sum(k => k.Pdp ?? 0)) ?? 0,
+            LostTrafficSkus: rows.Count(r => r.ActiveOffers == 0 && r.PdpViews > 0),
+            LostTrafficPdp: rows.Where(r => r.ActiveOffers == 0).Sum(r => r.PdpViews ?? 0),
+            PdpButNeverSoldSkus: rows.Count(r => r.PdpViews > 0 && !(r.SoldQty > 0)),
+            EurTryRate: eurTryRate);
 
         var stockoutReport = stockout is null
             ? null
@@ -120,7 +144,7 @@ public static class SkuOfferReportBuilder
 
         return new SkuOfferReport
         {
-            Rows = rows, Summary = summary, Charts = BuildCharts(rows), Stockout = stockoutReport
+            Rows = rows, Summary = summary, Charts = BuildCharts(rows, sales), Stockout = stockoutReport
         };
     }
 
@@ -212,7 +236,9 @@ public static class SkuOfferReportBuilder
                 Sold7d = s.Sold, Gmv7d = s.Gmv,
                 HasTraffic = t is not null,
                 PdpViews = t?.Pdp, AddToCart = t?.AddToCart,
-                AtcRate = t is { Pdp: > 0, AddToCart: { } atc } ? atc / t.Pdp : null,
+                AtcRate = Ratio(t?.AddToCart, t?.Pdp),
+                Impressions = t?.Impr, CrPdp = Ratio(t?.Orders, t?.Pdp),
+                SoldQty = t?.Sold, Gmv = t?.Gmv,
                 InOffers = offer is not null,
                 TotalOffers = offer?.TotalOffers ?? 0, ActiveOffers = offer?.ActiveOffers ?? 0,
                 FirstOfferDate = offer?.FirstOfferDate,
@@ -233,6 +259,7 @@ public static class SkuOfferReportBuilder
             WithTraffic: withTraffic,
             WithoutTraffic: rows.Count - withTraffic,
             NotInOffers: rows.Count(r => !r.InOffers),
+            TotalImpressions: rows.Sum(r => r.Impressions ?? 0),
             TotalPdpViews: stockPdp,
             SharePctOfAllPdp: allPdp > 0 ? stockPdp / allPdp * 100 : 0,
             TotalAddToCart: rows.Sum(r => r.AddToCart ?? 0),
@@ -283,8 +310,17 @@ public static class SkuOfferReportBuilder
             }
 
             var active = IsYes(TabularFile.GetCell(row, cActive));
+            var seller = TabularFile.GetCell(row, cSeller).Trim();
             a.Total++;
-            if (active) a.Active++;
+            if (active)
+            {
+                a.Active++;
+                if (seller.Length > 0)
+                {
+                    a.ActiveSellers ??= [];
+                    if (!a.ActiveSellers.Contains(seller)) a.ActiveSellers.Add(seller);
+                }
+            }
 
             var created = ParseCreated(TabularFile.GetCell(row, cCreated));
             if (created is null)
@@ -301,7 +337,7 @@ public static class SkuOfferReportBuilder
             a.First = created;
             a.FirstOfferSku = offerSku;
             a.FirstActive = active;
-            a.FirstSeller = TabularFile.GetCell(row, cSeller).Trim();
+            a.FirstSeller = seller;
             a.FirstReason = TabularFile.GetCell(row, cReason).Trim();
         }
 
@@ -311,11 +347,20 @@ public static class SkuOfferReportBuilder
         return accs;
     }
 
-    static Dictionary<string, Traffic> ReadTraffic(Stream stream, string fileName, out bool hasImpressions)
+    /// <summary>
+    /// The combined sales file: one row per product, every figure summed over the file's whole period
+    /// (the real file spans 1 Sep to 14 Oct, not 30 days). Headers are matched by their stable prefix
+    /// because the export decorates them ("GMV w/o Shipping  [Tracked]", "... - Summary"). The period
+    /// breakdown is discovered from the <c>GMV | label</c> / <c>Adet | label</c> column pairs, so a template
+    /// with different periods still reads. Only <c>Product id</c> and the PDP sessions column are required.
+    /// </summary>
+    static SalesData ReadSales(Stream stream, string fileName, double rate)
     {
         var map = new Dictionary<string, Traffic>(StringComparer.Ordinal);
         int cId = -1, cPdp = -1;
-        int? cAtc = null, cSold = null, cGmv = null, cImpr = null;
+        int? cImpr = null, cClicks = null, cAtc = null, cCheckout = null, cOrders = null, cRemove = null;
+        int? cSold = null, cGmv = null, cPrice = null, cAov = null;
+        var periods = new List<(string Label, int? Gmv, int? Qty)>();
         var headerSeen = false;
 
         foreach (var row in SkuOfferReader.Read(stream, fileName))
@@ -324,34 +369,75 @@ public static class SkuOfferReportBuilder
             {
                 headerSeen = true;
                 var idx = TabularFile.BuildHeaderIndex(row);
-                RequireColumns(idx, "traffic (Offer KPIs)", fileName, KpiProductId, KpiPdp);
+                RequireColumns(idx, "combined sales", fileName, KpiProductId, KpiPdp);
                 cId = idx[KpiProductId]; cPdp = idx[KpiPdp];
-                cAtc = idx.Where(p => p.Key.StartsWith("Sessions by Product with Add to Cart", StringComparison.OrdinalIgnoreCase))
-                          .Select(p => (int?)p.Value).FirstOrDefault();
-                cSold = idx.Where(p => p.Key.StartsWith("Product - Sold items", StringComparison.OrdinalIgnoreCase))
-                           .Select(p => (int?)p.Value).FirstOrDefault();
-                cGmv = idx.Where(p => p.Key.StartsWith("Product - GMV", StringComparison.OrdinalIgnoreCase))
-                          .Select(p => (int?)p.Value).FirstOrDefault();
-                // The current export carries no impression column; one added later is picked up by name.
-                cImpr = idx.Where(p => p.Key.Contains("impression", StringComparison.OrdinalIgnoreCase))
-                           .Select(p => (int?)p.Value).FirstOrDefault();
+
+                cImpr = FindByPrefix(idx, "Sessions by Product with Product Impr");
+                cClicks = FindByPrefix(idx, "Sessions by Product with Product Clicks");
+                cAtc = FindByPrefix(idx, "Sessions by Product with Add to Cart");
+                cCheckout = FindByPrefix(idx, "Sessions by Product in Checkout");
+                cOrders = FindByPrefix(idx, "Sessions by Product with Orders");
+                cRemove = FindByPrefix(idx, "Sessions by Product with Remove from Cart");
+                cSold = FindByPrefix(idx, "Sold Qty");
+                cGmv = FindByPrefix(idx, "GMV w/o Shipping");
+                cPrice = FindByPrefix(idx, "Ø Product Price");
+                cAov = Optional(idx, "AOV");
+
+                foreach (var (name, col) in idx.OrderBy(p => p.Value))
+                {
+                    if (!name.StartsWith("GMV | ", StringComparison.OrdinalIgnoreCase)) continue;
+                    var label = name["GMV | ".Length..].Trim();
+                    periods.Add((label, col, idx.TryGetValue("Adet | " + label, out var q) ? q : null));
+                }
                 continue;
             }
 
             var id = NormalizeId(TabularFile.GetCell(row, cId));
-            if (id.Length == 0 || map.ContainsKey(id)) continue; // product-level figures repeat per offer row
+            if (id.Length == 0 || map.ContainsKey(id)) continue;
+
+            double?[]? pq = null, pg = null;
+            if (periods.Count > 0)
+            {
+                pq = periods.Select(p => Number(row, p.Qty)).ToArray();
+                pg = periods.Select(p => Money(row, p.Gmv, rate)).ToArray();
+                if (pq.All(v => v is null) && pg.All(v => v is null)) pq = pg = null;
+            }
 
             map[id] = new Traffic(
-                Number(row, cPdp), Number(row, cAtc), Number(row, cImpr), Number(row, cSold), Number(row, cGmv));
+                Number(row, cImpr), Number(row, cClicks), Number(row, cPdp), Number(row, cAtc),
+                Number(row, cCheckout), Number(row, cOrders), Number(row, cRemove),
+                Number(row, cSold), Money(row, cGmv, rate), Money(row, cPrice, rate), Money(row, cAov, rate), pq, pg);
         }
 
         if (!headerSeen)
-            throw new InvalidOperationException($"The traffic file '{fileName}' is empty.");
+            throw new InvalidOperationException($"The combined sales file '{fileName}' is empty.");
 
-        hasImpressions = cImpr is not null;
-        return map;
+        var labels = periods.Select(p => p.Label).ToArray();
+        return new SalesData(map, labels, WindowOf(labels), cImpr is not null);
     }
 
+    /// <summary>"1 Eyl - 30 Kas" ... "31 Agu - 14 Eki" -> "1 Eyl - 14 Eki": start of the first period to end of the last.</summary>
+    static string WindowOf(string[] labels)
+    {
+        if (labels.Length == 0) return "";
+        var first = labels[0].Split(" - ", 2, StringSplitOptions.TrimEntries);
+        var last = labels[^1].Split(" - ", 2, StringSplitOptions.TrimEntries);
+        return first.Length == 2 && last.Length == 2 ? $"{first[0]} - {last[1]}" : string.Join(", ", labels);
+    }
+
+    static int? FindByPrefix(Dictionary<string, int> idx, string prefix) =>
+        idx.Where(p => p.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+           .OrderBy(p => p.Value).Select(p => (int?)p.Value).FirstOrDefault();
+
+    /// <summary>
+    /// A money cell of the combined sales file. The export is in euro; converting here, once, means every
+    /// figure built from it (rows, totals, period charts, stockout join, Excel) is already in TRY and no
+    /// screen can mix the two. Counts and quantities never go through this.
+    /// </summary>
+    static double? Money(List<string> row, int? col, double rate) => Number(row, col) * rate;
+
+    static double? Ratio(double? numerator, double? denominator) =>
+        numerator is { } n && denominator is > 0 ? n / denominator : null;
     /// <summary>
     /// Product code -> earliest approval (date, approver) across every sheet that carries the three
     /// columns. The workbook keeps one tab per year, so a product can show up on more than one; the
@@ -464,8 +550,21 @@ public static class SkuOfferReportBuilder
         return TabularFile.ParseDayFirstDate(text);
     }
 
-    static SkuOfferCharts BuildCharts(List<SkuOfferRow> rows)
+    static SkuOfferCharts BuildCharts(List<SkuOfferRow> rows, SalesData sales)
     {
+        var periods = sales.Periods
+            .Select((label, i) => new SkuPeriodPoint(
+                label,
+                sales.Map.Values.Count(t => t.PeriodQty is { } q && q[i] > 0),
+                sales.Map.Values.Sum(t => t.PeriodQty?[i] ?? 0),
+                sales.Map.Values.Sum(t => t.PeriodGmv?[i] ?? 0)))
+            .ToList();
+
+        var all = sales.Map.Values;
+        var funnel = new SkuFunnel(
+            all.Sum(t => t.Impr ?? 0), all.Sum(t => t.Clicks ?? 0), all.Sum(t => t.Pdp ?? 0),
+            all.Sum(t => t.AddToCart ?? 0), all.Sum(t => t.Checkout ?? 0), all.Sum(t => t.Orders ?? 0));
+
         var byAge = SkuAgeGroups.All
             .Select(g => new SkuAgePoint(
                 g.Key, g.Label,
@@ -496,7 +595,7 @@ public static class SkuOfferReportBuilder
             .Select(r => new SkuTopTrafficPoint(r.Sku, r.Product, r.PdpViews!.Value, r.Warning is not null))
             .ToList();
 
-        return new SkuOfferCharts(byMonth, byCategory, topTraffic, byAge);
+        return new SkuOfferCharts(byMonth, byCategory, topTraffic, byAge, periods, funnel);
     }
 
     public static IReadOnlyList<SkuOfferRow> Query(IReadOnlyList<SkuOfferRow> rows, SkuOfferQuery query)
@@ -510,6 +609,9 @@ public static class SkuOfferReportBuilder
             "noTraffic" => result.Where(r => !r.HasTraffic),
             "hasTraffic" => result.Where(r => r.HasTraffic),
             "noApproval" => result.Where(r => !r.HasApproval),
+            "sold" => result.Where(r => r.SoldQty > 0),
+            "neverSold" => result.Where(r => r.PdpViews > 0 && !(r.SoldQty > 0)),
+            "lostTraffic" => result.Where(r => r.ActiveOffers == 0 && r.PdpViews > 0),
             _ => result
         };
 
@@ -525,6 +627,8 @@ public static class SkuOfferReportBuilder
                 r.Product.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                 r.Brand.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                 r.Category.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                r.ActiveSellers.Any(s => s.Contains(search, StringComparison.OrdinalIgnoreCase)) ||
+                r.FirstOfferSeller.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                 r.ApprovedBy.Contains(search, StringComparison.OrdinalIgnoreCase));
         }
 
@@ -538,6 +642,12 @@ public static class SkuOfferReportBuilder
             "pdp" => Order(result, r => r.PdpViews ?? -1, d),
             "atc" => Order(result, r => r.AddToCart ?? -1, d),
             "atcRate" => Order(result, r => r.AtcRate ?? -1, d),
+            "impressions" => Order(result, r => r.Impressions ?? -1, d),
+            "ctr" => Order(result, r => r.Ctr ?? -1, d),
+            "crPdp" => Order(result, r => r.CrPdp ?? -1, d),
+            "sold" => Order(result, r => r.SoldQty ?? -1, d),
+            "gmv" => Order(result, r => r.Gmv ?? -1, d),
+            "aov" => Order(result, r => r.Aov ?? -1, d),
             "approvalDate" => Order(result, r => r.ApprovalDate ?? DateTime.MaxValue, d),
             "approvedBy" => Order(result, r => r.ApprovedBy, d),
             "age" => Order(result, r => r.AgeDays ?? -1, d),

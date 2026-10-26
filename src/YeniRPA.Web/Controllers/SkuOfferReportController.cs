@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Globalization;
+using System.Text.Json.Serialization;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Mvc;
 using YeniRPA.Web.Models;
@@ -42,27 +43,32 @@ public sealed class SkuOfferReportController : ControllerBase
 
     [HttpPost("generate")]
     public IActionResult Generate(
-        IFormFile? offersFile, IFormFile? trafficFile, IFormFile? approvalsFile, IFormFile? stockoutFile)
+        IFormFile? offersFile, IFormFile? salesFile, IFormFile? approvalsFile, IFormFile? stockoutFile,
+        [FromForm] string? eurTryRate)
     {
         if (offersFile is not { Length: > 0 })
             return Failure("Upload the offers export first.");
-        if (trafficFile is not { Length: > 0 })
-            return Failure("Upload the Offer KPIs (traffic) export first.");
+        if (salesFile is not { Length: > 0 })
+            return Failure("Upload the combined sales file (Birlesik_Satislar) first.");
         if (approvalsFile is not { Length: > 0 })
             return Failure("Upload the approved products file first.");
+
+        // The sales file is in euro; every amount in it is converted at the rate the operator types.
+        if (!TryParseRate(eurTryRate, out var rate))
+            return Failure("Enter the EUR to TRY exchange rate first (a number above 0, for example 48.5).");
 
         try
         {
             using var offers = offersFile.OpenReadStream();
-            using var traffic = trafficFile.OpenReadStream();
+            using var sales = salesFile.OpenReadStream();
             using var approvals = approvalsFile.OpenReadStream();
 
             // The stockout file is optional: without it the report is exactly what it was before.
             using var stockout = stockoutFile is { Length: > 0 } ? stockoutFile.OpenReadStream() : null;
 
             var report = SkuOfferReportBuilder.Build(
-                offers, offersFile.FileName, traffic, trafficFile.FileName, approvals, approvalsFile.FileName,
-                stockout: stockout, stockoutName: stockoutFile?.FileName);
+                offers, offersFile.FileName, sales, salesFile.FileName, approvals, approvalsFile.FileName,
+                stockout: stockout, stockoutName: stockoutFile?.FileName, eurTryRate: rate);
             var batchId = _store.Put(report);
             var s = report.Summary;
 
@@ -150,13 +156,26 @@ public sealed class SkuOfferReportController : ControllerBase
         if (rows.Count > MaxExportRows)
             return Failure($"{rows.Count:N0} rows is too many for one workbook (limit {MaxExportRows:N0}). Narrow the filter or search first.");
 
-        return File(BuildWorkbook(rows, report.Summary.HasImpressions), XlsxContentType,
+        return File(BuildWorkbook(rows, report.Charts.Periods.Select(p => p.Label).ToList()), XlsxContentType,
             $"sku_teklif_trafik_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
     }
 
     sealed record ExportColumn<T>(string Header, Action<IXLCell, T> Write, string? Format = null, double Width = 16);
 
-    static byte[] BuildWorkbook(IReadOnlyList<SkuOfferRow> rows, bool hasImpressions)
+    /// <summary>
+    /// The rate as typed: a decimal comma or point, read with the invariant culture (the server may run a
+    /// Turkish culture, which would read "48.5" as 485). Zero, negative, non-finite and absurdly large values are refused.
+    /// </summary>
+    internal static bool TryParseRate(string? text, out double rate)
+    {
+        rate = 0;
+        var cleaned = (text ?? "").Trim().Replace(',', '.');
+        return cleaned.Length > 0 &&
+               double.TryParse(cleaned, NumberStyles.Float, CultureInfo.InvariantCulture, out rate) &&
+               double.IsFinite(rate) && rate > 0 && rate <= 1000;
+    }
+
+    static byte[] BuildWorkbook(IReadOnlyList<SkuOfferRow> rows, IReadOnlyList<string> periods)
     {
         var columns = new List<ExportColumn<SkuOfferRow>>
         {
@@ -174,19 +193,33 @@ public sealed class SkuOfferReportController : ControllerBase
             new("Approved by", (c, r) => c.SetValue(r.ApprovedBy)),
             new("Total offers", (c, r) => c.SetValue(r.TotalOffers), "#,##0"),
             new("Active offers", (c, r) => c.SetValue(r.ActiveOffers), "#,##0"),
+            new("Active offer seller(s)", (c, r) => c.SetValue(string.Join(", ", r.ActiveSellers)), Width: 32),
         };
-        if (hasImpressions)
-            columns.Add(new("Impressions", (c, r) => SetNumber(c, r.Impressions), "#,##0"));
         columns.AddRange(
         [
-            new("PDP views (30d)", (c, r) => SetNumber(c, r.PdpViews), "#,##0"),
-            new("Add to cart (30d)", (c, r) => SetNumber(c, r.AddToCart), "#,##0"),
-            new("Add to cart rate", (c, r) => SetNumber(c, r.AtcRate), "0.0%"),
-            new("Sold items (30d)", (c, r) => SetNumber(c, r.Sold30d), "#,##0"),
-            new("GMV (30d)", (c, r) => SetNumber(c, r.Gmv30d), "#,##0"),
-            new("Warning", (c, r) => c.SetValue(r.Warning ?? ""), Width: 48),
+            new("Impressions", (c, r) => SetNumber(c, r.Impressions), "#,##0"),
+            new("Clicks", (c, r) => SetNumber(c, r.Clicks), "#,##0"),
+            new("CTR", (c, r) => SetNumber(c, r.Ctr), "0.00%"),
+            new("PDP sessions", (c, r) => SetNumber(c, r.PdpViews), "#,##0"),
+            new("Add to cart sessions", (c, r) => SetNumber(c, r.AddToCart), "#,##0"),
+            new("Add to cart rate", (c, r) => SetNumber(c, r.AtcRate), "0.00%"),
+            new("Checkout sessions", (c, r) => SetNumber(c, r.CheckoutSessions), "#,##0"),
+            new("Order sessions", (c, r) => SetNumber(c, r.OrderSessions), "#,##0"),
+            new("CR PDP", (c, r) => SetNumber(c, r.CrPdp), "0.00%"),
+            new("CR checkout", (c, r) => SetNumber(c, r.CrCheckout), "0.00%"),
+            new("Remove from cart sessions", (c, r) => SetNumber(c, r.RemoveFromCart), "#,##0"),
+            new("Sold qty", (c, r) => SetNumber(c, r.SoldQty), "#,##0"),
+            new("GMV (TRY, w/o shipping)", (c, r) => SetNumber(c, r.Gmv), "#,##0"),
+            new("Avg price (TRY)", (c, r) => SetNumber(c, r.AvgPrice), "#,##0.00"),
+            new("AOV (TRY)", (c, r) => SetNumber(c, r.Aov), "#,##0.00"),
         ]);
-
+        for (var i = 0; i < periods.Count; i++)
+        {
+            var index = i;
+            columns.Add(new($"Qty | {periods[i]}", (c, r) => SetNumber(c, r.PeriodQty?[index]), "#,##0"));
+            columns.Add(new($"GMV (TRY) | {periods[i]}", (c, r) => SetNumber(c, r.PeriodGmv?[index]), "#,##0"));
+        }
+        columns.Add(new("Warning", (c, r) => c.SetValue(r.Warning ?? ""), Width: 48));
         return WriteWorkbook("SKU Offer & Traffic", columns, rows);
     }
 
@@ -200,9 +233,13 @@ public sealed class SkuOfferReportController : ControllerBase
             new("Category", (c, r) => c.SetValue(r.Category)),
             new("Seller(s)", (c, r) => c.SetValue(r.Sellers), Width: 28),
             new("Retail buyable", (c, r) => c.SetValue(r.RetailBuyable is { } b ? (b ? "Yes" : "No") : "")),
-            new("PDP views (30d)", (c, r) => SetNumber(c, r.PdpViews), "#,##0"),
-            new("Add to cart (30d)", (c, r) => SetNumber(c, r.AddToCart), "#,##0"),
-            new("Add to cart rate", (c, r) => SetNumber(c, r.AtcRate), "0.0%"),
+            new("Impressions", (c, r) => SetNumber(c, r.Impressions), "#,##0"),
+            new("PDP sessions", (c, r) => SetNumber(c, r.PdpViews), "#,##0"),
+            new("Add to cart sessions", (c, r) => SetNumber(c, r.AddToCart), "#,##0"),
+            new("Add to cart rate", (c, r) => SetNumber(c, r.AtcRate), "0.00%"),
+            new("CR PDP", (c, r) => SetNumber(c, r.CrPdp), "0.00%"),
+            new("Sold qty (whole period)", (c, r) => SetNumber(c, r.SoldQty), "#,##0"),
+            new("GMV (TRY, whole period)", (c, r) => SetNumber(c, r.Gmv), "#,##0"),
             new("Sold items (7d)", (c, r) => c.SetValue(r.Sold7d), "#,##0"),
             new("GMV (7d)", (c, r) => c.SetValue(r.Gmv7d), "#,##0"),
             new("In offers file", (c, r) => c.SetValue(r.InOffers ? "Yes" : "No")),

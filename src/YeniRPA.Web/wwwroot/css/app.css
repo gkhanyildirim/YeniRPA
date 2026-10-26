@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    Marketplace Reporting — design system  ·  "Aurora"
 
    Direction: a violet-tinted operations console. The rail is a deep violet
@@ -4086,3 +4086,31 @@ select,
 }
 .st-add-error { flex-basis: 100%; font-size: .72rem; color: var(--danger); }
 .st-add-error[hidden] { display: none; }
+
+.sor-funnel { display: grid; gap: 8px; }
+.sor-funnel-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 150px; align-items: center; gap: var(--s-3); font-size: .82rem; }
+.sor-funnel-name { color: var(--ink-2); font-weight: 600; }
+.sor-funnel-track { height: 22px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+.sor-funnel-fill { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
+.sor-funnel-val { text-align: right; font-variant-numeric: tabular-nums; }
+.sor-funnel-val small { display: block; color: var(--ink-3); font-size: .72rem; }
+@media (max-width: 640px) { .sor-funnel-row { grid-template-columns: 96px minmax(0, 1fr) 96px; } }
+.sor-trend { display: inline-flex; align-items: flex-end; gap: 2px; height: 22px; vertical-align: middle; }
+.sor-trend > span { width: 6px; min-height: 2px; border-radius: 2px 2px 0 0; background: var(--accent); opacity: .85; }
+.sor-trend > span.is-zero { background: var(--line-strong); opacity: .6; }
+.sor-rate { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); margin-top: var(--s-3); }
+.sor-rate label { font-weight: 600; color: var(--ink); }
+.sor-rate input { width: 120px; padding: 8px 12px; font: inherit; text-align: right; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: var(--r-md, 10px); }
+.sor-rate input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.sor-rate input[aria-invalid="true"] { border-color: var(--red); }
+.sor-rate-hint { flex: 1 1 280px; font-size: .78rem; color: var(--ink-3); }
+
+.sor-sellers { display: inline-block; margin-top: 3px; text-align: right; }
+.sor-sellers > summary { display: inline-flex; align-items: center; gap: 4px; padding: 1px 9px; font-size: .7rem; font-weight: 600; cursor: pointer; list-style: none; color: var(--green); background: var(--green-soft); border: 1px solid color-mix(in srgb, var(--green) 26%, transparent); border-radius: var(--r-pill, 999px); user-select: none; }
+.sor-sellers > summary::-webkit-details-marker { display: none; }
+.sor-sellers > summary::after { content: "\25BE"; font-size: .8em; transition: transform .15s ease; }
+.sor-sellers[open] > summary::after { transform: rotate(180deg); }
+.sor-sellers > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sor-sellers-list { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; max-height: 150px; margin: 6px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.sor-sellers-list li { max-width: 220px; padding: 1px 8px; font-size: .72rem; color: var(--ink-2); background: var(--surface-3); border-radius: var(--r-pill, 999px); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .sor-sellers > summary::after { transition: none; } }

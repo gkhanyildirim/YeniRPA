@@ -1,6 +1,6 @@
-namespace YeniRPA.Web.Models;
+﻿namespace YeniRPA.Web.Models;
 
-/// <summary>One product (Product SKU) with its offer history and, when the traffic file knows it, its visibility.</summary>
+/// <summary>One product (Product SKU) with its offer history and, when the combined sales file knows it, its funnel and sales.</summary>
 public sealed class SkuOfferRow
 {
     public string Sku { get; init; } = "";
@@ -17,14 +17,38 @@ public sealed class SkuOfferRow
     public int TotalOffers { get; init; }
     public int ActiveOffers { get; init; }
 
-    /// <summary><c>false</c> when the product is missing from the traffic file — unknown, not zero.</summary>
+    /// <summary>Every seller that still holds an active offer on the product, once each, in the order they first appear; empty when none is active.</summary>
+    public IReadOnlyList<string> ActiveSellers { get; init; } = [];
+
+    /// <summary><c>false</c> when the product is missing from the combined sales file — unknown, not zero.</summary>
     public bool HasTraffic { get; init; }
+
+    /// <summary>Search / category-search product impressions (sessions) over the file's whole period.</summary>
+    public double? Impressions { get; init; }
+    public double? Clicks { get; init; }
+    public double? Ctr { get; init; }
     public double? PdpViews { get; init; }
     public double? AddToCart { get; init; }
     public double? AtcRate { get; init; }
-    public double? Impressions { get; init; }
-    public double? Sold30d { get; init; }
-    public double? Gmv30d { get; init; }
+    public double? CheckoutSessions { get; init; }
+    public double? OrderSessions { get; init; }
+
+    /// <summary>Order sessions / PDP sessions.</summary>
+    public double? CrPdp { get; init; }
+
+    /// <summary>Order sessions / checkout sessions.</summary>
+    public double? CrCheckout { get; init; }
+    public double? RemoveFromCart { get; init; }
+
+    /// <summary>Sold quantity and GMV (without shipping) over the whole period; <c>null</c> when the product has no tracked sales.</summary>
+    public double? SoldQty { get; init; }
+    public double? Gmv { get; init; }
+    public double? AvgPrice { get; init; }
+    public double? Aov { get; init; }
+
+    /// <summary>Quantity / GMV per period, in the order of <see cref="SkuOfferCharts.Periods"/>; <c>null</c> without any sale.</summary>
+    public double?[]? PeriodQty { get; init; }
+    public double?[]? PeriodGmv { get; init; }
 
     /// <summary><c>false</c> when the product is missing from the approvals file.</summary>
     public bool HasApproval { get; init; }
@@ -58,7 +82,19 @@ public sealed record SkuOfferSummary(
     double TotalImpressions,
     int ApprovedSkus,
     int NotApprovedSkus,
-    int ApprovalProductsNotInOffers);
+    int ApprovalProductsNotInOffers,
+    string SalesWindow,
+    int UniqueSkusSold,
+    int UniqueSkusSoldInOffers,
+    double TotalSoldQty,
+    double TotalGmv,
+    double OverallCtr,
+    double OverallAtcRate,
+    double OverallCrPdp,
+    int LostTrafficSkus,
+    double LostTrafficPdp,
+    int PdpButNeverSoldSkus,
+    double EurTryRate);
 
 /// <summary>
 /// Age of a product's first offer, measured to today in calendar months:
@@ -97,11 +133,19 @@ public sealed record SkuCategoryPoint(string Category, int Active, int Closed);
 
 public sealed record SkuTopTrafficPoint(string Sku, string Product, double PdpViews, bool FirstOfferClosed);
 
+/// <summary>One period of the combined sales file: how many different products sold in it, and how much.</summary>
+public sealed record SkuPeriodPoint(string Label, int UniqueSkusSold, double Qty, double Gmv);
+
+/// <summary>Whole-file funnel totals: impressions down to order sessions.</summary>
+public sealed record SkuFunnel(double Impressions, double Clicks, double Pdp, double AddToCart, double Checkout, double Orders);
+
 public sealed record SkuOfferCharts(
     IReadOnlyList<SkuMonthPoint> ByMonth,
     IReadOnlyList<SkuCategoryPoint> ByCategory,
     IReadOnlyList<SkuTopTrafficPoint> TopTraffic,
-    IReadOnlyList<SkuAgePoint> ByAge);
+    IReadOnlyList<SkuAgePoint> ByAge,
+    IReadOnlyList<SkuPeriodPoint> Periods,
+    SkuFunnel Funnel);
 
 /// <summary>One product from the Products Unavailable (stockout) export, joined to traffic and the offers file.</summary>
 public sealed class StockoutRow
@@ -119,11 +163,15 @@ public sealed class StockoutRow
     public double Sold7d { get; init; }
     public double Gmv7d { get; init; }
 
-    /// <summary><c>false</c> when the product is missing from the Offer KPIs file: unknown, not zero. PDP figures are 30 days.</summary>
+    /// <summary><c>false</c> when the product is missing from the combined sales file: unknown, not zero. PDP figures cover the whole file period.</summary>
     public bool HasTraffic { get; init; }
     public double? PdpViews { get; init; }
     public double? AddToCart { get; init; }
     public double? AtcRate { get; init; }
+    public double? Impressions { get; init; }
+    public double? CrPdp { get; init; }
+    public double? SoldQty { get; init; }
+    public double? Gmv { get; init; }
 
     public bool InOffers { get; init; }
     public int TotalOffers { get; init; }
@@ -140,6 +188,7 @@ public sealed record StockoutSummary(
     int WithTraffic,
     int WithoutTraffic,
     int NotInOffers,
+    double TotalImpressions,
     double TotalPdpViews,
     double SharePctOfAllPdp,
     double TotalAddToCart,
@@ -169,7 +218,7 @@ public sealed class SkuOfferQuery
 {
     public string? Search { get; init; }
 
-    /// <summary>all | firstClosed | noActive | noTraffic | hasTraffic | noApproval</summary>
+    /// <summary>all | firstClosed | noActive | noTraffic | hasTraffic | noApproval | sold | neverSold | lostTraffic</summary>
     public string? Filter { get; init; }
 
     /// <summary>baby | young | adult | mature; combined with <see cref="Filter"/>.</summary>

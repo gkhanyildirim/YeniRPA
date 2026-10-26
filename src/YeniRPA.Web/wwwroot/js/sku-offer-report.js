@@ -1,7 +1,7 @@
 /* =============================================================================
    SKU Offer & Traffic Report.
 
-   Two fixed-template exports (offers + Offer KPIs) are uploaded once; the server
+   Fixed-template exports (offers, combined sales, approvals, optional stockout) are uploaded once; the server
    joins them per product and keeps the result. The table never holds more than
    one page: search, filter chips, sorting and paging are server-side because the
    offers export covers ~190k products.
@@ -33,19 +33,54 @@
     { key: 'firstDate', label: 'First offer' },
     { key: 'approvalDate', label: 'Approved' },
     { key: 'activeOffers', label: 'Offers', numeric: true },
-    { key: 'pdp', label: 'PDP views (30d)', numeric: true },
-    { key: 'atc', label: 'Add to cart', numeric: true },
-    { key: 'atcRate', label: 'ATC rate', numeric: true }
+    { key: 'impressions', label: 'Impressions', numeric: true },
+    { key: 'pdp', label: 'PDP sessions', numeric: true },
+    { key: 'atcRate', label: 'ATC %', numeric: true },
+    { key: 'crPdp', label: 'CR %', numeric: true },
+    { key: 'sold', label: 'Sold', numeric: true },
+    { key: 'gmv', label: 'GMV (₺)', numeric: true },
+    { key: 'trend', label: 'Sales by period', nosort: true }
   ];
 
   function el(id) { return document.getElementById(id); }
 
   function filesChosen() {
-    return el('sor-offers-file').files.length > 0 && el('sor-traffic-file').files.length > 0 &&
+    return el('sor-offers-file').files.length > 0 && el('sor-sales-file').files.length > 0 &&
       el('sor-approvals-file').files.length > 0;
   }
 
-  function updateGenerateButton() { el('sor-generate').disabled = !filesChosen(); }
+  /**
+   * The EUR -> TRY rate as typed: "48,5" and "48.5" both work. Returns the number, or null when it is
+   * empty or not a usable rate (the server enforces the same bounds).
+   */
+  function parseRate() {
+    const text = el('sor-rate').value.trim().replace(',', '.');
+    if (!/^\d+(\.\d+)?$/.test(text)) return null;
+    const rate = parseFloat(text);
+    return rate > 0 && rate <= 1000 ? rate : null;
+  }
+
+  function updateGenerateButton() {
+    const typed = el('sor-rate').value.trim();
+    el('sor-rate').setAttribute('aria-invalid', typed && parseRate() === null ? 'true' : 'false');
+    el('sor-generate').disabled = !(filesChosen() && parseRate() !== null);
+  }
+
+  function rememberRate(rate) {
+    try { localStorage.setItem('sor-eur-try-rate', String(rate)); } catch (e) { /* private window: just not remembered */ }
+  }
+
+  function savedRate() {
+    try { return localStorage.getItem('sor-eur-try-rate') || ''; } catch (e) { return ''; }
+  }
+
+  /** Active sellers: one name inline, several behind a disclosure so the Offers cell stays compact. */
+  function sellersHtml(names) {
+    if (!names || names.length === 0) return '';
+    if (names.length === 1) return '<div class="sor-meta" title="Seller with an active offer">' + RPA.escapeHtml(names[0]) + '</div>';
+    return '<details class="sor-sellers"><summary title="Sellers with an active offer">' + names.length + ' sellers</summary>' +
+      '<ul class="sor-sellers-list">' + names.map(n => '<li>' + RPA.escapeHtml(n) + '</li>').join('') + '</ul></details>';
+  }
 
   /** ISO date from the server -> dd.MM.yyyy, the format the team reads dates in. */
   function fmtDate(iso) {
@@ -81,16 +116,23 @@
       ['Offers', RPA.fmtInt(summary.totalOffers), '', RPA.fmtInt(summary.activeOffers) + ' active'],
       ['First offer closed', RPA.fmtInt(closed), closed ? 'red' : 'green', pct.trim()],
       ['No active offer', RPA.fmtInt(summary.noActiveOfferSkus), summary.noActiveOfferSkus ? 'amber' : 'green'],
-      ['PDP views (30d)', RPA.fmtInt(summary.totalPdpViews), '', RPA.fmtInt(summary.totalAddToCart) + ' add to cart'],
-      ['SKUs with traffic data', RPA.fmtInt(summary.skusWithTraffic), '', RPA.fmtInt(summary.skusWithoutTraffic) + ' without'],
-      ['Approved SKUs', RPA.fmtInt(summary.approvedSkus), '', RPA.fmtInt(summary.notApprovedSkus) + ' not in approvals file']
+      ['Approved SKUs', RPA.fmtInt(summary.approvedSkus), '', RPA.fmtInt(summary.notApprovedSkus) + ' not in approvals file'],
+      { group: 'Sales & traffic \u00b7 ' + summary.salesWindow },
+      ['Unique SKUs sold', RPA.fmtInt(summary.uniqueSkusSold), 'green', RPA.fmtInt(summary.uniqueSkusSoldInOffers) + ' of them in the offers file'],
+      ['Sold items', RPA.fmtInt(summary.totalSoldQty), ''],
+      ['GMV (₺, w/o shipping)', RPA.fmtInt(summary.totalGmv), '', '1 EUR = ' + summary.eurTryRate + ' TRY'],
+      ['Impressions', RPA.fmtInt(summary.totalImpressions), '', 'CTR ' + (summary.overallCtr * 100).toFixed(2) + '%'],
+      ['PDP sessions', RPA.fmtInt(summary.totalPdpViews), '', 'ATC ' + (summary.overallAtcRate * 100).toFixed(2) + '%'],
+      ['Conversion (CR PDP)', (summary.overallCrPdp * 100).toFixed(2) + '%', ''],
+      ['SKUs with sales data', RPA.fmtInt(summary.skusWithTraffic), '', RPA.fmtInt(summary.skusWithoutTraffic) + ' without'],
+      ['Traffic, no active offer', RPA.fmtInt(summary.lostTrafficSkus), summary.lostTrafficSkus ? 'amber' : 'green', RPA.fmtInt(summary.lostTrafficPdp) + ' PDP sessions'],
+      ['PDP, never sold', RPA.fmtInt(summary.pdpButNeverSoldSkus), summary.pdpButNeverSoldSkus ? 'amber' : 'green']
     ];
-    if (summary.hasImpressions) items.splice(5, 0, ['Impressions', RPA.fmtInt(summary.totalImpressions), '']);
     RPA.renderKpis('sor-kpis', items);
 
     const notes = [];
     if (summary.trafficProductsNotInOffers) {
-      notes.push(RPA.fmtInt(summary.trafficProductsNotInOffers) + ' product(s) in the traffic file have no offer in the offers file.');
+      notes.push(RPA.fmtInt(summary.trafficProductsNotInOffers) + ' product(s) in the sales file have no offer in the offers file (their sales are still counted in the totals above).');
     }
     if (summary.unreadableDates) {
       notes.push(RPA.fmtInt(summary.unreadableDates) + ' offer row(s) had an unreadable creation date and were left out of the first-offer calculation.');
@@ -98,9 +140,8 @@
     if (summary.approvalProductsNotInOffers) {
       notes.push(RPA.fmtInt(summary.approvalProductsNotInOffers) + ' approved product(s) have no offer in the offers file.');
     }
-    if (!summary.hasImpressions) {
-      notes.push('The traffic file has no impression column - only PDP views and add-to-cart sessions are shown.');
-    }
+    notes.push('GMV, AOV and prices were converted from EUR to TRY at 1 EUR = ' + summary.eurTryRate + ' TRY.');
+    notes.push('Sales, PDP and funnel figures are summed over ' + summary.salesWindow + ' (the sales file period), not the last 30 days. Unique SKUs sold = products with a sold quantity above zero.');
     el('sor-notes').textContent = notes.join(' ');
     el('sor-notes').hidden = notes.length === 0;
 
@@ -118,6 +159,23 @@
   function drawChart(id, config) {
     if (charts[id]) charts[id].destroy();
     charts[id] = new Chart(el(id), config);
+  }
+
+  /** Log-scaled bars: impressions are ~5,800x the order sessions, so a linear bar would hide every later stage. */
+  function renderFunnel(f) {
+    const stages = [
+      ['Impressions', f.impressions], ['Clicks', f.clicks], ['PDP sessions', f.pdp],
+      ['Add to cart', f.addToCart], ['Checkout', f.checkout], ['Order sessions', f.orders]
+    ].filter(s => s[1] > 0);
+    const top = stages.length ? Math.log10(stages[0][1] + 1) : 1;
+
+    el('sor-funnel').innerHTML = stages.map(function (s, i) {
+      const width = Math.max(2, Math.round(Math.log10(s[1] + 1) / top * 100));
+      const step = i === 0 ? '' : '<small>' + (s[1] / stages[i - 1][1] * 100).toFixed(2) + '% of ' + stages[i - 1][0].toLowerCase() + '</small>';
+      return '<div class="sor-funnel-row"><span class="sor-funnel-name">' + RPA.escapeHtml(s[0]) + '</span>' +
+        '<span class="sor-funnel-track"><span class="sor-funnel-fill" style="width:' + width + '%"></span></span>' +
+        '<span class="sor-funnel-val">' + RPA.fmtInt(s[1]) + step + '</span></div>';
+    }).join('');
   }
 
   function renderCharts(data) {
@@ -174,12 +232,38 @@
       })
     });
 
+    drawChart('sor-chart-sold', {
+      type: 'bar',
+      data: {
+        labels: data.periods.map(x => x.label),
+        datasets: [{ label: 'Unique SKUs sold', data: data.periods.map(x => x.uniqueSkusSold), backgroundColor: p.markGood, borderRadius: 3, maxBarThickness: 48 }]
+      },
+      options: Object.assign({}, common, {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: item => RPA.fmtInt(data.periods[item.dataIndex].qty) + ' items sold' } } },
+        scales: { x: cat, y: axis }
+      })
+    });
+
+    drawChart('sor-chart-gmv', {
+      type: 'bar',
+      data: {
+        labels: data.periods.map(x => x.label),
+        datasets: [{ label: 'GMV (TRY)', data: data.periods.map(x => x.gmv), backgroundColor: p.series[0], borderRadius: 3, maxBarThickness: 48 }]
+      },
+      options: Object.assign({}, common, {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: item => RPA.fmtInt(item.parsed.y) + ' TRY' } } },
+        scales: { x: cat, y: axis }
+      })
+    });
+
+    renderFunnel(data.funnel);
+
     drawChart('sor-chart-top', {
       type: 'bar',
       data: {
         labels: data.topTraffic.map(t => t.sku),
         datasets: [{
-          label: 'PDP views (30d)',
+          label: 'PDP sessions',
           data: data.topTraffic.map(t => t.pdpViews),
           backgroundColor: data.topTraffic.map(t => t.firstOfferClosed ? p.markCritical : p.series[0]),
           borderRadius: 3, maxBarThickness: 40
@@ -208,6 +292,7 @@
     el('sor-thead').innerHTML = '<tr>' + COLUMNS.map(function (c) {
       const active = state.sort === c.key;
       const arrow = active ? (state.desc ? ' ▼' : ' ▲') : '';
+      if (c.nosort) return '<th scope="col">' + RPA.escapeHtml(c.label) + '</th>';
       return '<th scope="col" class="' + (c.numeric ? 'num ' : '') + (active ? 'is-sorted' : '') + '" aria-sort="' +
         (active ? (state.desc ? 'descending' : 'ascending') : 'none') + '">' +
         '<button type="button" class="sor-sort" data-sort="' + c.key + '">' + RPA.escapeHtml(c.label) + arrow + '</button></th>';
@@ -223,6 +308,19 @@
 
   const AGE_LABELS = { baby: 'Baby', young: 'Young', adult: 'Adult', mature: 'Mature' };
 
+  function fmtPct(v) { return v === null || v === undefined ? '-' : (v * 100).toFixed(2) + '%'; }
+
+  /** One bar per period of the sales file; the hover title carries the exact figures. */
+  function trendHtml(qty) {
+    if (!qty) return '<span class="sor-na">-</span>';
+    const max = qty.reduce((m, v) => Math.max(m, v || 0), 0);
+    return '<span class="sor-trend" title="' + RPA.escapeHtml(qty.map(v => v === null ? '-' : RPA.fmtInt(v)).join(' / ')) + '">' +
+      qty.map(function (v) {
+        const h = max > 0 && v > 0 ? Math.max(12, Math.round(v / max * 100)) : 8;
+        return '<span class="' + (v > 0 ? '' : 'is-zero') + '" style="height:' + h + '%"></span>';
+      }).join('') + '</span>';
+  }
+
   function rowHtml(r) {
     const meta = [r.brand, r.category].filter(Boolean).map(RPA.escapeHtml).join(' &middot; ');
     const warn = r.warning
@@ -230,7 +328,7 @@
         (r.firstOfferReason ? ' <span class="sor-reason">(' + RPA.escapeHtml(r.firstOfferReason) + ')</span>' : '') + '</div>'
       : '';
 
-    let pdp = '<span class="sor-na" title="Not in the traffic file">no data</span>';
+    let pdp = '<span class="sor-na" title="Not in the sales file">no data</span>';
     if (r.hasTraffic) {
       const width = state.maxPdp > 0 ? Math.max(2, Math.round((r.pdpViews || 0) / state.maxPdp * 100)) : 0;
       pdp = '<span class="sor-bar" aria-hidden="true"><span style="width:' + width + '%"></span></span>' +
@@ -245,10 +343,15 @@
         (r.firstOfferSeller ? '<div class="sor-meta">' + RPA.escapeHtml(r.firstOfferSeller) + '</div>' : '') +
         (r.ageGroup ? '<div><span class="sor-age" title="' + RPA.fmtInt(r.ageDays) + ' days old">' + AGE_LABELS[r.ageGroup] + '</span></div>' : '') + '</td>' +
       '<td class="sor-approved">' + (r.hasApproval ? '<div>' + fmtDate(r.approvalDate) + '</div>' + (r.approvedBy ? '<div class="sor-meta">' + RPA.escapeHtml(r.approvedBy) + '</div>' : '') : '<span class="sor-na" title="Not in the approved products file">no data</span>') + '</td>' +
-      '<td class="num"><strong>' + RPA.fmtInt(r.activeOffers) + '</strong><span class="sor-meta"> / ' + RPA.fmtInt(r.totalOffers) + '</span></td>' +
+      '<td class="num"><strong>' + RPA.fmtInt(r.activeOffers) + '</strong><span class="sor-meta"> / ' + RPA.fmtInt(r.totalOffers) + '</span>' +
+        sellersHtml(r.activeSellers) + '</td>' +
+      '<td class="num">' + (r.hasTraffic ? fmtNum(r.impressions) : '-') + '</td>' +
       '<td class="num sor-pdp">' + pdp + '</td>' +
-      '<td class="num">' + (r.hasTraffic ? fmtNum(r.addToCart) : '-') + '</td>' +
-      '<td class="num">' + (r.atcRate === null || r.atcRate === undefined ? '-' : (r.atcRate * 100).toFixed(1) + '%') + '</td>' +
+      '<td class="num">' + fmtPct(r.atcRate) + '</td>' +
+      '<td class="num">' + fmtPct(r.crPdp) + '</td>' +
+      '<td class="num">' + (r.soldQty > 0 ? '<strong>' + fmtNum(r.soldQty) + '</strong>' : '<span class="sor-na">-</span>') + '</td>' +
+      '<td class="num">' + (r.gmv > 0 ? fmtNum(r.gmv) : '<span class="sor-na">-</span>') + '</td>' +
+      '<td>' + trendHtml(r.periodQty) + '</td>' +
       '</tr>';
   }
 
@@ -308,9 +411,10 @@
 
   const SO_COLUMNS = [
     { key: 'product', label: 'Product' },
-    { key: 'pdp', label: 'PDP sessions (30d)', numeric: true },
-    { key: 'atc', label: 'Add to cart (30d)', numeric: true },
-    { key: 'atcRate', label: 'ATC rate', numeric: true },
+    { key: 'impressions', label: 'Impressions', numeric: true },
+    { key: 'pdp', label: 'PDP sessions', numeric: true },
+    { key: 'atcRate', label: 'ATC %', numeric: true },
+    { key: 'crPdp', label: 'CR %', numeric: true },
     { key: 'sold7d', label: 'Sold (7d)', numeric: true },
     { key: 'gmv7d', label: 'GMV (7d)', numeric: true },
     { key: 'offers', label: 'Offers', numeric: true },
@@ -321,7 +425,8 @@
     switch (key) {
       case 'product': return (r.product || '').toLowerCase();
       case 'pdp': return r.pdpViews === null ? -1 : r.pdpViews;
-      case 'atc': return r.addToCart === null ? -1 : r.addToCart;
+      case 'impressions': return r.impressions === null ? -1 : r.impressions;
+      case 'crPdp': return r.crPdp === null ? -1 : r.crPdp;
       case 'atcRate': return r.atcRate === null ? -1 : r.atcRate;
       case 'sold7d': return r.sold7d;
       case 'gmv7d': return r.gmv7d;
@@ -349,6 +454,15 @@
     return rows;
   }
 
+  /** The stockout file's sellers (a comma separated string): inline when there are one or two, a disclosure beyond that. */
+  function soSellersHtml(sellers, retail) {
+    const names = sellers ? sellers.split(', ').filter(Boolean) : [];
+    if (names.length > 2) return sellersHtml(names) + (retail ? '<div class="sor-meta">' + retail + '</div>' : '');
+    return names.length || retail
+      ? '<div class="sor-meta">' + RPA.escapeHtml(names.join(', ')) + retail + '</div>'
+      : '';
+  }
+
   function soRowHtml(r) {
     const meta = [r.brand, r.category].filter(Boolean).map(RPA.escapeHtml).join(' &middot; ');
     const retail = r.retailBuyable === true ? ' <span class="sor-retail is-yes" title="Retail can still sell this product">Retail buyable</span>'
@@ -365,10 +479,11 @@
     return '<tr>' +
       '<td class="sor-product"><div class="sor-product-name">' + RPA.escapeHtml(r.product || '-') + '</div>' +
         '<div class="sor-meta"><span class="mono">' + RPA.escapeHtml(r.productId) + '</span>' + (meta ? ' &middot; ' + meta : '') + '</div>' +
-        (r.sellers ? '<div class="sor-meta">' + RPA.escapeHtml(r.sellers) + retail + '</div>' : (retail ? '<div class="sor-meta">' + retail + '</div>' : '')) + '</td>' +
-      '<td class="num">' + (r.hasTraffic ? '<strong>' + fmtNum(r.pdpViews) + '</strong>' : '<span class="sor-na" title="Not in the Offer KPIs file">no data</span>') + '</td>' +
-      '<td class="num">' + (r.hasTraffic ? fmtNum(r.addToCart) : '-') + '</td>' +
-      '<td class="num">' + (r.atcRate === null || r.atcRate === undefined ? '-' : (r.atcRate * 100).toFixed(1) + '%') + '</td>' +
+        soSellersHtml(r.sellers, retail) + '</td>' +
+      '<td class="num">' + (r.hasTraffic ? '<strong>' + fmtNum(r.pdpViews) + '</strong>' : '<span class="sor-na" title="Not in the sales file">no data</span>') + '</td>' +
+      '<td class="num">' + (r.hasTraffic ? fmtNum(r.impressions) : '-') + '</td>' +
+      '<td class="num">' + fmtPct(r.atcRate) + '</td>' +
+      '<td class="num">' + fmtPct(r.crPdp) + '</td>' +
       '<td class="num">' + fmtNum(r.sold7d) + '</td>' +
       '<td class="num">' + fmtNum(r.gmv7d) + '</td>' +
       '<td class="num">' + offers + '</td>' +
@@ -380,6 +495,7 @@
     el('sor-so-thead').innerHTML = '<tr>' + SO_COLUMNS.map(function (c) {
       const active = so.sort === c.key;
       const arrow = active ? (so.desc ? ' \u25BC' : ' \u25B2') : '';
+      if (c.nosort) return '<th scope="col">' + RPA.escapeHtml(c.label) + '</th>';
       return '<th scope="col" class="' + (c.numeric ? 'num ' : '') + (active ? 'is-sorted' : '') + '" aria-sort="' +
         (active ? (so.desc ? 'descending' : 'ascending') : 'none') + '">' +
         '<button type="button" class="sor-sort" data-sosort="' + c.key + '">' + RPA.escapeHtml(c.label) + arrow + '</button></th>';
@@ -392,12 +508,13 @@
     el('sor-so-count').textContent = RPA.fmtInt(rows.length) + ' of ' + RPA.fmtInt(so.rows.length) + ' product(s)';
   }
 
-  function renderStockoutSummary(data) {
+  function renderStockoutSummary(data, salesWindow) {
     const s = data.summary;
     RPA.renderKpis('sor-so-kpis', [
       ['Stockout products', RPA.fmtInt(s.products), s.products ? 'amber' : 'green', RPA.fmtInt(s.notInOffers) + ' not in offers file'],
-      ['PDP sessions (30d)', RPA.fmtInt(s.totalPdpViews), '', s.sharePctOfAllPdp.toFixed(2) + '% of all PDP sessions'],
-      ['Add to cart (30d)', RPA.fmtInt(s.totalAddToCart), ''],
+      ['Impressions', RPA.fmtInt(s.totalImpressions), ''],
+      ['PDP sessions', RPA.fmtInt(s.totalPdpViews), '', s.sharePctOfAllPdp.toFixed(2) + '% of all PDP sessions'],
+      ['Add to cart', RPA.fmtInt(s.totalAddToCart), ''],
       ['Sold items (7d)', RPA.fmtInt(s.sold7d), ''],
       ['GMV (7d)', RPA.fmtInt(s.gmv7d), ''],
       ['With PDP data', RPA.fmtInt(s.withTraffic), '', RPA.fmtInt(s.withoutTraffic) + ' without']
@@ -406,8 +523,9 @@
     const notes = [];
     if (s.withoutTraffic) {
       notes.push(RPA.fmtInt(s.withoutTraffic) + ' of ' + RPA.fmtInt(s.products) +
-        ' stockout product(s) are missing from the Offer KPIs file, so their PDP sessions are unknown (not zero).');
+        ' stockout product(s) are missing from the sales file, so their PDP sessions are unknown (not zero).');
     }
+    el('sor-so-window').textContent = 'Impressions, PDP sessions and add to cart cover ' + salesWindow + ' (sales file period); sold items and GMV are the last 7 days (stockout file).';
     el('sor-so-notes').textContent = notes.join(' ');
     el('sor-so-notes').hidden = notes.length === 0;
 
@@ -417,7 +535,7 @@
       type: 'bar',
       data: {
         labels: data.topPdp.map(t => t.productId),
-        datasets: [{ label: 'PDP sessions (30d)', data: data.topPdp.map(t => t.pdpViews), backgroundColor: p.markSerious, borderRadius: 3, maxBarThickness: 40 }]
+        datasets: [{ label: 'PDP sessions', data: data.topPdp.map(t => t.pdpViews), backgroundColor: p.markSerious, borderRadius: 3, maxBarThickness: 40 }]
       },
       options: {
         maintainAspectRatio: false, responsive: true,
@@ -482,7 +600,10 @@
 
     const form = new FormData();
     form.append('offersFile', el('sor-offers-file').files[0]);
-    form.append('trafficFile', el('sor-traffic-file').files[0]);
+    form.append('salesFile', el('sor-sales-file').files[0]);
+    const rate = parseRate();
+    if (rate === null) { RPA.showError('sor-alert', 'Enter the EUR to TRY exchange rate first.'); return; }
+    form.append('eurTryRate', String(rate));
     form.append('approvalsFile', el('sor-approvals-file').files[0]);
     if (el('sor-stockout-file').files.length > 0) form.append('stockoutFile', el('sor-stockout-file').files[0]);
 
@@ -491,6 +612,7 @@
     try {
       const body = await RPA.postJson('/api/sku-offer-report/generate', form);
       state.batchId = body.data.batchId;
+      rememberRate(rate);
       state.page = 1;
       state.search = '';
       state.age = 'all';
@@ -506,7 +628,7 @@
       el('sor-views').hidden = !hasStockout;
       switchView('skus');
       if (hasStockout) {
-        renderStockoutSummary(body.data.stockout);
+        renderStockoutSummary(body.data.stockout, body.data.summary.salesWindow);
         await loadStockoutRows();
       }
     } catch (err) {
@@ -534,13 +656,16 @@
 
   document.addEventListener('DOMContentLoaded', function () {
     RPA.initDropzone('sor-offers-drop', 'sor-offers-file');
-    RPA.initDropzone('sor-traffic-drop', 'sor-traffic-file');
+    RPA.initDropzone('sor-sales-drop', 'sor-sales-file');
     RPA.initDropzone('sor-approvals-drop', 'sor-approvals-file');
     RPA.initDropzone('sor-stockout-drop', 'sor-stockout-file');
 
     el('sor-offers-file').addEventListener('change', updateGenerateButton);
-    el('sor-traffic-file').addEventListener('change', updateGenerateButton);
+    el('sor-sales-file').addEventListener('change', updateGenerateButton);
     el('sor-approvals-file').addEventListener('change', updateGenerateButton);
+    el('sor-rate').value = savedRate();
+    el('sor-rate').addEventListener('input', updateGenerateButton);
+    updateGenerateButton();
     el('sor-generate').addEventListener('click', generate);
 
     el('sor-views').addEventListener('click', function (event) {

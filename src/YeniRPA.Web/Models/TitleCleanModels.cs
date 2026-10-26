@@ -113,6 +113,16 @@ public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Unit
 /// <paramref name="FillFromTitle"/>, which the editor does not show — but only from a single entry
 /// whose model code the title actually writes.</para>
 /// </param>
+/// <param name="TitleWins">
+/// Where the title names this attribute under <b>one</b> value and the cell says another, the title is
+/// taken as right: the cell is rewritten to the title's value and, if <paramref name="Remove"/> is on,
+/// the title's words are cut as usual — "RTX 3050" in the title against a cell of "RTX 4050" leaves
+/// the cell reading "RTX 3050".
+///
+/// <para>Off by default and enabled per attribute, because it is the one switch that overwrites a cell
+/// on the strength of the title alone. It acts only on a clear reading: a title that names two
+/// different values for the column is still reported as a conflict, nothing guessed.</para>
+/// </param>
 public sealed record TitleAttributeRule(
     string Column,
     TitleAttributeKind Kind = TitleAttributeKind.Text,
@@ -125,7 +135,8 @@ public sealed record TitleAttributeRule(
     IReadOnlyList<IReadOnlyList<string>>? Aliases = null,
     string? ReferenceList = null,
     bool AdoptLargest = false,
-    bool UseReferenceName = false)
+    bool UseReferenceName = false,
+    bool TitleWins = false)
 {
     public IReadOnlyList<MeasureUnit> UnitList => Units ?? [];
 
@@ -282,7 +293,8 @@ public sealed record TitleAttributeForm(
     string Aliases = "",
     string ReferenceList = "",
     bool AdoptLargest = false,
-    bool UseReferenceName = false);
+    bool UseReferenceName = false,
+    bool TitleWins = false);
 
 /// <summary>One ready-made unit set the editor offers, on its way to the browser.</summary>
 /// <param name="Units">Already encoded into the cell format by <c>TitleRuleStore</c>. The browser
