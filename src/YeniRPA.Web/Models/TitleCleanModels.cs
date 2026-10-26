@@ -1,4 +1,4 @@
-namespace YeniRPA.Web.Models;
+﻿namespace YeniRPA.Web.Models;
 
 /// <summary>
 /// How one attribute column's value is looked for in the product title.
@@ -123,6 +123,15 @@ public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Unit
 /// on the strength of the title alone. It acts only on a clear reading: a title that names two
 /// different values for the column is still reported as a conflict, nothing guessed.</para>
 /// </param>
+/// <param name="NormalizeCell">
+/// A <see cref="TitleAttributeKind.Alias"/> column only: a cell whose value the catalogue knows is
+/// rewritten to that group's first (canonical) spelling <b>even when the title never mentions it</b> —
+/// a processor cell reading "255HX" becomes "Intel Core Ultra 7 255HX". Ordinary <see cref="Correct"/>
+/// only acts where the title names the value, so a cell the title is silent about kept its short form.
+///
+/// <para>Off by default: it rewrites a cell on the strength of the catalogue alone. Needs
+/// <paramref name="Correct"/>'s catalogue to be right about every spelling it groups.</para>
+/// </param>
 public sealed record TitleAttributeRule(
     string Column,
     TitleAttributeKind Kind = TitleAttributeKind.Text,
@@ -136,7 +145,8 @@ public sealed record TitleAttributeRule(
     string? ReferenceList = null,
     bool AdoptLargest = false,
     bool UseReferenceName = false,
-    bool TitleWins = false)
+    bool TitleWins = false,
+    bool NormalizeCell = false)
 {
     public IReadOnlyList<MeasureUnit> UnitList => Units ?? [];
 
@@ -294,7 +304,8 @@ public sealed record TitleAttributeForm(
     string ReferenceList = "",
     bool AdoptLargest = false,
     bool UseReferenceName = false,
-    bool TitleWins = false);
+    bool TitleWins = false,
+    bool NormalizeCell = false);
 
 /// <summary>One ready-made unit set the editor offers, on its way to the browser.</summary>
 /// <param name="Units">Already encoded into the cell format by <c>TitleRuleStore</c>. The browser

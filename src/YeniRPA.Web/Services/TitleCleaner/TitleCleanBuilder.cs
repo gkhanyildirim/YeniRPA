@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using YeniRPA.Web.Models;
 
 namespace YeniRPA.Web.Services.TitleCleaner;
@@ -638,6 +638,16 @@ public static class TitleCleanBuilder
                         rule.Column, TitleAttributeStatus.Corrected, original, single.Canonical);
                 }
 
+                // Hücreyi Standartlaştır: the title is silent, but the catalogue knows this value and
+                // names its canonical spelling — the cell is brought to it.
+                if (rule.NormalizeCell && rule.Kind == TitleAttributeKind.Alias &&
+                    attr.Catalogued(value.Key) &&
+                    !string.Equals(original, value.Canonical, StringComparison.Ordinal))
+                {
+                    return new TitleAttributeResult(
+                        rule.Column, TitleAttributeStatus.Corrected, original, value.Canonical);
+                }
+
                 return new TitleAttributeResult(
                     rule.Column, TitleAttributeStatus.NotInTitle, original, original,
                     Reason: TitleAttributeReason.SpellingUnknown);
@@ -1213,6 +1223,8 @@ public static class TitleCleanBuilder
     /// the cuts left behind: runs of whitespace collapse, and a token that is now nothing but
     /// punctuation — a dash or slash that used to separate two removed values — goes with them.
     /// </summary>
+    const string Marker = "\u0001";
+
     static string Apply(string original, List<(int Start, int End)> removals)
     {
         if (removals.Count == 0)
@@ -1220,18 +1232,36 @@ public static class TitleCleanBuilder
 
         var text = original;
 
+        // Each cut leaves a marker word behind. A punctuation-only word beside a marker is the
+        // separator of values that were removed ("1TBSSD+1TBSSD", "16GB / 512GB") and goes with them;
+        // one the seller typed away from any cut ("Notebook + PER4") is part of what no rule claimed
+        // and stays.
         foreach (var (start, end) in removals.Distinct().OrderByDescending(s => s.Start))
         {
             if (start < 0 || end > text.Length || end <= start)
                 continue;
 
             // A space, not nothing: two tokens either side of a removed span must not fuse into one.
-            text = string.Concat(text.AsSpan(0, start), " ", text.AsSpan(end));
+            text = string.Concat(text.AsSpan(0, start), $" {Marker} ", text.AsSpan(end));
         }
 
-        return string.Join(
-            " ",
-            text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-                .Where(token => token.Any(char.IsLetterOrDigit)));
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var kept = new List<string>(words.Length);
+
+        for (var i = 0; i < words.Length; i++)
+        {
+            if (words[i] == Marker)
+                continue;
+
+            var punctuationOnly = !words[i].Any(char.IsLetterOrDigit);
+            var besideCut = (i > 0 && words[i - 1] == Marker) || (i + 1 < words.Length && words[i + 1] == Marker);
+
+            if (punctuationOnly && besideCut)
+                continue;
+
+            kept.Add(words[i]);
+        }
+
+        return string.Join(" ", kept);
     }
 }

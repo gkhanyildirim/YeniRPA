@@ -115,7 +115,8 @@
     ['tc-partial', 'K', 'Kısmi'],
     ['tc-adopt-largest', 'B', 'Büyüğü Seç'],
     ['tc-reference-name', 'T', 'Tam Ad'],
-    ['tc-title-wins', 'H', 'Başlık Doğru']
+    ['tc-title-wins', 'H', 'Başlık Doğru'],
+    ['tc-normalize-cell', 'S', 'Hücreyi Standartlaştır']
   ];
 
   const FLAG_HINT = {
@@ -125,7 +126,8 @@
     'tc-partial': 'Değerin bir parçası tamamının yerine geçsin mi — hücrede "CETINTAS EVII" yazarken başlıkta yalnızca "Çetintaş" geçmesi. Yalnızca marka, malzeme gibi kolonlarda açın; ürün tipinde açmayın.',
     'tc-adopt-largest': 'Ölçüde: başlık bu özelliği iki farklı boyutla anıyorsa (ör. 512GB ve 4TB) büyük olanı hücreye yazıp ikisini de başlıktan siler. Hücrede birden fazla boyut varsa (ör. 1 TB + 512 GB) en büyüğünü (1 TB) hücreye yazar. Değer Listesi\'nde: değer başlıkta iki farklı boyutla (ör. "1TBSSD" ve "2TBSSD") tekrar ediyorsa, büyük boyutlu olanı işaretleyip her iki geçişi de başlıktan siler. Yalnızca Ölçü ve Değer Listesi tiplerinde kullanılır.',
     'tc-reference-name': 'Başlık referans listesindeki bir girişi anıyorsa (ör. "i9-12900HK") hücreye listedeki tam adı yazar ("Intel Core i9-12900HK"). Hücre boşsa, başlıktaki model kodu tek bir girişe uyuyorsa doldurur. Yalnızca referans listesi seçili kolonlarda kullanılır.',
-    'tc-title-wins': 'Başlık bu özelliği tek bir değerle anıyor ve hücre başka bir şey diyorsa başlığı doğru kabul eder: hücreyi başlıktaki değere çevirir (başlıkta RTX 3050, hücrede RTX 4050 → hücre RTX 3050 olur). Başlık iki farklı değer anıyorsa çakışma olarak kalır. Hücrenin üzerine yazdığı için yalnızca başlığa güvendiğiniz kolonlarda açın.'
+    'tc-title-wins': 'Başlık bu özelliği tek bir değerle anıyor ve hücre başka bir şey diyorsa başlığı doğru kabul eder: hücreyi başlıktaki değere çevirir (başlıkta RTX 3050, hücrede RTX 4050 → hücre RTX 3050 olur). Başlık iki farklı değer anıyorsa çakışma olarak kalır. Hücrenin üzerine yazdığı için yalnızca başlığa güvendiğiniz kolonlarda açın.',
+    'tc-normalize-cell': 'Değer Listesi\'nde: hücredeki değer listede varsa, başlıkta geçmese bile hücre o grubun ilk (standart) yazımına çevrilir (255HX → Intel Core Ultra 7 255HX). Grubun ilk yazımı doğru olmalıdır. Yalnızca Değer Listesi tipinde kullanılır.'
   };
 
   const STATUS_LABEL = {
@@ -341,7 +343,8 @@
                  'tc-suffix': r.allowSuffix === true, 'tc-partial': r.allowPartial === true,
                  'tc-adopt-largest': r.adoptLargest === true,
                  'tc-reference-name': r.useReferenceName === true,
-                 'tc-title-wins': r.titleWins === true };
+                 'tc-title-wins': r.titleWins === true,
+                 'tc-normalize-cell': r.normalizeCell === true };
 
     const dots = FLAGS.map(([cls]) =>
       '<span class="tc-rule-flag" data-flag="' + cls + '"></span>').join('');
@@ -477,6 +480,7 @@
       adoptLargest: row.querySelector('.tc-adopt-largest').checked,
       useReferenceName: row.querySelector('.tc-reference-name').checked,
       titleWins: row.querySelector('.tc-title-wins').checked,
+      normalizeCell: row.querySelector('.tc-normalize-cell').checked,
       fillFromTitle: row.querySelector('.tc-fill').value === 'true',
       units: row.querySelector('.tc-units').value.trim(),
       aliases: row.querySelector('.tc-aliases').value.trim(),

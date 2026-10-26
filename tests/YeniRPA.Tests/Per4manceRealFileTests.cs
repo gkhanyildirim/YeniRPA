@@ -72,15 +72,23 @@ public class Per4manceRealFileTests
                     ["Radeon™ 890M"],
                     ["Onboard Graphics"],
                 ]),
-            // The seller's "+ PER4 Çanta" bundle note is spelled as part of the product type, so it
-            // leaves with the word it is attached to ("Notebook + PER4 Çanta") rather than being
-            // deleted on the strength of no column at all.
-            new TitleAttributeRule("Ürün Tipi (tr_TR)", TitleAttributeKind.Alias, Correct: false,
+            // Notebook + PER4 stays in the title (Çıkar off), and the cell becomes "Laptop+Çanta":
+            // the first spelling of the group is the one a cell is rewritten to.
+            new TitleAttributeRule("Ürün Tipi (tr_TR)", TitleAttributeKind.Alias, Remove: false,
                 Aliases:
                 [
-                    ["Notebook", "Notebook + PER4 Çanta", "Laptop", "Dizüstü Bilgisayar", "Taşınabilir Bilgisayar", "Dizüstü"],
+                    ["Laptop+Çanta", "Notebook", "Notebook + PER4", "Laptop", "Dizüstü Bilgisayar", "Taşınabilir Bilgisayar", "Dizüstü"],
                     ["Gaming Laptop", "Oyun Bilgisayarı"],
                     ["İş İstasyonu", "Taşınabilir İş İstasyonu"],
+                ]),
+            // Only "Çanta" leaves: this column's cell is "Notebook" on every row, and "Notebook"
+            // itself is already claimed — and kept — by the product-type rule above, whose longer
+            // span "Notebook + PER4" wins the contested word. What is left for this rule is the
+            // bag, which the title spells and no other column names.
+            new TitleAttributeRule("Kutu İçeriği (tr_TR)", TitleAttributeKind.Alias, Correct: false,
+                Aliases:
+                [
+                    ["Notebook", "Çanta"],
                 ]),
             // "İşletim Sistemi Bulunmuyor" heads the group so the cell's own spelling is the canonical
             // one; with Düzelt off it is never rewritten either way.
@@ -92,18 +100,33 @@ public class Per4manceRealFileTests
                     ["Windows 11 Home", "W11H", "Win11Home", "W11Home"],
                     ["Ubuntu"],
                 ]),
-            // The cell is the model code. Four of them are written in the title with the family
-            // letter glued on and the suffix dropped ("R7 170" for 170H) — phrases, never a bare
-            // number, so "170" on its own is still never a candidate.
-            new TitleAttributeRule("İşlemci (tr_TR)", TitleAttributeKind.Alias, Correct: false, TitleWins: true,
+            // The cell is the model code, and the cell is what the operator wants in full: the first
+            // spelling of each group is the processor's brand and model, and Hücreyi Standartlaştır
+            // writes it into the cell even where the title (Snapdragon) never names the code. A few
+            // titles write the processor as family letter + number ("R7 170" for the cell's 170H) —
+            // phrases, never a bare number, so "170" on its own is still never a candidate.
+            new TitleAttributeRule("İşlemci (tr_TR)", TitleAttributeKind.Alias, TitleWins: true, NormalizeCell: true,
                 Aliases:
                 [
-                    ["170H", "R7 170"],
-                    ["260H", "R7 260"],
-                    ["325H", "U5 325"],
-                    ["365H", "R AI 9 365"],
-                    ["275HX"], ["255H"], ["255HX"], ["8940HX"], ["14500HX"], ["13645HX"], ["7445H"],
-                    ["210H"], ["12450H"], ["12650HX"], ["14900HX"], ["240H"],
+                    ["Intel Core Ultra 9 275HX", "275HX"],
+                    ["Intel Core Ultra 7 255HX", "255HX"],
+                    ["Intel Core Ultra 7 255H", "255H"],
+                    ["Intel Core Ultra 5 325", "325H", "U5 325"],
+                    ["AMD Ryzen 9 8940HX", "8940HX"],
+                    ["AMD Ryzen 7 7445H", "7445H"],
+                    ["AMD Ryzen 7 260", "260H", "R7 260"],
+                    ["AMD Ryzen 7 170", "170H", "R7 170"],
+                    ["AMD Ryzen AI 9 365", "365H", "R AI 9 365"],
+                    ["Intel Core i5-14500HX", "14500HX"],
+                    ["Intel Core i5-12450H", "12450H"],
+                    ["Intel Core i7-13645HX", "13645HX"],
+                    ["Intel Core i7-12650HX", "12650HX"],
+                    ["Intel Core i9-14900HX", "14900HX"],
+                    ["Intel Core 5 210H", "210H"],
+                    ["Intel Core 7 240H", "240H"],
+                    ["Qualcomm Snapdragon X2 Elite X2E-88-100", "X2E-88-100"],
+                    ["Qualcomm Snapdragon X2 Elite X2E-94-100", "X2E-94-100"],
+                    ["Qualcomm Snapdragon X X1-26-100", "X1-26-100", "X1 26 100"],
                 ]),
             new TitleAttributeRule("İşlemci Modeli", TitleAttributeKind.Alias, Correct: false, TitleWins: true,
                 Aliases:
@@ -165,33 +188,33 @@ public class Per4manceRealFileTests
     /// <summary>One row per way this file writes a title.</summary>
     [Theory]
     // The CPU written as family letter + number, the suffix dropped: "R7 170" for the cell's 170H
-    [InlineData(10, "V15 G6 FHD IPS 83V40026TXP325")]
-    [InlineData(15, "ROG G16 RTX5070 8GB FHD+ G614PPRV218P323")]
-    [InlineData(16, "Predator 16S RTX5070 8GB QHD+ NHQZFEY001P307")]
-    [InlineData(17, "Predator16 RTX5070Ti 12GB QHD+ NHQX4EY003P358")]
+    [InlineData(10, "V15 G6 FHD IPS 83V40026TXP325 Notebook + PER4")]
+    [InlineData(15, "ROG G16 RTX5070 8GB FHD+ G614PPRV218P323 Notebook + PER4")]
+    [InlineData(16, "Predator 16S RTX5070 8GB QHD+ NHQZFEY001P307 Notebook + PER4")]
+    [InlineData(17, "Predator16 RTX5070Ti 12GB QHD+ Notebook + PER4 NHQX4EY003P358")]
     // "R AI 9 365" is one processor name, so it goes whole — "AI" alone is the model's own word on EB 6
-    [InlineData(25, "Nitro 18 RTX 5070 8GB QHD+ HNJEY002P359")]
-    [InlineData(130, "EB 6 G2i AI FHD+ IPS C77J9AVP303")]
-    [InlineData(32, "Aspire Lite FHD NXJ7JEY001P311")]
-    [InlineData(55, "LOQ RTX 5060 8GB FHD 83JE012LTRP359")]
+    [InlineData(25, "Nitro 18 RTX 5070 8GB QHD+ HNJEY002P359 Notebook + PER4")]
+    [InlineData(130, "EB 6 G2i AI FHD+ IPS C77J9AVP303 Notebook + PER4")]
+    [InlineData(32, "Aspire Lite FHD NXJ7JEY001P311 Notebook + PER4")]
+    [InlineData(55, "LOQ RTX 5060 8GB FHD 83JE012LTRP359 Notebook + PER4")]
     // Nothing claims "4G SIM", a panel word or a resolution, so they stay
-    [InlineData(66, "EB B3 4G SIM FHD+ B3605CCA-MB2224P357")]
-    [InlineData(85, "TB 16 FHD+ 21SK007UTXPN349")]
+    [InlineData(66, "EB B3 4G SIM FHD+ B3605CCA-MB2224P357 Notebook + PER4")]
+    [InlineData(85, "TB 16 FHD+ 21SK007UTXPN349 Notebook + PER4")]
     // The graphics card's 8GB beside the RAM's 8GB: one goes, one is the card's own
-    [InlineData(86, "TUF A16 RTX 5050 8GB FHD+ FA608UHI-TU126P302")]
-    [InlineData(147, "Victus 15 RTX 4050 6GB FHD BX9U9EAPN313")]
-    [InlineData(207, "Predator 14 RTX5060 8GB QHD+ NHQV0EY001P307")]
-    [InlineData(228, "Omen 16 RTX 5060 8GB 2K C39J7EAPN345")]
+    [InlineData(86, "TUF A16 RTX 5050 8GB FHD+ FA608UHI-TU126P302 Notebook + PER4")]
+    [InlineData(147, "Victus 15 RTX 4050 6GB FHD BX9U9EAPN313 Notebook + PER4")]
+    [InlineData(207, "Predator 14 RTX5060 8GB QHD+ NHQV0EY001P307 Notebook + PER4")]
+    [InlineData(228, "Omen 16 RTX 5060 8GB 2K C39J7EAPN345 Notebook + PER4")]
     // Snapdragon written three ways
-    [InlineData(118, "ZB A16 3K UX3607OA-SQ042WP335")]
-    [InlineData(229, "VB S16 FHD+ S3607QA-SH037WP309")]
-    [InlineData(231, "ZB A14 FHD+ UX3407NA-QD217WP310")]
-    [InlineData(235, "VB 16 FHD+ X1607QA-MB052WP311")]
-    [InlineData(244, "VB S16 FHD+ S3607NA-SH003WP311")]
+    [InlineData(118, "ZB A16 3K UX3607OA-SQ042WP335 Notebook + PER4")]
+    [InlineData(229, "VB S16 FHD+ S3607QA-SH037WP309 Notebook + PER4")]
+    [InlineData(231, "ZB A14 FHD+ UX3407NA-QD217WP310 Notebook + PER4")]
+    [InlineData(235, "VB 16 FHD+ X1607QA-MB052WP311 Notebook + PER4")]
+    [InlineData(244, "VB S16 FHD+ S3607NA-SH003WP311 Notebook + PER4")]
     // MSI: the card written "RTX5060/8GB", the model code at the end
-    [InlineData(399, "Cyborg 15 RTX5060/8GB FHD B2RWFKG207XTRP305")]
-    [InlineData(588, "Cyborg 15 RTX5060/8GB FHD B2RWFKG208XTRP323")]
-    [InlineData(402, "Raider 16 HX RTX5070 12GB QHD+ B2WGX018TRP352")]
+    [InlineData(399, "Cyborg 15 RTX5060/8GB FHD Notebook + PER4 B2RWFKG207XTRP305")]
+    [InlineData(588, "Cyborg 15 RTX5060/8GB FHD Notebook + PER4 B2RWFKG208XTRP323")]
+    [InlineData(402, "Raider 16 HX RTX5070 12GB QHD+ B2WGX018TRP352 Notebook + PER4")]
     public void EachFamilyCleansToItsModelTheCardAndWhatNoColumnClaims(int rowNumber, string expected)
     {
         var row = Clean().Single(r => r.RowNumber == rowNumber);
@@ -240,23 +263,22 @@ public class Per4manceRealFileTests
     }
 
     [Fact]
-    public void TheBundleNoteAndTheProductTypeLeaveEveryTitle()
+    public void OnlyTheBagLeavesTheBundleNote()
     {
         foreach (var row in Clean())
         {
-            Assert.DoesNotContain("PER4", row.CleanTitle, StringComparison.Ordinal);
+            // "Notebook + PER4" stays, exactly as typed, "+" included; only the bag leaves.
+            Assert.Contains("Notebook + PER4", row.CleanTitle, StringComparison.Ordinal);
             Assert.DoesNotContain("Çanta", row.CleanTitle, StringComparison.Ordinal);
-            Assert.DoesNotContain("Notebook", row.CleanTitle, StringComparison.Ordinal);
             Assert.DoesNotContain("FDOS", row.CleanTitle, StringComparison.Ordinal);
             Assert.DoesNotContain("SSD", row.CleanTitle, StringComparison.Ordinal);
-            Assert.DoesNotContain(" + ", row.CleanTitle, StringComparison.Ordinal);
         }
     }
 
     /// <summary>
     /// The file goes back to the marketplace, so a cell is only ever rewritten where the title names a
     /// different value for it (Başlık Doğru) — never for spelling, and never on a column without the
-    /// switch. Exactly 199 cells, in exactly the columns of the rows whose cells copy another laptop.
+    /// switch. Exactly 1390 cells: the 617 product types and processors the operator wants in their full form, and the 206 cells the title contradicts.
     /// </summary>
     [Fact]
     public void OnlyCellsTheTitleContradictsAreRewritten()
@@ -266,7 +288,7 @@ public class Per4manceRealFileTests
             .Where(x => x.Attribute.Status == TitleAttributeStatus.Corrected)
             .ToList();
 
-        Assert.Equal(199, rewritten.Count);
+        Assert.Equal(1390, rewritten.Count);
 
         Assert.All(rewritten, x => Assert.NotEqual(x.Attribute.OriginalValue, x.Attribute.Value));
 
@@ -276,8 +298,9 @@ public class Per4manceRealFileTests
                 ["Ekran Boyutu (inç)"] = 43,
                 ["Grafik Kartı"] = 69,
                 ["RAM Bellek Boyutu"] = 1,
-                ["İşlemci (tr_TR)"] = 43,
+                ["İşlemci (tr_TR)"] = 617,
                 ["İşlemci Modeli"] = 43,
+                ["Ürün Tipi (tr_TR)"] = 617,
             },
             rewritten.GroupBy(x => x.Attribute.Column).ToDictionary(g => g.Key, g => g.Count()));
 
@@ -323,7 +346,7 @@ public class Per4manceRealFileTests
     [InlineData(3, "Ekran Boyutu (inç)", "15,6 inç", "18 inç")]
     [InlineData(3, "Grafik Kartı", "GeForce RTX™ 4050", "GeForce RTX™ 5070 Ti")]
     [InlineData(3, "İşlemci Modeli", "Core™ i5", "Core™ Ultra 9")]
-    [InlineData(3, "İşlemci (tr_TR)", "12500H", "275HX")]
+    [InlineData(3, "İşlemci (tr_TR)", "12500H", "Intel Core Ultra 9 275HX")]
     [InlineData(58, "Grafik Kartı", "GeForce RTX™ 4050", "GeForce RTX™ 3050")]
     [InlineData(501, "Grafik Kartı", "GeForce RTX™ 5070 Ti", "GeForce RTX™ 5080")]
     [InlineData(412, "RAM Bellek Boyutu", "9 GB", "8 GB")]
@@ -338,11 +361,11 @@ public class Per4manceRealFileTests
     }
 
     [Theory]
-    [InlineData(3, "Predator18 RTX5070Ti 12GB QHD+ NHQVLEY002P307")]
-    [InlineData(58, "Nitro V 15 RTX 3050 6GB FHD NH.QUBEY.001P311")]
+    [InlineData(3, "Predator18 RTX5070Ti 12GB QHD+ Notebook + PER4 NHQVLEY002P307")]
+    [InlineData(58, "Nitro V 15 RTX 3050 6GB FHD NH.QUBEY.001P311 Notebook + PER4")]
     // The 8GB left over is the card's own; the RAM's (now 8 GB in the cell) is the one that goes.
-    [InlineData(412, "Cyborg 15 RTX5060/8GB FHD B2RWFKG207XTRP302")]
-    [InlineData(501, "RAIDER A16 HX RTX5080 16GB QHD+ B8WIPN349")]
+    [InlineData(412, "Cyborg 15 RTX5060/8GB FHD Notebook + PER4 B2RWFKG207XTRP302")]
+    [InlineData(501, "RAIDER A16 HX RTX5080 16GB QHD+ B8WIPN349 Notebook + PER4")]
     public void TheContradictingRowsAreNowCleanedToo(int rowNumber, string expected)
     {
         var row = Clean().Single(r => r.RowNumber == rowNumber);
@@ -376,6 +399,58 @@ public class Per4manceRealFileTests
     }
 
     // -----------------------------------------------------------------
+    // The cells the operator wants written in full
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void EveryProductTypeCellBecomesLaptopPlusBag()
+    {
+        var types = Clean().Select(r => r.Attributes.Single(a => a.Column == "Ürün Tipi (tr_TR)")).ToList();
+
+        Assert.All(types, a =>
+        {
+            Assert.Equal("Notebook", a.OriginalValue);
+            Assert.Equal("Laptop+Çanta", a.Value);
+        });
+    }
+
+    /// <summary>Brand and model in full, whether the title wrote the code ("255HX"), a short form
+    /// ("R7 170"), or nothing at all (the Snapdragon rows).</summary>
+    [Theory]
+    [InlineData(10, "170H", "AMD Ryzen 7 170")]
+    [InlineData(15, "8940HX", "AMD Ryzen 9 8940HX")]
+    [InlineData(16, "255HX", "Intel Core Ultra 7 255HX")]
+    [InlineData(32, "12450H", "Intel Core i5-12450H")]
+    [InlineData(55, "14500HX", "Intel Core i5-14500HX")]
+    [InlineData(25, "365H", "AMD Ryzen AI 9 365")]
+    [InlineData(130, "325H", "Intel Core Ultra 5 325")]
+    [InlineData(147, "7445H", "AMD Ryzen 7 7445H")]
+    [InlineData(399, "210H", "Intel Core 5 210H")]
+    [InlineData(118, "X2E-94-100", "Qualcomm Snapdragon X2 Elite X2E-94-100")]
+    [InlineData(229, "X1 26 100", "Qualcomm Snapdragon X X1-26-100")]
+    [InlineData(3, "12500H", "Intel Core Ultra 9 275HX")]
+    public void TheProcessorCellCarriesTheFullBrandAndModel(int rowNumber, string was, string becomes)
+    {
+        var cell = Clean().Single(r => r.RowNumber == rowNumber).Attributes.Single(a => a.Column == "İşlemci (tr_TR)");
+
+        Assert.Equal(was, cell.OriginalValue);
+        Assert.Equal(becomes, cell.Value);
+    }
+
+    /// <summary>A "+" the seller typed, away from any cut, is not a leftover separator.</summary>
+    [Fact]
+    public void ASeparatorBesideNoCutIsKept()
+    {
+        var rules = new TitleRuleSet(
+            "x", "Başlık", [new TitleAttributeRule("Disk", TitleAttributeKind.Measure, Units: Disk)]);
+
+        List<List<string>> table = [["Başlık", "Disk"], ["Model A + B 256GB 1TBSSD+2TBSSD", "256 GB"]];
+        var row = Assert.Single(TitleCleanBuilder.Clean(CompiledRuleSet.Compile(rules), table));
+
+        Assert.Equal("Model A + B 1TBSSD+2TBSSD", row.CleanTitle);
+    }
+
+    // -----------------------------------------------------------------
     // The hand-off
     // -----------------------------------------------------------------
 
@@ -405,6 +480,7 @@ public class Per4manceRealFileTests
             TitleCleanBuilder.Clean(CompiledRuleSet.Compile(imported), Table()).Select(r => r.CleanTitle));
     }
 }
+
 
 
 

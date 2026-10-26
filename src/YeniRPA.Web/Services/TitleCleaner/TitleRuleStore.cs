@@ -137,7 +137,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
             rule.ReferenceList ?? "",
             rule.AdoptLargest,
             rule.UseReferenceName,
-            rule.TitleWins)).ToList(),
+            rule.TitleWins,
+            rule.NormalizeCell)).ToList(),
         set.DecimalSeparator == "," ? "," : ".",
         set.CollapseRepeats);
 
@@ -163,7 +164,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
                     string.IsNullOrWhiteSpace(a.ReferenceList) ? null : a.ReferenceList.Trim(),
                     a.AdoptLargest,
                     a.UseReferenceName,
-                    a.TitleWins))
+                    a.TitleWins,
+                    a.NormalizeCell))
                 .ToList(),
             form.DecimalSeparator == "," ? "," : ".",
             form.CollapseRepeats);
@@ -276,11 +278,14 @@ public sealed class TitleRuleStore : ITitleRuleStore
     /// <summary>Appended last, for the same reason as <see cref="AdoptLargestColumn"/>.</summary>
     const int TitleWinsColumn = 17;
 
+    /// <summary>Appended last, for the same reason as <see cref="AdoptLargestColumn"/>.</summary>
+    const int NormalizeCellColumn = 18;
+
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
         "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek", "Kısmi",
-        "Referans Listesi", "Tekrarı Sil", "Büyüğü Seç", "Tam Ad", "Başlık Doğru",
+        "Referans Listesi", "Tekrarı Sil", "Büyüğü Seç", "Tam Ad", "Başlık Doğru", "Hücreyi Standartlaştır",
     ];
 
     /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
@@ -307,7 +312,7 @@ public sealed class TitleRuleStore : ITitleRuleStore
 
         // Text throughout: a unit spelling of "11" or a set named "2024" must not come back as a
         // number, and the encoded unit/alias cells must survive verbatim.
-        sheet.Columns(SetColumn, TitleWinsColumn).Style.NumberFormat.Format = "@";
+        sheet.Columns(SetColumn, NormalizeCellColumn).Style.NumberFormat.Format = "@";
 
         var row = 2;
         foreach (var set in sets)
@@ -331,11 +336,12 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 sheet.Cell(row, AdoptLargestColumn).SetValue(Yes(rule.AdoptLargest));
                 sheet.Cell(row, ReferenceNameColumn).SetValue(Yes(rule.UseReferenceName));
                 sheet.Cell(row, TitleWinsColumn).SetValue(Yes(rule.TitleWins));
+                sheet.Cell(row, NormalizeCellColumn).SetValue(Yes(rule.NormalizeCell));
                 row++;
             }
         }
 
-        sheet.Columns(SetColumn, TitleWinsColumn).AdjustToContents();
+        sheet.Columns(SetColumn, NormalizeCellColumn).AdjustToContents();
         foreach (var column in sheet.ColumnsUsed())
             column.Width = Math.Clamp(column.Width, 10, 52);
 
@@ -377,6 +383,7 @@ public sealed class TitleRuleStore : ITitleRuleStore
         var cAdoptLargest = Optional(header, Headers[AdoptLargestColumn - 1]);
         var cReferenceName = Optional(header, Headers[ReferenceNameColumn - 1]);
         var cTitleWins = Optional(header, Headers[TitleWinsColumn - 1]);
+        var cNormalize = Optional(header, Headers[NormalizeCellColumn - 1]);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
@@ -417,7 +424,8 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 Blank(TabularFile.GetCell(row, cReference)),
                 ParseBool(TabularFile.GetCell(row, cAdoptLargest), fallback: false),
                 ParseBool(TabularFile.GetCell(row, cReferenceName), fallback: false),
-                ParseBool(TabularFile.GetCell(row, cTitleWins), fallback: false)));
+                ParseBool(TabularFile.GetCell(row, cTitleWins), fallback: false),
+                ParseBool(TabularFile.GetCell(row, cNormalize), fallback: false)));
         }
 
         if (sets.Count == 0)
