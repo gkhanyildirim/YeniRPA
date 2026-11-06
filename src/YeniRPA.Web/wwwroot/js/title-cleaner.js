@@ -116,7 +116,8 @@
     ['tc-adopt-largest', 'B', 'Büyüğü Seç'],
     ['tc-reference-name', 'T', 'Tam Ad'],
     ['tc-title-wins', 'H', 'Başlık Doğru'],
-    ['tc-normalize-cell', 'S', 'Hücreyi Standartlaştır']
+    ['tc-normalize-cell', 'S', 'Hücreyi Standartlaştır'],
+    ['tc-remove-only', 'Y', 'Yalnızca Sil']
   ];
 
   const FLAG_HINT = {
@@ -127,6 +128,7 @@
     'tc-adopt-largest': 'Ölçüde: başlık bu özelliği iki farklı boyutla anıyorsa (ör. 512GB ve 4TB) büyük olanı hücreye yazıp ikisini de başlıktan siler. Hücrede birden fazla boyut varsa (ör. 1 TB + 512 GB) en büyüğünü (1 TB) hücreye yazar. Değer Listesi\'nde: değer başlıkta iki farklı boyutla (ör. "1TBSSD" ve "2TBSSD") tekrar ediyorsa, büyük boyutlu olanı işaretleyip her iki geçişi de başlıktan siler. Yalnızca Ölçü ve Değer Listesi tiplerinde kullanılır.',
     'tc-reference-name': 'Başlık referans listesindeki bir girişi anıyorsa (ör. "i9-12900HK") hücreye listedeki tam adı yazar ("Intel Core i9-12900HK"). Hücre boşsa, başlıktaki model kodu tek bir girişe uyuyorsa doldurur. Yalnızca referans listesi seçili kolonlarda kullanılır.',
     'tc-title-wins': 'Başlık bu özelliği tek bir değerle anıyor ve hücre başka bir şey diyorsa başlığı doğru kabul eder: hücreyi başlıktaki değere çevirir (başlıkta RTX 3050, hücrede RTX 4050 → hücre RTX 3050 olur). Başlık iki farklı değer anıyorsa çakışma olarak kalır. Hücrenin üzerine yazdığı için yalnızca başlığa güvendiğiniz kolonlarda açın.',
+    'tc-remove-only': 'Kolon yalnızca silme aracıdır: değer listesinin (veya birimlerin) başlıkta bulduğu her şey silinir, hücreye bakılmaz ve hiçbir şey yazılmaz. Hiçbir hücrede karşılığı olmayan başlık kelimeleri (bellek hızı, port sayısı) için. Listedeki yazımlar kadar dardır.',
     'tc-normalize-cell': 'Değer Listesi\'nde: hücredeki değer listede varsa, başlıkta geçmese bile hücre o grubun ilk (standart) yazımına çevrilir (255HX → Intel Core Ultra 7 255HX). Grubun ilk yazımı doğru olmalıdır. Yalnızca Değer Listesi tipinde kullanılır.'
   };
 
@@ -344,7 +346,8 @@
                  'tc-adopt-largest': r.adoptLargest === true,
                  'tc-reference-name': r.useReferenceName === true,
                  'tc-title-wins': r.titleWins === true,
-                 'tc-normalize-cell': r.normalizeCell === true };
+                 'tc-normalize-cell': r.normalizeCell === true,
+                 'tc-remove-only': r.removeOnly === true };
 
     const dots = FLAGS.map(([cls]) =>
       '<span class="tc-rule-flag" data-flag="' + cls + '"></span>').join('');
@@ -402,8 +405,30 @@
               '<textarea class="tc-aliases" rows="1" spellcheck="false">' +
                 RPA.escapeHtml(r.aliases || '') + '</textarea>' +
               '<span class="tc-hint">Her satır bir değer; satırın ilk yazımı standart olan. ' +
-                '&quot;|&quot; aynı şeyin diğer yazımlarını ayırır. Ölçü tipinde her satır ' +
+                '&quot;|&quot; aynı şeyin diğer yazımlarını ayırır; &quot;~&quot; ile başlayan yazım ' +
+                'yalnızca boş hücreyi doldurmak için kelime içinde aranır (hiçbir şey silmez). Ölçü tipinde her satır ' +
                 'aynı sayılan iki ölçüdür.</span>' +
+            '</div>' +
+
+            '<div class="tc-field">' +
+              '<label>Boşsa değer</label>' +
+              '<input type="text" class="tc-fill-default" value="' + RPA.escapeHtml(r.fillDefault || '') + '" />' +
+              '<span class="tc-hint">Hücre boş kaldıysa yazılacak sabit değer.</span>' +
+            '</div>' +
+            '<div class="tc-field">' +
+              '<label>Başlığa ekle</label>' +
+              '<input type="text" class="tc-append" value="' + RPA.escapeHtml(r.appendToTitle || '') + '" />' +
+              '<span class="tc-hint">Temizlenen başlığın sonuna yazılır (zaten öyle bitmiyorsa) — standardın son parçası, ör. ANAKART.</span>' +
+            '</div>' +
+            '<div class="tc-field">' +
+              '<label>Koşul kolonu</label>' +
+              '<input type="text" class="tc-fill-when" value="' + RPA.escapeHtml(r.fillWhen || '') + '" />' +
+              '<span class="tc-hint">Sabit değer yalnızca bu kolon doluysa yazılır.</span>' +
+            '</div>' +
+            '<div class="tc-field">' +
+              '<label>Kolondan al</label>' +
+              '<input type="text" class="tc-copy-from" value="' + RPA.escapeHtml(r.copyFrom || '') + '" />' +
+              '<span class="tc-hint">Hücre boşsa bu kolonun değerini kopyalar (üretici ← marka).</span>' +
             '</div>' +
 
             '<div class="tc-field">' +
@@ -451,6 +476,7 @@
     el('tc-title-column').value = s.titleColumn || '';
     el('tc-decimal').value = s.decimalSeparator === ',' ? ',' : '.';
     el('tc-collapse').checked = s.collapseRepeats === true;
+    el('tc-uppercase').checked = s.upperCase === true;
 
     const list = (s.attributes || []);
     el('tc-rules-body').innerHTML = list.length
@@ -481,6 +507,11 @@
       useReferenceName: row.querySelector('.tc-reference-name').checked,
       titleWins: row.querySelector('.tc-title-wins').checked,
       normalizeCell: row.querySelector('.tc-normalize-cell').checked,
+      removeOnly: row.querySelector('.tc-remove-only').checked,
+      fillDefault: row.querySelector('.tc-fill-default').value.trim(),
+      fillWhen: row.querySelector('.tc-fill-when').value.trim(),
+      copyFrom: row.querySelector('.tc-copy-from').value.trim(),
+      appendToTitle: row.querySelector('.tc-append').value.trim(),
       fillFromTitle: row.querySelector('.tc-fill').value === 'true',
       units: row.querySelector('.tc-units').value.trim(),
       aliases: row.querySelector('.tc-aliases').value.trim(),
@@ -492,6 +523,7 @@
       titleColumn: el('tc-title-column').value.trim(),
       decimalSeparator: el('tc-decimal').value,
       collapseRepeats: el('tc-collapse').checked,
+      upperCase: el('tc-uppercase').checked,
       attributes: attributes
     };
   }
@@ -1344,6 +1376,7 @@
     ['tc-set-name', 'tc-title-column'].forEach(id => el(id).addEventListener('input', markDirty));
     el('tc-decimal').addEventListener('change', markDirty);
     el('tc-collapse').addEventListener('change', markDirty);
+    el('tc-uppercase').addEventListener('change', markDirty);
 
     el('tc-rule-import').addEventListener('click', () => el('tc-rule-file').click());
     el('tc-rule-file').addEventListener('change', function () {

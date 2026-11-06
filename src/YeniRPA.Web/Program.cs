@@ -222,6 +222,9 @@ builder.Services.AddSingleton<ITitleRuleStore, TitleRuleStore>();
 // load and save must not interleave across the controller's GET/PUT/start actions.
 builder.Services.AddSingleton<ISellerNotificationStore, SellerNotificationStore>();
 
+// POS Reconciliation's editable bank rate table and on-us family rules. No credentials, not encrypted.
+builder.Services.AddSingleton<IPosRateStore, PosRateStore>();
+
 // The marketplace's RuleSet, parsed once at upload. A singleton for the same reason, though this one
 // is derived data: it can always be rebuilt by uploading the workbook again.
 builder.Services.AddSingleton<ICategoryRuleStore, CategoryRuleStore>();

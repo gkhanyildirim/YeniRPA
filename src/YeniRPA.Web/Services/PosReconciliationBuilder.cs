@@ -140,6 +140,8 @@ internal static class PosReconciliationBuilder
         var cProvizyonNo = RequireColumn(idx, "Bulut Tahsilat", "Provizyon No");
         var cTaksit = RequireColumn(idx, "Bulut Tahsilat", "Taksit");
         var cSiparisNo = RequireColumn(idx, "Bulut Tahsilat", "Sipariş Numarası");
+        // Optional: older exports without it still load, their card type is just blank.
+        int? cKartTipi = idx.TryGetValue("POS Kart Tipi", out var kartTipiIndex) ? kartTipiIndex : null;
 
         var rows = new List<PosReconciliationRow>(table.Count - 1);
         var unmatched = new List<PosReconciliationUnmatchedRow>();
@@ -158,7 +160,8 @@ internal static class PosReconciliationBuilder
             var komisyonTutari = ParseMoney(TabularFile.GetCell(row, cKomisyonTutari));
             var provizyonNo = TabularFile.GetCell(row, cProvizyonNo).Trim();
             var taksit = (int)Math.Round(TabularFile.ParseNumber(TabularFile.GetCell(row, cTaksit)), MidpointRounding.AwayFromZero);
-            var siparisNo = TabularFile.GetCell(row, cSiparisNo).Trim();
+            var siparisNo = NormalizeOrderNumber(TabularFile.GetCell(row, cSiparisNo));
+            var kartTipi = TabularFile.GetCell(row, cKartTipi).Trim();
 
             // A row this whole workbook is otherwise empty on (a trailing blank line) is skipped
             // rather than counted as a record with no bank and no amount.
@@ -180,7 +183,7 @@ internal static class PosReconciliationBuilder
                 {
                     if (externalIds.Count == 1)
                     {
-                        siparisNo = externalIds.Single();
+                        siparisNo = NormalizeOrderNumber(externalIds.Single());
                         kaynak = SourceMatched;
                     }
                     else
@@ -211,7 +214,7 @@ internal static class PosReconciliationBuilder
 
             rows.Add(new PosReconciliationRow(
                 islemKodu, posBanka, kartBanka, islemTutari, komisyonTutari, provizyonNo, taksit, siparisNo, kaynak,
-                marketplaceGmv, retailGmv));
+                marketplaceGmv, retailGmv, kartTipi));
         }
 
         return (rows, unmatched);
@@ -320,6 +323,22 @@ internal static class PosReconciliationBuilder
     }
 
     /// <summary>
+    /// An order number in the form Mirakl uses. Some Bulut Tahsilat / Craftgate rows carry a 3-D Secure
+    /// reference instead — <c>TDS_0000000000335216382</c> — which is the order <c>335216382</c> behind a
+    /// <c>TDS_</c> prefix and zero padding; left as is, it never matches a Mirakl order. Any other
+    /// value (including one with a real leading zero) is only trimmed.
+    /// </summary>
+    internal static string NormalizeOrderNumber(string raw)
+    {
+        var text = (raw ?? "").Trim();
+        if (!text.StartsWith("TDS_", StringComparison.OrdinalIgnoreCase))
+            return text;
+
+        var digits = text[4..].Trim().TrimStart('0');
+        return digits.Length > 0 && digits.All(char.IsDigit) ? digits : text;
+    }
+
+    /// <summary>
     /// A Provizyon No / authCode as it should be compared, not as Excel wrote it. Only touched when
     /// the text visibly carries scientific or decimal formatting (an <c>E</c> or a <c>.</c>) — a plain
     /// digit string is left alone, because a real leading zero can only survive in a text-typed cell.
@@ -357,13 +376,15 @@ internal static class PosReconciliationBuilder
     // Workbook — Pivot, Detay (every merged row) and Eşleşmeyenler, in that order
     // ---------------------------------------------------------------------
 
-    public static byte[] BuildWorkbook(PosReconciliationBatch batch)
+    public static byte[] BuildWorkbook(PosReconciliationBatch batch, PosRateSettings rates)
     {
         using var workbook = new XLWorkbook();
 
         BuildPivotSheet(workbook, batch.Pivot);
-        BuildDetailSheet(workbook, batch.Rows);
+        var classifier = new PosCardClassifier(rates);
+        BuildDetailSheet(workbook, batch.Rows, classifier, new PosRateResolver(rates, classifier));
         BuildUnmatchedSheet(workbook, batch.Unmatched);
+        BuildRateSheet(workbook, batch.Rows, rates);
 
         using var output = new MemoryStream();
         workbook.SaveAs(output);
@@ -412,14 +433,16 @@ internal static class PosReconciliationBuilder
         sheet.Columns().AdjustToContents();
     }
 
-    static void BuildDetailSheet(XLWorkbook workbook, IReadOnlyList<PosReconciliationRow> rows)
+    static void BuildDetailSheet(XLWorkbook workbook, IReadOnlyList<PosReconciliationRow> rows,
+        PosCardClassifier classifier, PosRateResolver resolver)
     {
         var sheet = workbook.Worksheets.Add("Detay");
         XlsxStyles.ApplyBaseFont(sheet);
 
         string[] headers =
         [
-            "İşlem Kodu", "POS Banka", "Kart Banka", "İşlem Tutarı", "Toplam Komisyon Tutarı",
+            "İşlem Kodu", "POS Banka", "Kart Banka", "Kart Tipi", "On Us / Not On Us", "İşlem Tutarı",
+            "Toplam Komisyon Tutarı", "Komisyon Oranı (%)",
             "Provizyon No", "Taksit", "Sipariş Numarası", "Sipariş Numarası Kaynağı",
             "Marketplace GMV", "Retail GMV", "MP GMV - Retail GMV Fark"
         ];
@@ -429,8 +452,8 @@ internal static class PosReconciliationBuilder
 
         // Written as text so Provizyon No and Sipariş Numarası never round-trip through Excel's own
         // number formatting into scientific notation the next time the file is opened.
-        sheet.Column(6).Style.NumberFormat.Format = "@";
-        sheet.Column(8).Style.NumberFormat.Format = "@";
+        sheet.Column(9).Style.NumberFormat.Format = "@";
+        sheet.Column(11).Style.NumberFormat.Format = "@";
 
         for (var r = 0; r < rows.Count; r++)
         {
@@ -440,18 +463,26 @@ internal static class PosReconciliationBuilder
             sheet.Cell(excelRow, 1).SetValue(row.IslemKodu);
             sheet.Cell(excelRow, 2).SetValue(row.PosBanka);
             sheet.Cell(excelRow, 3).SetValue(row.KartBanka);
-            WriteMoneyCell(sheet.Cell(excelRow, 4), row.IslemTutari);
-            WriteMoneyCell(sheet.Cell(excelRow, 5), row.ToplamKomisyonTutari);
-            sheet.Cell(excelRow, 6).SetValue(row.ProvizyonNo);
-            sheet.Cell(excelRow, 7).Value = row.Taksit;
-            sheet.Cell(excelRow, 8).SetValue(row.SiparisNumarasi);
-            sheet.Cell(excelRow, 9).SetValue(row.SiparisKaynagi);
+            sheet.Cell(excelRow, 4).SetValue(row.CardType);
+            sheet.Cell(excelRow, 5).SetValue(classifier.IsOnUs(row) ? "On Us" : "Not On Us");
+            WriteMoneyCell(sheet.Cell(excelRow, 6), row.IslemTutari);
+            WriteMoneyCell(sheet.Cell(excelRow, 7), row.ToplamKomisyonTutari);
+            // From the bank-rate table, not from the export: the rate this card/installment should cost.
+            if (resolver.Resolve(row) is { } oran)
+            {
+                sheet.Cell(excelRow, 8).Value = oran;
+                sheet.Cell(excelRow, 8).Style.NumberFormat.Format = "0.00##%";
+            }
+            sheet.Cell(excelRow, 9).SetValue(row.ProvizyonNo);
+            sheet.Cell(excelRow, 10).Value = row.Taksit;
+            sheet.Cell(excelRow, 11).SetValue(row.SiparisNumarasi);
+            sheet.Cell(excelRow, 12).SetValue(row.SiparisKaynagi);
             if (row.MarketplaceGmv is { } marketplace)
-                WriteMoneyCell(sheet.Cell(excelRow, 10), marketplace);
+                WriteMoneyCell(sheet.Cell(excelRow, 13), marketplace);
             if (row.RetailGmv is { } retail)
-                WriteMoneyCell(sheet.Cell(excelRow, 11), retail);
+                WriteMoneyCell(sheet.Cell(excelRow, 14), retail);
             if (row.MarketplaceGmv is { } mp && row.RetailGmv is { } rt)
-                WriteMoneyCell(sheet.Cell(excelRow, 12), mp - rt);
+                WriteMoneyCell(sheet.Cell(excelRow, 15), mp - rt);
         }
 
         var lastRow = rows.Count + 1;
@@ -497,6 +528,151 @@ internal static class PosReconciliationBuilder
         }
 
         sheet.SheetView.FreezeRows(1);
+        sheet.Columns().AdjustToContents();
+    }
+
+    // ---------------------------------------------------------------------
+    // Banka Oranları — per POS bank card mix (by transaction count) beside the editable rate table
+    // ---------------------------------------------------------------------
+
+    /// <summary>One POS bank's transaction counts by card mix. Only sale rows (positive İşlem Tutarı) are
+    /// counted, so refunds and penalties do not distort the shares.</summary>
+    public sealed record BankCardMix(string PosBanka, int Total, int OnUs, int Debit, int Credit, int Foreign);
+
+    public static List<BankCardMix> ComputeCardMix(
+        IEnumerable<PosReconciliationRow> rows, PosCardClassifier classifier, IEnumerable<string> bankOrder)
+    {
+        var counts = new Dictionary<string, int[]>(StringComparer.Ordinal); // [total, onUs, debit, credit, foreign]
+        var display = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var row in rows)
+        {
+            if (row.IslemTutari <= 0)
+                continue;
+
+            var key = PosCardClassifier.Norm(row.PosBanka);
+            if (key.Length == 0)
+                continue;
+
+            display.TryAdd(key, row.PosBanka);
+            if (!counts.TryGetValue(key, out var c))
+                counts[key] = c = new int[5];
+
+            c[0]++;
+            if (classifier.IsOnUs(row)) c[1]++;
+            switch (classifier.Kind(row))
+            {
+                case PosCardKind.Debit: c[2]++; break;
+                case PosCardKind.Credit: c[3]++; break;
+                case PosCardKind.Foreign: c[4]++; break;
+            }
+        }
+
+        var result = new List<BankCardMix>();
+        var added = new HashSet<string>(StringComparer.Ordinal);
+
+        void Add(string name)
+        {
+            var key = PosCardClassifier.Norm(name);
+            if (key.Length == 0 || !added.Add(key))
+                return;
+            var c = counts.GetValueOrDefault(key) ?? new int[5];
+            result.Add(new BankCardMix(display.GetValueOrDefault(key, name), c[0], c[1], c[2], c[3], c[4]));
+        }
+
+        foreach (var bank in bankOrder)
+            Add(bank);
+        foreach (var bank in display.Values.OrderBy(b => b, StringComparer.CurrentCultureIgnoreCase))
+            Add(bank);
+
+        return result;
+    }
+
+    static void BuildRateSheet(XLWorkbook workbook, IReadOnlyList<PosReconciliationRow> rows, PosRateSettings rates)
+    {
+        var sheet = workbook.Worksheets.Add("Banka Oranları");
+        XlsxStyles.ApplyBaseFont(sheet);
+
+        var classifier = new PosCardClassifier(rates);
+        var mix = ComputeCardMix(rows, classifier, rates.Banks.Select(b => b.PosBank));
+        var installments = rates.Banks.SelectMany(b => b.Installments.Select(i => i.Installment))
+            .Distinct().OrderBy(i => i).ToList();
+
+        string[] fixedHeaders =
+        [
+            "", "on us", "not on us", "Debit Kart", "Credit Card", "Foreign Card", "Foreign Card Oranı",
+            "1 taksit on us debit", "1 taksit on us credit", "1 taksit not on us debit", "1 taksit not on us credit"
+        ];
+        for (var c = 0; c < fixedHeaders.Length; c++)
+            sheet.Cell(1, c + 1).SetValue(fixedHeaders[c]);
+        for (var c = 0; c < installments.Count; c++)
+            sheet.Cell(1, fixedHeaders.Length + 1 + c).SetValue($"{installments[c]} taksit oran");
+        var countCol = fixedHeaders.Length + installments.Count + 1;
+        sheet.Cell(1, countCol).SetValue("İşlem Adedi");
+        XlsxStyles.StyleHeaderRow(sheet.Range(1, 1, 1, countCol));
+
+        void WriteShare(int excelRow, int column, int part, int total)
+        {
+            if (total == 0)
+                return;
+            var cell = sheet.Cell(excelRow, column);
+            cell.Value = (decimal)part / total;
+            cell.Style.NumberFormat.Format = "0.00%";
+        }
+
+        void WriteRate(int excelRow, int column, decimal? rate)
+        {
+            if (rate is null)
+                return;
+            var cell = sheet.Cell(excelRow, column);
+            cell.Value = rate.Value;
+            cell.Style.NumberFormat.Format = "0.00##%";
+        }
+
+        for (var r = 0; r < mix.Count; r++)
+        {
+            var m = mix[r];
+            var excelRow = r + 2;
+
+            sheet.Cell(excelRow, 1).SetValue(m.PosBanka);
+            WriteShare(excelRow, 2, m.OnUs, m.Total);
+            WriteShare(excelRow, 3, m.Total - m.OnUs, m.Total);
+            WriteShare(excelRow, 4, m.Debit, m.Total);
+            WriteShare(excelRow, 5, m.Credit, m.Total);
+            WriteShare(excelRow, 6, m.Foreign, m.Total);
+            sheet.Cell(excelRow, countCol).Value = m.Total;
+
+            var bankRate = rates.Banks.FirstOrDefault(b =>
+                PosCardClassifier.Norm(b.PosBank) == PosCardClassifier.Norm(m.PosBanka));
+            if (bankRate is null)
+                continue;
+
+            WriteRate(excelRow, 7, bankRate.ForeignRate);
+            WriteRate(excelRow, 8, bankRate.OneOnUsDebit);
+            WriteRate(excelRow, 9, bankRate.OneOnUsCredit);
+            WriteRate(excelRow, 10, bankRate.OneNotOnUsDebit);
+            WriteRate(excelRow, 11, bankRate.OneNotOnUsCredit);
+            for (var c = 0; c < installments.Count; c++)
+                WriteRate(excelRow, fixedHeaders.Length + 1 + c,
+                    bankRate.Installments.FirstOrDefault(i => i.Installment == installments[c])?.Rate);
+        }
+
+        var totalRow = mix.Count + 2;
+        var total = new BankCardMix(GrandTotalLabel, mix.Sum(m => m.Total), mix.Sum(m => m.OnUs),
+            mix.Sum(m => m.Debit), mix.Sum(m => m.Credit), mix.Sum(m => m.Foreign));
+        sheet.Cell(totalRow, 1).SetValue(total.PosBanka);
+        sheet.Cell(totalRow, 1).Style.Font.Bold = true;
+        WriteShare(totalRow, 2, total.OnUs, total.Total);
+        WriteShare(totalRow, 3, total.Total - total.OnUs, total.Total);
+        WriteShare(totalRow, 4, total.Debit, total.Total);
+        WriteShare(totalRow, 5, total.Credit, total.Total);
+        WriteShare(totalRow, 6, total.Foreign, total.Total);
+        sheet.Cell(totalRow, countCol).Value = total.Total;
+
+        XlsxStyles.ApplyThinBorders(sheet.Range(1, 1, totalRow, countCol));
+        XlsxStyles.ApplyZebra(sheet, 2, totalRow, 1, countCol);
+        sheet.SheetView.FreezeRows(1);
+        sheet.SheetView.FreezeColumns(1);
         sheet.Columns().AdjustToContents();
     }
 

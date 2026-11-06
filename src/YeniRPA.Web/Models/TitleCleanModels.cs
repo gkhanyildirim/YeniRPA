@@ -132,6 +132,33 @@ public sealed record MeasureFamily(string Label, IReadOnlyList<MeasureUnit> Unit
 /// <para>Off by default: it rewrites a cell on the strength of the catalogue alone. Needs
 /// <paramref name="Correct"/>'s catalogue to be right about every spelling it groups.</para>
 /// </param>
+/// <param name="RemoveOnly">
+/// The column is a way to cut words out of the title and nothing else: whatever its value list (or
+/// units) finds is removed, the cell is neither read nor written. For title words that no cell of the
+/// category ever holds — a memory speed, a port count — and that the operator wants gone.
+///
+/// <para>The one setting that removes text on the column's own say-so, without the row's cell
+/// asserting it. Off by default; the value list is the whole whitelist, so it is as narrow as the
+/// spellings listed.</para>
+/// </param>
+/// <param name="AppendToTitle">
+/// Text written at the end of the cleaned title when the rule is in play on the row (its
+/// <paramref name="FillWhen"/> allows it) and the title does not already end with it — the product
+/// type of a naming standard whose last part every title must carry, however few sellers write it.
+/// Pair it with the column's own spellings so the seller's wording is cut and the standard's is
+/// written once: the next pass cuts it again and writes it back, which is why the result is stable.
+/// </param>
+/// <param name="FillDefault">
+/// A fixed value written into an <b>empty</b> cell when the title gave nothing to fill it from —
+/// "Mainboard" for a product-type column every board shares. Applies after the title and
+/// <paramref name="CopyFrom"/> have had their say, and only if <paramref name="FillWhen"/> allows it.
+/// </param>
+/// <param name="FillWhen">A column that must itself end up non-empty on the row before
+/// <paramref name="FillDefault"/> is used. Keeps a constant from landing on a row that is not this
+/// category's product at all (a memory module listed under motherboards).</param>
+/// <param name="CopyFrom">A column whose final value is copied into this one when this cell is empty —
+/// the manufacturer cell from the brand. Needed because two columns cannot both claim the same word
+/// of a title.</param>
 public sealed record TitleAttributeRule(
     string Column,
     TitleAttributeKind Kind = TitleAttributeKind.Text,
@@ -146,7 +173,12 @@ public sealed record TitleAttributeRule(
     bool AdoptLargest = false,
     bool UseReferenceName = false,
     bool TitleWins = false,
-    bool NormalizeCell = false)
+    bool NormalizeCell = false,
+    string? FillDefault = null,
+    string? FillWhen = null,
+    string? CopyFrom = null,
+    bool RemoveOnly = false,
+    string? AppendToTitle = null)
 {
     public IReadOnlyList<MeasureUnit> UnitList => Units ?? [];
 
@@ -164,6 +196,12 @@ public sealed record TitleAttributeRule(
 /// <param name="DecimalSeparator">What a corrected fractional value is written with. Turkish
 /// catalogues are usually kept on ",", the reference titles on "." — it is one setting rather than a
 /// guess per row, so a file cannot come back carrying both.</param>
+/// <param name="UpperCase">
+/// Whether the cleaned title is written in capitals. A seller's titles arrive in whatever case they
+/// were typed in — "Asus Prime H810M-E Csm" beside "ASUS PRIME H810M-E CSM" — and for a category whose
+/// model lines are always written in capitals (motherboards) the same product should not carry two
+/// spellings. Off by default: for laptops "Pro" and "PRO" are different words of a model name.
+/// </param>
 /// <param name="CollapseRepeats">
 /// Whether a word written twice in a row — "Lenovo Ideapad Ideapad Slim3" — loses its second copy.
 ///
@@ -182,7 +220,8 @@ public sealed record TitleRuleSet(
     string TitleColumn,
     IReadOnlyList<TitleAttributeRule> Attributes,
     string DecimalSeparator = ".",
-    bool CollapseRepeats = false)
+    bool CollapseRepeats = false,
+    bool UpperCase = false)
 {
     public IReadOnlyList<TitleAttributeRule> AttributeList => Attributes ?? [];
 }
@@ -305,7 +344,12 @@ public sealed record TitleAttributeForm(
     bool AdoptLargest = false,
     bool UseReferenceName = false,
     bool TitleWins = false,
-    bool NormalizeCell = false);
+    bool NormalizeCell = false,
+    string FillDefault = "",
+    string FillWhen = "",
+    string CopyFrom = "",
+    bool RemoveOnly = false,
+    string AppendToTitle = "");
 
 /// <summary>One ready-made unit set the editor offers, on its way to the browser.</summary>
 /// <param name="Units">Already encoded into the cell format by <c>TitleRuleStore</c>. The browser
@@ -318,7 +362,8 @@ public sealed record TitleRuleSetForm(
     string TitleColumn,
     IReadOnlyList<TitleAttributeForm> Attributes,
     string DecimalSeparator = ".",
-    bool CollapseRepeats = false)
+    bool CollapseRepeats = false,
+    bool UpperCase = false)
 {
     public IReadOnlyList<TitleAttributeForm> AttributeList => Attributes ?? [];
 }

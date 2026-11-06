@@ -138,9 +138,15 @@ public sealed class TitleRuleStore : ITitleRuleStore
             rule.AdoptLargest,
             rule.UseReferenceName,
             rule.TitleWins,
-            rule.NormalizeCell)).ToList(),
+            rule.NormalizeCell,
+            rule.FillDefault ?? "",
+            rule.FillWhen ?? "",
+            rule.CopyFrom ?? "",
+            rule.RemoveOnly,
+            rule.AppendToTitle ?? "")).ToList(),
         set.DecimalSeparator == "," ? "," : ".",
-        set.CollapseRepeats);
+        set.CollapseRepeats,
+        set.UpperCase);
 
     public static TitleRuleSet FromForm(TitleRuleSetForm form)
     {
@@ -165,10 +171,16 @@ public sealed class TitleRuleStore : ITitleRuleStore
                     a.AdoptLargest,
                     a.UseReferenceName,
                     a.TitleWins,
-                    a.NormalizeCell))
+                    a.NormalizeCell,
+                    string.IsNullOrWhiteSpace(a.FillDefault) ? null : a.FillDefault.Trim(),
+                    string.IsNullOrWhiteSpace(a.FillWhen) ? null : a.FillWhen.Trim(),
+                    string.IsNullOrWhiteSpace(a.CopyFrom) ? null : a.CopyFrom.Trim(),
+                    a.RemoveOnly,
+                    string.IsNullOrWhiteSpace(a.AppendToTitle) ? null : a.AppendToTitle.Trim()))
                 .ToList(),
             form.DecimalSeparator == "," ? "," : ".",
-            form.CollapseRepeats);
+            form.CollapseRepeats,
+            form.UpperCase);
     }
 
     public static TitleRuleFileForm ToForm(TitleRuleFile file) =>
@@ -281,11 +293,22 @@ public sealed class TitleRuleStore : ITitleRuleStore
     /// <summary>Appended last, for the same reason as <see cref="AdoptLargestColumn"/>.</summary>
     const int NormalizeCellColumn = 18;
 
+    /// <summary>Appended last, for the same reason as <see cref="AdoptLargestColumn"/>.</summary>
+    const int FillDefaultColumn = 19;
+    const int FillWhenColumn = 20;
+    const int CopyFromColumn = 21;
+    const int RemoveOnlyColumn = 22;
+
+    /// <summary>A rule-set setting repeated on every row of its set, like <see cref="RepeatColumn"/>.</summary>
+    const int UpperCaseColumn = 23;
+    const int AppendToTitleColumn = 24;
+
     static readonly string[] Headers =
     [
         "Kural Seti", "Başlık Kolonu", "Ondalık Ayracı", "Kolon", "Tip",
         "Çıkar", "Düzelt", "Başlıktan Doldur", "Birimler", "Değerler", "Ek", "Kısmi",
         "Referans Listesi", "Tekrarı Sil", "Büyüğü Seç", "Tam Ad", "Başlık Doğru", "Hücreyi Standartlaştır",
+        "Boşsa Değer", "Koşul Kolonu", "Kolondan Al", "Yalnızca Sil", "Büyük Harf", "Başlığa Ekle",
     ];
 
     /// <summary>What the alias column used to be called. Workbooks exported before the rename carry
@@ -312,7 +335,7 @@ public sealed class TitleRuleStore : ITitleRuleStore
 
         // Text throughout: a unit spelling of "11" or a set named "2024" must not come back as a
         // number, and the encoded unit/alias cells must survive verbatim.
-        sheet.Columns(SetColumn, NormalizeCellColumn).Style.NumberFormat.Format = "@";
+        sheet.Columns(SetColumn, AppendToTitleColumn).Style.NumberFormat.Format = "@";
 
         var row = 2;
         foreach (var set in sets)
@@ -337,11 +360,17 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 sheet.Cell(row, ReferenceNameColumn).SetValue(Yes(rule.UseReferenceName));
                 sheet.Cell(row, TitleWinsColumn).SetValue(Yes(rule.TitleWins));
                 sheet.Cell(row, NormalizeCellColumn).SetValue(Yes(rule.NormalizeCell));
+                sheet.Cell(row, FillDefaultColumn).SetValue(rule.FillDefault ?? "");
+                sheet.Cell(row, FillWhenColumn).SetValue(rule.FillWhen ?? "");
+                sheet.Cell(row, CopyFromColumn).SetValue(rule.CopyFrom ?? "");
+                sheet.Cell(row, RemoveOnlyColumn).SetValue(Yes(rule.RemoveOnly));
+                sheet.Cell(row, UpperCaseColumn).SetValue(Yes(set.UpperCase));
+                sheet.Cell(row, AppendToTitleColumn).SetValue(rule.AppendToTitle ?? "");
                 row++;
             }
         }
 
-        sheet.Columns(SetColumn, NormalizeCellColumn).AdjustToContents();
+        sheet.Columns(SetColumn, AppendToTitleColumn).AdjustToContents();
         foreach (var column in sheet.ColumnsUsed())
             column.Width = Math.Clamp(column.Width, 10, 52);
 
@@ -384,11 +413,17 @@ public sealed class TitleRuleStore : ITitleRuleStore
         var cReferenceName = Optional(header, Headers[ReferenceNameColumn - 1]);
         var cTitleWins = Optional(header, Headers[TitleWinsColumn - 1]);
         var cNormalize = Optional(header, Headers[NormalizeCellColumn - 1]);
+        var cFillDefault = Optional(header, Headers[FillDefaultColumn - 1]);
+        var cFillWhen = Optional(header, Headers[FillWhenColumn - 1]);
+        var cCopyFrom = Optional(header, Headers[CopyFromColumn - 1]);
+        var cRemoveOnly = Optional(header, Headers[RemoveOnlyColumn - 1]);
+        var cUpper = Optional(header, Headers[UpperCaseColumn - 1]);
+        var cAppend = Optional(header, Headers[AppendToTitleColumn - 1]);
 
         // Insertion-ordered, because attribute order inside a set decides which of two attributes
         // claims a stretch of title that both could match.
         var sets = new List<(string Name, string Title, string Separator, bool Repeats,
-            List<TitleAttributeRule> Rules)>();
+            bool Upper, List<TitleAttributeRule> Rules)>();
 
         foreach (var row in table.Skip(1))
         {
@@ -401,13 +436,14 @@ public sealed class TitleRuleStore : ITitleRuleStore
             var titleColumn = TabularFile.GetCell(row, cTitle).Trim();
             var separator = TabularFile.GetCell(row, cDecimal).Trim() == "," ? "," : ".";
             var repeats = ParseBool(TabularFile.GetCell(row, cRepeat), fallback: false);
+            var upper = ParseBool(TabularFile.GetCell(row, cUpper), fallback: false);
 
             var existing = sets.FirstOrDefault(s =>
                 string.Equals(FoldedTitle.Fold(s.Name), FoldedTitle.Fold(setName), StringComparison.Ordinal));
 
             if (existing.Rules is null)
             {
-                existing = (setName, titleColumn, separator, repeats, []);
+                existing = (setName, titleColumn, separator, repeats, upper, []);
                 sets.Add(existing);
             }
 
@@ -425,14 +461,19 @@ public sealed class TitleRuleStore : ITitleRuleStore
                 ParseBool(TabularFile.GetCell(row, cAdoptLargest), fallback: false),
                 ParseBool(TabularFile.GetCell(row, cReferenceName), fallback: false),
                 ParseBool(TabularFile.GetCell(row, cTitleWins), fallback: false),
-                ParseBool(TabularFile.GetCell(row, cNormalize), fallback: false)));
+                ParseBool(TabularFile.GetCell(row, cNormalize), fallback: false),
+                Blank(TabularFile.GetCell(row, cFillDefault)),
+                Blank(TabularFile.GetCell(row, cFillWhen)),
+                Blank(TabularFile.GetCell(row, cCopyFrom)),
+                ParseBool(TabularFile.GetCell(row, cRemoveOnly), fallback: false),
+                Blank(TabularFile.GetCell(row, cAppend))));
         }
 
         if (sets.Count == 0)
             throw new InvalidOperationException("The rule set file carries no rows.");
 
         return sets
-            .Select(s => new TitleRuleSet(s.Name, s.Title, s.Rules, s.Separator, s.Repeats))
+            .Select(s => new TitleRuleSet(s.Name, s.Title, s.Rules, s.Separator, s.Repeats, s.Upper))
             .ToList();
     }
 

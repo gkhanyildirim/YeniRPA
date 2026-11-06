@@ -198,7 +198,8 @@ public sealed class CompiledAttribute
         IReadOnlyList<(string Folded, string Canonical, string Key)> aliasSpellings,
         IReadOnlyList<ReferenceEntry> referenceEntries,
         IReadOnlyList<MeasurePair> measurePairs,
-        IReadOnlyDictionary<string, IReadOnlyList<ReferenceEntry>>? modelCodes = null)
+        IReadOnlyDictionary<string, IReadOnlyList<ReferenceEntry>>? modelCodes = null,
+        IReadOnlyList<(string Folded, string Canonical, string Key)>? insideSpellings = null)
     {
         Rule = rule;
         Index = index;
@@ -208,7 +209,15 @@ public sealed class CompiledAttribute
         ReferenceEntries = referenceEntries;
         MeasurePairs = measurePairs;
         ModelCodes = modelCodes ?? new Dictionary<string, IReadOnlyList<ReferenceEntry>>();
+        InsideSpellings = insideSpellings ?? [];
     }
+
+    /// <summary>
+    /// Spellings written with a leading "~" in the value list: looked for <b>inside</b> a word, from
+    /// its start — the chipset "B850" in the model code "B850M-K". They only ever fill an empty cell
+    /// and never remove anything, so the rule that a span may not cut into a word is not touched.
+    /// </summary>
+    internal IReadOnlyList<(string Folded, string Canonical, string Key)> InsideSpellings { get; }
 
     public TitleAttributeRule Rule { get; }
 
@@ -231,7 +240,8 @@ public sealed class CompiledAttribute
     /// <summary>Whether the value list already speaks for this value — in which case its own group's
     /// spellings are what the title is searched for, and the raw cell text adds nothing.</summary>
     internal bool Catalogued(string key) =>
-        AliasSpellings.Any(s => string.Equals(s.Key, key, StringComparison.Ordinal));
+        AliasSpellings.Any(s => string.Equals(s.Key, key, StringComparison.Ordinal)) ||
+        InsideSpellings.Any(s => string.Equals(s.Key, key, StringComparison.Ordinal));
 
     /// <summary>
     /// The operator's decision covering these two readings of one measurement, if they made one.
@@ -377,6 +387,7 @@ public static class AttributeMatcher
         Regex? measureRegex = null;
         var unitBySpelling = new Dictionary<string, MeasureUnit>(StringComparer.Ordinal);
         var aliasSpellings = new List<(string Folded, string Canonical, string Key)>();
+        var insideSpellings = new List<(string Folded, string Canonical, string Key)>();
         IReadOnlyList<MeasurePair> measurePairs = [];
 
         if (rule.Kind == TitleAttributeKind.Measure)
@@ -410,7 +421,9 @@ public static class AttributeMatcher
                 if (group is null || group.Count == 0)
                     continue;
 
-                var canonical = group[0].Trim();
+                // A group may lead with a "~" spelling: its standard value is then the word without
+                // the mark, and that word is looked for only inside titles, never as a whole word.
+                var canonical = group[0].Trim().TrimStart('~').Trim();
                 if (canonical.Length == 0)
                     continue;
 
@@ -418,11 +431,17 @@ public static class AttributeMatcher
 
                 foreach (var spelling in group)
                 {
-                    var folded = FoldedTitle.Fold(spelling);
-                    if (folded.Length > 0)
-                        aliasSpellings.Add((folded, canonical, key));
+                    var inside = (spelling ?? "").TrimStart().StartsWith('~');
+                    var folded = FoldedTitle.Fold(inside ? spelling!.TrimStart()[1..] : spelling);
+
+                    if (folded.Length == 0)
+                        continue;
+
+                    (inside ? insideSpellings : aliasSpellings).Add((folded, canonical, key));
                 }
             }
+
+            insideSpellings.Sort((a, b) => b.Folded.Length.CompareTo(a.Folded.Length));
 
             // Longest first, so "Windows 11 Pro" is preferred over a "Windows 11" that would leave
             // the word "Pro" stranded in the cleaned title.
@@ -460,7 +479,8 @@ public static class AttributeMatcher
         }
 
         return new CompiledAttribute(
-            rule, index, measureRegex, unitBySpelling, aliasSpellings, entries, measurePairs, modelCodes);
+            rule, index, measureRegex, unitBySpelling, aliasSpellings, entries, measurePairs, modelCodes,
+            insideSpellings);
     }
 
     /// <summary>Whether an entry's last word is specific enough to fill a cell on — a digit in it and
@@ -608,6 +628,15 @@ public static class AttributeMatcher
             {
                 var folded = FoldedTitle.Fold(text);
                 foreach (var (spelling, canonical, key) in attr.AliasSpellings)
+                {
+                    if (string.Equals(spelling, folded, StringComparison.Ordinal))
+                        return new AttributeValue(canonical, key);
+                }
+
+                // A cell holding a value the list only knows from inside titles ("B850") is still the
+                // list's value. Without this it would be searched for as a whole word, and a model name
+                // that begins with it ("B550 GAMING WIFI6") would lose its first word.
+                foreach (var (spelling, canonical, key) in attr.InsideSpellings)
                 {
                     if (string.Equals(spelling, folded, StringComparison.Ordinal))
                         return new AttributeValue(canonical, key);

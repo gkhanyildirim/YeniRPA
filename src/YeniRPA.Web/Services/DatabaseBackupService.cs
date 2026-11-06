@@ -27,7 +27,8 @@ public sealed class DatabaseBackupService(
     IOfferMailStore offerMail,
     IVatMailStore vatMail,
     ISellerNotificationStore sellerNotificationTemplates,
-    ICustomMailStore customMail)
+    ICustomMailStore customMail,
+    IPosRateStore posRates)
 {
     public const int CurrentVersion = 1;
 
@@ -50,7 +51,8 @@ public sealed class DatabaseBackupService(
             offerMail.Load(),
             vatMail.Load(),
             sellerNotificationTemplates.Load(),
-            customMail.Load());
+            customMail.Load(),
+            posRates.Load());
 
         return JsonSerializer.SerializeToUtf8Bytes(backup, JsonOptions);
     }
@@ -130,6 +132,12 @@ public sealed class DatabaseBackupService(
         {
             customMail.Save(backup.CustomMail);
             sections.Add("Custom Mail hand-entered addresses");
+        }
+
+        if (backup.PosRates is not null)
+        {
+            posRates.Save(backup.PosRates);
+            sections.Add("POS Reconciliation bank rates");
         }
 
         if (sections.Count == 0)

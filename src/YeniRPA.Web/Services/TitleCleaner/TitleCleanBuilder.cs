@@ -275,12 +275,15 @@ public static class TitleCleanBuilder
         var errors = new List<string>();
         var removals = new List<(int Start, int End)>();
         var errorRangeByIndex = new (int Start, int End)[rules.Attributes.Count];
+        var cutsByAttribute = new List<(int Start, int End)>[rules.Attributes.Count];
 
         for (var i = 0; i < rules.Attributes.Count; i++)
         {
             var attr = rules.Attributes[i];
             var original = (cell(attr.Rule.Column) ?? "").Trim();
             var errorsBefore = errors.Count;
+
+            var cutsBefore = removals.Count;
 
             results.Add(Judge(
                 attr,
@@ -292,10 +295,13 @@ public static class TitleCleanBuilder
                 removals,
                 errors));
 
+            cutsByAttribute[i] = removals.GetRange(cutsBefore, removals.Count - cutsBefore);
             errorRangeByIndex[i] = (errorsBefore, errors.Count);
         }
 
         ResolveRepeatedAliasSiblings(rules, pool, accepted, results, removals, errors, errorRangeByIndex);
+
+        var appended = FillRemaining(rules, title, results, removals, cutsByAttribute);
 
         if (rules.Source.CollapseRepeats)
             AddRepeats(title, removals);
@@ -306,6 +312,7 @@ public static class TitleCleanBuilder
         if (suspect)
         {
             removals.Clear();
+            appended.Clear();
             errors.Add(
                 "Bu satırın başlığı bir ürün adına benzemiyor — dolu özelliklerden yalnızca biri " +
                 "başlıkta bulundu. Başlığa dokunulmadı; satırı elden geçirin.");
@@ -314,7 +321,15 @@ public static class TitleCleanBuilder
         return new TitleCleanRow(
             rowNumber,
             title.Original,
-            ModelCasing.Apply(Apply(title.Original, removals)),
+            Cased(
+                rules.Source,
+                AppendTo(Apply(title.Original, removals), appended),
+                // A row no rule touched and whose cells are all empty is not this category's product
+                // (or is not a title at all) and keeps the case it came in. A row that is already
+                // clean — its cells filled by an earlier pass — is still this category's, so a second
+                // pass writes the same capitals.
+                removals.Count > 0 || results.Any(r => r.Status != TitleAttributeStatus.Empty
+                    || r.OriginalValue.Length > 0)),
             results,
             errors,
             suspect);
@@ -576,6 +591,16 @@ public static class TitleCleanBuilder
         List<string> errors)
     {
         var rule = attr.Rule;
+
+        // Yalnızca Sil: the column only cuts. Its cell is not consulted and never written.
+        if (rule.RemoveOnly)
+        {
+            if (rule.Remove)
+                removals.AddRange(mine.SelectMany(c => c.Match.Spans));
+
+            return new TitleAttributeResult(
+                rule.Column, TitleAttributeStatus.Empty, original, original);
+        }
 
         if (value is null)
             return JudgeEmpty(rule, original, mine, removals);
@@ -877,6 +902,168 @@ public static class TitleCleanBuilder
         return parts.MaxBy(p => p.BaseQuantity!.Value);
     }
 
+    /// <summary>
+    /// What an empty cell can still be given once every column has been judged, in this order:
+    /// a reading found <b>inside</b> a word of the title (the "~" spellings), another column's value
+    /// (<see cref="TitleAttributeRule.CopyFrom"/>), and last a fixed default
+    /// (<see cref="TitleAttributeRule.FillDefault"/>). None of them touches the title.
+    /// </summary>
+    static List<string> FillRemaining(
+        CompiledRuleSet rules,
+        FoldedTitle title,
+        List<TitleAttributeResult> results,
+        List<(int Start, int End)> removals,
+        List<(int Start, int End)>[] cutsByAttribute)
+    {
+        int IndexOf(string column) =>
+            rules.Attributes.ToList().FindIndex(a =>
+                string.Equals(a.Rule.Column.Trim(), column.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        // What the column ended up holding, whichever way it got there.
+        string Final(int i) => results[i].Status is TitleAttributeStatus.Filled or TitleAttributeStatus.Corrected
+            ? results[i].Value
+            : results[i].OriginalValue;
+
+        for (var i = 0; i < rules.Attributes.Count; i++)
+        {
+            var attr = rules.Attributes[i];
+            var rule = attr.Rule;
+
+            if (!rule.FillFromTitle || rule.Kind != TitleAttributeKind.Alias || attr.InsideSpellings.Count == 0)
+                continue;
+
+            if (InsideReading(attr, title) is not { } reading)
+                continue;
+
+            if (results[i].Status == TitleAttributeStatus.Empty)
+            {
+                results[i] = new TitleAttributeResult(rule.Column, TitleAttributeStatus.Filled, "", reading, reading);
+            }
+            else if (results[i].Status == TitleAttributeStatus.Filled &&
+                     !string.Equals(results[i].Value, reading, StringComparison.Ordinal))
+            {
+                // The model code outranks a bare word of the title: "B760M" is a micro-ATX board
+                // whatever the seller wrote after it. The word is still cut from the title.
+                results[i] = results[i] with { Value = reading, TitleSaid = reading };
+            }
+        }
+
+        // Koşul Kolonu is a gate on the whole rule, not only on its default: a rule whose condition
+        // column ended up empty did nothing on this row — what it filled is taken back and what it
+        // cut is put back. Judged once, against what the other columns found, so a row that is not
+        // this category's product at all (a memory module among motherboards) is left alone.
+        //
+        // Two columns may name each other — a known brand and a known chipset each vouch for the
+        // other — so this starts with every rule in play and closes them until nothing changes: a
+        // column that is itself closed does not vouch for anyone.
+        var open = new bool[rules.Attributes.Count];
+        Array.Fill(open, true);
+
+        for (var changed = true; changed;)
+        {
+            changed = false;
+
+            for (var i = 0; i < open.Length; i++)
+            {
+                var when = rules.Attributes[i].Rule.FillWhen;
+                if (!open[i] || string.IsNullOrWhiteSpace(when))
+                    continue;
+
+                var w = IndexOf(when);
+                if (w < 0 || w == i || !open[w] || Final(w).Trim().Length == 0)
+                {
+                    open[i] = false;
+                    changed = true;
+                }
+            }
+        }
+
+        for (var i = 0; i < open.Length; i++)
+        {
+            if (open[i])
+                continue;
+
+            foreach (var cut in cutsByAttribute[i] ?? [])
+                removals.Remove(cut);
+
+            results[i] = new TitleAttributeResult(
+                rules.Attributes[i].Rule.Column, TitleAttributeStatus.Empty,
+                results[i].OriginalValue, results[i].OriginalValue);
+        }
+
+        // In rule order, one rule at a time, so a column can copy one that took its default just above.
+        for (var i = 0; i < rules.Attributes.Count; i++)
+        {
+            var rule = rules.Attributes[i].Rule;
+
+            if (!open[i] || results[i].Status != TitleAttributeStatus.Empty)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(rule.CopyFrom))
+            {
+                var from = IndexOf(rule.CopyFrom);
+                var value = from >= 0 && from != i ? Final(from).Trim() : "";
+
+                if (value.Length > 0)
+                {
+                    results[i] = new TitleAttributeResult(rule.Column, TitleAttributeStatus.Filled, "", value, value);
+                    continue;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(rule.FillDefault))
+            {
+                results[i] = new TitleAttributeResult(
+                    rule.Column, TitleAttributeStatus.Filled, "", rule.FillDefault!, rule.FillDefault);
+            }
+        }
+
+        // Başlığa Ekle: what every title of the category must end with, from the rules still in play.
+        return rules.Attributes
+            .Where((a, i) => open[i] && !string.IsNullOrWhiteSpace(a.Rule.AppendToTitle))
+            .Select(a => a.Rule.AppendToTitle!.Trim())
+            .ToList();
+    }
+
+    /// <summary>
+    /// The one value a "~" spelling names in the title: found from the start of a word, anywhere
+    /// inside it. The longest reading wins ("B850M" over "B850", "MATX" over a bare "ATX" that is not
+    /// even at a word start), and two different values of the same length is no answer at all.
+    /// </summary>
+    static string? InsideReading(CompiledAttribute attr, FoldedTitle title)
+    {
+        var best = 0;
+        var found = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var (folded, canonical, key) in attr.InsideSpellings)
+        {
+            var from = 0;
+
+            while (from <= title.Folded.Length - folded.Length)
+            {
+                var at = title.Folded.IndexOf(folded, from, StringComparison.Ordinal);
+                if (at < 0)
+                    break;
+
+                from = at + 1;
+
+                if (at > 0 && char.IsLetterOrDigit(title.Folded[at - 1]))
+                    continue;
+
+                if (folded.Length > best)
+                {
+                    best = folded.Length;
+                    found.Clear();
+                }
+
+                if (folded.Length == best)
+                    found[key] = canonical;
+            }
+        }
+
+        return found.Count == 1 ? found.Values.First() : null;
+    }
+
     static TitleAttributeResult JudgeEmpty(
         TitleAttributeRule rule,
         string original,
@@ -900,7 +1087,9 @@ public static class TitleCleanBuilder
         // memory beside the system RAM, and filling from it would take both. A filled cell is refused
         // in exactly that situation, so an empty one has to be too, or the safer-looking case would
         // be the more destructive one.
-        if (keys.Count != 1 || mine.Count != 1)
+        // A value list may name the same value twice — "AM5 … (AMD AM5 …)" — and that is one fact
+        // written twice, not two candidates. A measure still may not: "8GB 8GB" is two things.
+        if (keys.Count != 1 || (mine.Count != 1 && rule.Kind != TitleAttributeKind.Alias))
             return new TitleAttributeResult(rule.Column, TitleAttributeStatus.Empty, original, original);
 
         var found = mine.Where(c => string.Equals(c.Match.Key, keys[0], StringComparison.Ordinal)).ToList();
@@ -1224,6 +1413,28 @@ public static class TitleCleanBuilder
     /// punctuation — a dash or slash that used to separate two removed values — goes with them.
     /// </summary>
     const string Marker = "\u0001";
+
+    /// <summary>Writes each <see cref="TitleAttributeRule.AppendToTitle"/> text at the end, unless the
+    /// title already ends with it.</summary>
+    static string AppendTo(string title, List<string> texts)
+    {
+        foreach (var text in texts)
+        {
+            if (!title.EndsWith(text, StringComparison.OrdinalIgnoreCase))
+                title = title.Length == 0 ? text : title + " " + text;
+        }
+
+        return title;
+    }
+
+    /// <summary>The set's <see cref="TitleRuleSet.UpperCase"/> setting. English capitals: the dotted
+    /// İ a Turkish word carries stays as it is, and a model code has no Turkish i to get wrong.</summary>
+    static string Cased(TitleRuleSet set, string title, bool acted) =>
+        // With capitals on, the set decides the case outright; ModelCasing's "ProArt" would otherwise
+        // undo it on the next pass and the output would no longer be a fixed point.
+        set.UpperCase && acted
+            ? title.ToUpper(System.Globalization.CultureInfo.GetCultureInfo("en-US"))
+            : ModelCasing.Apply(title);
 
     static string Apply(string original, List<(int Start, int End)> removals)
     {

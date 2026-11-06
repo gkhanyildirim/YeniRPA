@@ -30,7 +30,8 @@ public sealed record PosReconciliationRow(
     [property: JsonPropertyName("siparisNumarasi")] string SiparisNumarasi,
     [property: JsonPropertyName("siparisKaynagi")] string SiparisKaynagi,
     [property: JsonPropertyName("marketplaceGmv")] decimal? MarketplaceGmv = null,
-    [property: JsonPropertyName("retailGmv")] decimal? RetailGmv = null);
+    [property: JsonPropertyName("retailGmv")] decimal? RetailGmv = null,
+    [property: JsonPropertyName("cardType")] string CardType = "");
 
 /// <summary>A row whose blank "Sipariş Numarası" could not be backfilled — either "Provizyon No" had
 /// no match at all in Craftgate's "authCode", or it matched more than one distinct "externalId".</summary>
